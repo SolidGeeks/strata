@@ -19,6 +19,6 @@
     "@fontsource/archivo": "^5.0.0",
     "@fontsource/archivo-narrow": "^5.0.0",
     "@fontsource/ibm-plex-mono": "^5.0.0",
-    "three": "0.128.0"
+    "three": "0.186.1"
   }
 }
