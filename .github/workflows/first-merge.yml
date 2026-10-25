@@ -1,6 +1,6 @@
 # Celebrates a contributor's first merged pull request in this repository with Bit's card.
-# Copy to .github/workflows/first-merge.yml in any repo (or pick it from "Actions → New workflow" once
-# this file sits in the organization's .github repository under workflow-templates/).
+# Pick it from "Actions → New workflow", or copy it to .github/workflows/first-merge.yml.
+# The logic lives in SolidGeeks/.github (.github/workflows/first-merge.yml): fix it there, once, for every repository.
 name: First merge
 
 on:
@@ -12,36 +12,4 @@ permissions:
 
 jobs:
   celebrate:
-    # Contributors only: not bots, not members of the organization or collaborators of the repo.
-    # Never add a checkout step: pull_request_target runs with write access, even for pull requests from forks.
-    if: >-
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.user.type != 'Bot' &&
-      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = context.payload.pull_request;
-            const author = pr.user.login;
-            const { owner, repo } = context.repo;
-            // Any other merged PR by this author in this repo? The pulls API is always current;
-            // the search index can lag a few minutes behind and miss the PR just merged.
-            const closed = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'closed', per_page: 100 });
-            if (closed.some(p => p.user?.login === author && p.merged_at && p.number !== pr.number)) return;
-            // Already celebrated (workflow re-run)?
-            const marker = '<!-- solid-geeks:first-merge -->';
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 });
-            if (comments.some(c => c.body?.includes(marker))) return;
-            const studio = 'https://solidgeeks.github.io/SolidGeeks/studio.html';
-            const body = [
-              marker,
-              `![Achievement unlocked: first merge](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/discord/sg-xp.png)`,
-              ``,
-              `**Achievement unlocked: first merge.** Welcome to the crew, @${author}! 🎉`,
-              ``,
-              `Your card is ready to share: [make it here](${studio}?t=first-merge&handle=${encodeURIComponent(author)}&repo=${encodeURIComponent(repo)}&pr=${pr.number}).`,
-              `Come say hi on the [Discord](https://discord.gg/F9g5YFBzwY) and grab the **Contributor** role.`,
-            ].join('\n');
-            await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
+    uses: SolidGeeks/.github/.github/workflows/first-merge.yml@main
