@@ -1,7 +1,7 @@
 services:
   strata:
     # Prebuilt image from GitHub (docker compose pull), or built here (docker compose up -d --build)
-    image: ghcr.io/solidgeeks/strata:0.5.5
+    image: ghcr.io/solidgeeks/strata:0.6.0
     build: .
     container_name: strata
     restart: unless-stopped

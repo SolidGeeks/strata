@@ -1,4 +1,4 @@
-# Strata — v0.5
+# Strata — v0.6
 
 [![Release](https://img.shields.io/github/v/release/SolidGeeks/strata)](https://github.com/SolidGeeks/strata/releases) [![License AGPL-3.0](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/license-agpl.svg)](LICENSE) [![Signed releases](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/signed-releases.svg)](#2-quick-start-with-docker) [![Tests](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml)
 
@@ -14,12 +14,21 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 
 | Milestone | What it brings |
 |---|---|
-| [0.6.0](https://github.com/SolidGeeks/strata/milestone/1) | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface |
-| [0.7.0](https://github.com/SolidGeeks/strata/milestone/2) | A modern three.js, or a documented decision to stay on 0.128 |
-| [0.8.0](https://github.com/SolidGeeks/strata/milestone/3) | The last breaking changes: IS Map compatibility, pre-releases, an API reference |
+| [0.7.0](https://github.com/SolidGeeks/strata/milestone/1) | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface |
+| [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) | A modern three.js, or a documented decision to stay on 0.128 |
+| [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) | The last breaking changes: IS Map compatibility, pre-releases, an API reference |
 | [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
 
 Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
+
+## New in v0.6: business views and risk priorities
+
+- **Three points of view** on an IS, switched at the top: **Physical** (the 3D model and the 2D diagram), **Application** (one box per application, with the assets it runs on and the flows between applications) and **Business**.
+- **Business services**: record what the organisation does (online sales, payroll, production line 1) and the assets each service runs on. Strata works out the rest from the flows: what those assets call, the equipment crossed, the Internet services used. The asset sheet lists the business services an asset would hit, and through which chain of flows.
+- **Risk priorities** (*Analysis*): one score per asset, 0 to 100, and the fixes in the order to follow. Each vulnerability counts for its CVSS times its likelihood of exploitation (certain on the CISA list of known exploited vulnerabilities, otherwise from its EPSS, otherwise 30%), weighed by exposure, reachability from the Internet and criticality (of the asset or of the business services it would hit). *Why?* on the asset sheet shows each factor; the list exports as CSV. Vulnerabilities take an EPSS and a KEV mark, by hand, in imported JSON, or from the Cyberwatch connector when Cyberwatch gives them. Strata does not download these feeds itself.
+- **Readable flows**: every flow crossing a firewall, router, switch or gateway has its own lane there, in 3D and in 2D; *Colour by › Per flow* gives flows sharing a device different colours; hovering a flow in a sheet picks it out.
+- **Architecture plan**, redrawn: one right-angle line per flow, numbered, with a table of the flows and of the **firewall rules** of the asset under the drawing; filters by direction (inbound, outbound, crossing) and kind of flow (Internet, inter-VLAN, intra-VLAN); scope limited to the asset's own flows by default.
+- **Asset form**: a new asset starts on the first free IP of its VLAN range.
 
 ## Night mode (v0.5.2)
 
@@ -154,7 +163,7 @@ Or use the prebuilt image published with each release (tag `vX.Y.Z`, see the `Re
 Every published image is **signed**: an attestation proves it was built by this repository's `Release` workflow, from the code of the tag. To check it before deploying (you need the [GitHub CLI](https://cli.github.com/)):
 
 ```bash
-gh attestation verify oci://ghcr.io/solidgeeks/strata:0.5.5 --owner SolidGeeks
+gh attestation verify oci://ghcr.io/solidgeeks/strata:0.6.0 --owner SolidGeeks
 ```
 
 The command must print `Verification succeeded!`. If it fails, do not use the image, and report it (see [SECURITY.md](SECURITY.md)). Images older than 0.5.4 are not signed.
@@ -367,6 +376,8 @@ Fields added since v0.2 (all optional):
 | `ext` | asset, VLAN | (v0.5) ids in the connected tools: `{"glpi":"Computer/12","cyberwatch":101,"ipam":"57"}` |
 | `src` | vulnerability, application, contact | (v0.5) `cyberwatch` or `glpi` when the entry comes from a connector (the others count as entered by hand) |
 | `pan` | flow | (v0.5) Palo Alto rule(s) behind the flow: `{"rules":["in-web"],"scope":"vsys1"}` |
+| `business` | IS | (v0.6) business services: `[{"id":"b-erp","name":"ERP & accounting","crit":3,"owner":"Finance director","notes":"","assets":["lyo-app-erp","lyo-db-erp"]}]`. Only the assets the service runs on: dependencies come from the flows. |
+| `epss`, `kev` | vulnerability | (v0.6) EPSS, a probability from 0 to 1, and `true` when the vulnerability is on the CISA list of known exploited vulnerabilities. Used by *Risk priorities*. |
 
 ---
 
@@ -397,19 +408,21 @@ This map describes your weak spots precisely: treat it as sensitive data.
 
 ---
 
-## 12. Limits of v0.5
+## 12. Limits of v0.6
 
 - Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
 - Authentication is still Basic Auth (credentials asked by the browser). For SSO (Entra ID, LDAP…), put an authenticating proxy in front and create the same account names.
 - Two approvers editing the same IS directly at the same time: the last save wins (the history lets you go back). Proposals, on the other hand, detect conflicts.
 - draw.io or Visio diagrams cannot be imported: only Strata JSON exports can become a proposal.
-- The Claude version (artifact) has no accounts, history or proposals: of the v0.4 features, it only has Internet services.
+- The Claude version (artifact) keeps the map in the browser only: no accounts, history, proposals or connectors.
 - The path suggested for flows follows a simple rule (edge firewall, then internal firewall or core router). Check it for architectures with several firewalls in a row, and correct it flow by flow if needed.
 - Exported firewall rules are a generic table, not a configuration ready to paste: your firewalls' interface and object names still have to be mapped.
 - The connectors were written from the public API documentation (Cyberwatch v3, GLPI `apirest.php` 9.5/10, phpIPAM 1.4+, PAN-OS 10/11) and tested against simulators, not against your instances: run *Test the connection*, then a first sync, and review the proposal before publishing it. Fields specific to your version (Cyberwatch path, location rules) can be set without touching the code.
 - Palo Alto: NAT rules, security profiles, dynamic address groups and the Panorama device-group hierarchy are not interpreted; only *allow* security rules are. A rule that is too broad (internal `any`, large range) is flagged instead of drawn.
 - GLPI: one call per asset (plus one per technician and per unknown software, cached); allow a few minutes for several thousand assets. The new GLPI 11 API (`/api.php/v2`) is not supported yet.
 - NetBox and NetFlow are not connected yet.
+- Business dependencies follow the recorded flows: a dependency with no flow on the map (a licence server reached through a proxy, a shared storage mounted by hand) is not seen. Log and monitoring flows (syslog, SNMP traps, NetFlow) are left out on purpose.
+- The risk score uses the EPSS and KEV values recorded on each vulnerability: Strata does not fetch the FIRST and CISA feeds, so keep them up to date through the Cyberwatch connector or an import. A vulnerability is not tied to a port, so any open flow to its asset counts as a way to reach it.
 
 ## 13. Development and tests
 

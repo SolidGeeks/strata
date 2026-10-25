@@ -2,7 +2,7 @@
 
 All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-10-26
 ### Added
 - Flows through interconnection equipment are readable: every flow that crosses a firewall, router, switch or gateway gets its own lane there, in the 3D model and in the 2D diagram, instead of all threads meeting at one point.
 - Colour by › **Per flow**: each flow gets its own colour, and flows that cross the same equipment never share one (up to 10).
@@ -101,7 +101,7 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 ## [0.1.0]
 - First release: 3D map of IS, zones, VLANs, assets, flows, exposure, vulnerabilities and incident contacts.
 
-[0.5.5]: https://github.com/SolidGeeks/strata/releases/tag/v0.5.5
+[0.6.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.6.0
 [0.5.5]: https://github.com/SolidGeeks/strata/releases/tag/v0.5.5
 [0.5.4]: https://github.com/SolidGeeks/strata/releases/tag/v0.5.4
 [0.5.3]: https://github.com/SolidGeeks/strata/releases/tag/v0.5.3
