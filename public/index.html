@@ -172,6 +172,8 @@
   <div class="plan-bar panel">
     <div class="plan-t"><span class="cap">Architecture plan</span><b id="planTitle"></b></div>
     <div class="plan-tools">
+      <div class="seg four plan-seg" id="planDir" role="group" aria-label="Flow direction"><button data-plan-dir="all" aria-pressed="true">All</button><button data-plan-dir="in" aria-pressed="false" title="Flows that lead to this asset">Inbound</button><button data-plan-dir="out" aria-pressed="false" title="Flows that leave from this asset">Outbound</button><button data-plan-dir="thru" aria-pressed="false" title="Flows that cross this equipment">Crossing</button></div>
+      <div class="seg three plan-seg" id="planLv" role="group" aria-label="Kinds of flow shown (several allowed)"><button data-plan-lv="internet" aria-pressed="true">Internet</button><button data-plan-lv="inter" aria-pressed="true">Inter-VLAN</button><button data-plan-lv="intra" aria-pressed="true">Intra-VLAN</button></div>
       <button class="btn small" data-plan="scope" id="planScope" aria-pressed="false" title="Only the flows of this asset, or every path from and to the Internet">Scope: direct flows</button>
       <button class="btn small" data-plan="colour" id="planColour" aria-pressed="false" title="Colour the flows by exposure, or give each flow its own colour">Colour: exposure</button>
       <button class="btn small" data-plan="zoom-out" aria-label="Zoom out">−</button>

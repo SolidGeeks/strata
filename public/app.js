@@ -1652,8 +1652,20 @@ function planScope(a,full){
   const nodes=new Set([a.id]);flows.forEach(f=>f.hops.forEach(h=>nodes.add(h)));
   return {flows:[...flows],nodes,short,full:true,inbound:fromNet[a.id],outbound:toNet[a.id]};
 }
-function buildPlanSvg(a,perFlow,full){
-  const sc=planScope(a,full),STEP=8,M=40,GAP=16,PAD=14,VH=30,BANDGAP=96,CARD_W=196,CARD_H=74;
+// Plan filters: direction relative to the asset, and where the traffic crosses.
+// A flow is inbound when it leads to the asset (directly or further along the path drawn), outbound when it leaves from it.
+const PLAN_DIR={all:'All',in:'Inbound',out:'Outbound',thru:'Crossing'};
+function planFilter(a,sc,flt){
+  const lv=new Set(flt.lv),up=new Set(),down=new Set(),fl=sc.flows;
+  for(let ch=true;ch;){ch=false;fl.forEach(f=>{if((f.dst===a.id||up.has(f.dst))&&!up.has(f.src)&&f.src!==a.id){up.add(f.src);ch=true;}if((f.src===a.id||down.has(f.src))&&!down.has(f.dst)&&f.dst!==a.id){down.add(f.dst);ch=true;}});}
+  const dirOk=f=>flt.dir==='all'||(flt.dir==='in'?f.dst===a.id||up.has(f.dst):flt.dir==='out'?f.src===a.id||down.has(f.src):f.via.includes(a.id));
+  const flows=fl.filter(f=>lv.has(f.level)&&dirOk(f)),nodes=new Set([a.id]);flows.forEach(f=>f.hops.forEach(h=>nodes.add(h)));
+  const on=flt.dir!=='all'||lv.size<3;
+  return Object.assign({},sc,{flows,nodes,total:fl.length,filtered:on,
+    label:on?[flt.dir!=='all'?PLAN_DIR[flt.dir]:'',lv.size<3?['internet','inter','intra'].filter(k=>lv.has(k)).map(k=>EXP[k].label).join(', '):''].filter(Boolean).join(' · '):''});
+}
+function buildPlanSvg(a,perFlow,full,flt){
+  const sc=planFilter(a,planScope(a,full),flt),STEP=8,M=40,GAP=16,PAD=14,VH=30,BANDGAP=96,CARD_W=196,CARD_H=74;
   const appsOf=a.apps||[],APP_W=150,APP_H=48,apCols=Math.min(3,Math.max(2,appsOf.length>4?3:2));
   const selW=Math.max(340,apCols*APP_W+(apCols+1)*10),apRows=Math.max(1,Math.ceil(appsOf.length/apCols));
   const selH=66+apRows*(APP_H+10)+10+34;
@@ -1693,7 +1705,8 @@ function buildPlanSvg(a,perFlow,full){
     s.gaps.forEach(g=>(gapUse[g]=gapUse[g]||[]).push(s));});
   const gapH=g=>Math.max(BANDGAP,40+((gapUse[g]||[]).length)*STEP);
   const CORR=corr.length?corr.length*STEP+28:0;
-  const FW=fwRules(a),FWROWS=[...FW.rules,...FW.unfiltered],FROW=34;
+  // the rules of the flows shown
+  const FW0=fwRules(a),shown=new Set(sc.flows.map(f=>f.id)),FW={rules:FW0.rules.filter(r=>shown.has(r.flow.id)),unfiltered:FW0.unfiltered.filter(r=>shown.has(r.flow.id))},FWROWS=[...FW.rules,...FW.unfiltered],FROW=34;
   const TITLE=118,LEG=96,ROW=22,TAB=FLS.length?56+FLS.length*ROW:0,FWTAB=FWROWS.length?40+56+FWROWS.length*FROW+FROW:0;
   // wider when the rules table is there, so its comments have room
   const W=Math.max(FWROWS.length?1280:1100,...bands.map(b=>b.w+M*2+40+CORR*2));
@@ -1795,7 +1808,7 @@ function buildPlanSvg(a,perFlow,full){
   if(FLS.length){
     const ty=tabY,C1=M,C2=M+40,C3=W-M-380,C4=W-M-290,C5=W-M-200,C6=W-M-110;
     out+=`<line x1="${M}" y1="${ty}" x2="${W-M}" y2="${ty}" stroke="${PC.line}" stroke-width="1"/>`;
-    out+=`<text x="${M}" y="${ty+24}" font-family="${PF.d}" font-weight="700" font-size="12" letter-spacing="1.4" fill="${PC.muted}">FLOWS ON THIS PLAN · ${FLS.length}</text>`;
+    out+=`<text x="${M}" y="${ty+24}" font-family="${PF.d}" font-weight="700" font-size="12" letter-spacing="1.4" fill="${PC.muted}">FLOWS ON THIS PLAN · ${FLS.length}${sc.filtered?` OF ${sc.total} · FILTER: ${X(sc.label.toUpperCase())}`:''}</text>`;
     [['Path',C2],['Port',C3],['Volume',C4],['Exposure',C5],['Note',C6]].forEach(([t,x])=>out+=`<text x="${x}" y="${ty+44}" font-family="${PF.d}" font-weight="700" font-size="10.5" letter-spacing="1.1" fill="${PC.muted}">${t.toUpperCase()}</text>`);
     FLS.forEach((f,i)=>{const ry=ty+64+i*ROW,c=colOf(f);
       if(i%2)out+=`<rect x="${M-6}" y="${ry-15}" width="${W-M*2+12}" height="${ROW}" fill="${PC.zone}" opacity="0.55"/>`;
@@ -1833,15 +1846,21 @@ function buildPlanSvg(a,perFlow,full){
   let lx=M;legend.forEach(([c,t,dash])=>{out+=`<line x1="${lx}" y1="${ly}" x2="${lx+30}" y2="${ly}" stroke="${c}" stroke-width="2.4" ${dash?'stroke-dasharray="7 5"':''}/><text x="${lx+38}" y="${ly+4}" font-family="${PF.b}" font-size="12" fill="${PC.ink}">${t}</text>`;lx+=t?60+tw(t,12,400,PF.b)+26:40;});
   out+=`<rect x="${lx}" y="${ly-9}" width="26" height="18" rx="3" fill="${PC.dev}"/><text x="${lx+34}" y="${ly+4}" font-family="${PF.b}" font-size="12" fill="${PC.ink}">Interconnection equipment</text>`;
   out+=`<text x="${M}" y="${ly+28}" font-family="${PF.b}" font-size="12" fill="${PC.ink}">Each line is one flow, from its source to its destination. Its number refers to the table; the badge where it arrives gives the destination port.</text>`;
-  out+=`<text x="${M}" y="${ly+50}" font-family="${PF.b}" font-size="11.5" fill="${PC.muted}">${X(`Scope: ${a.name} and ${sc.full?`its flows, the equipment they cross and ${sc.short?'the shortest':'every'} recorded path from and to the Internet`:'its own flows, with the equipment they cross'}. ${plural(Object.keys(box).length,'node')} · ${plural(FLS.length,'flow')}.`)}</text>`;
+  if(!FLS.length)out+=`<text x="${W/2}" y="${tabY-10}" text-anchor="middle" font-family="${PF.b}" font-size="14" fill="${PC.muted}">${sc.total?'No flow of this asset matches the filters.':'No flow recorded for this asset.'}</text>`;
+  out+=`<text x="${M}" y="${ly+50}" font-family="${PF.b}" font-size="11.5" fill="${PC.muted}">${X(`${sc.filtered?`Filter: ${sc.label} (${FLS.length} of ${sc.total} flows). `:''}Scope: ${a.name} and ${sc.full?`its flows, the equipment they cross and ${sc.short?'the shortest':'every'} recorded path from and to the Internet`:'its own flows, with the equipment they cross'}. ${plural(Object.keys(box).length,'node')} · ${plural(FLS.length,'flow')}.`)}</text>`;
   const defs=[...marks].map(c=>`<marker id="a${c.slice(1)}" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`).join('');
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${PF.b}"><title>${X(`Architecture plan · ${a.name} · IS ${SITE.name}`)}</title><defs>${defs}</defs>${out}</svg>`;
   return {svg,w:W,h:H,nodes:Object.keys(box).length,flows:FLS.length};
 }
 let PLAN=null;
+// The filters stay the same from one plan to the next, until changed
+const planFlt={dir:'all',lv:['internet','inter','intra']};
 function openPlan(a,perFlow=state.color==='flow',full=false){
   if(!a)return;
-  PLAN=Object.assign(buildPlanSvg(a,perFlow,full),{asset:a,zoom:0,perFlow,full});
+  PLAN=Object.assign(buildPlanSvg(a,perFlow,full,planFlt),{asset:a,zoom:0,perFlow,full});
+  document.querySelectorAll('#planDir [data-plan-dir]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.planDir===planFlt.dir)));
+  document.querySelectorAll('#planLv [data-plan-lv]').forEach(b=>b.setAttribute('aria-pressed',String(planFlt.lv.includes(b.dataset.planLv))));
+  $('#planDir [data-plan-dir="thru"]').hidden=!FLOWS.some(f=>f.via.includes(a.id));
   const cb=$('#planColour');cb.textContent=perFlow?'Colour: per flow':'Colour: exposure';cb.setAttribute('aria-pressed',String(perFlow));
   const sb=$('#planScope');sb.textContent=full?'Scope: full paths':'Scope: direct flows';sb.setAttribute('aria-pressed',String(full));
   $('#planTitle').textContent=`${a.name} · IS ${SITE.name}`;
@@ -1863,7 +1882,13 @@ async function planPng(){
   }catch(e){toast('Could not produce the PNG. Download the SVG instead.',true);}
   finally{URL.revokeObjectURL(url);}
 }
-$('#plan').addEventListener('click',e=>{const b=e.target.closest('[data-plan]');if(!b||!PLAN)return;const k=b.dataset.plan;
+$('#plan').addEventListener('click',e=>{
+  const fd=e.target.closest('[data-plan-dir]'),fl=e.target.closest('[data-plan-lv]');
+  if((fd||fl)&&PLAN){
+    if(fd)planFlt.dir=fd.dataset.planDir;
+    else{const k=fl.dataset.planLv,on=planFlt.lv.includes(k);if(on&&planFlt.lv.length===1){toast('Keep at least one kind of flow.');return;}planFlt.lv=on?planFlt.lv.filter(x=>x!==k):[...planFlt.lv,k];}
+    const z=PLAN.zoom;openPlan(PLAN.asset,PLAN.perFlow,PLAN.full);planZoom(z);return;}
+  const b=e.target.closest('[data-plan]');if(!b||!PLAN)return;const k=b.dataset.plan;
   if(k==='close')closePlan();
   else if(k==='colour'){const z=PLAN.zoom;openPlan(PLAN.asset,!PLAN.perFlow,PLAN.full);planZoom(z);}
   else if(k==='scope'){const z=PLAN.zoom;openPlan(PLAN.asset,PLAN.perFlow,!PLAN.full);planZoom(z);}
