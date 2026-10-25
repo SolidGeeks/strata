@@ -95,7 +95,7 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
     <div class="txt">
       <h3>A model you can walk around, and a diagram you can draw</h3>
       <p>Each information system is a stack of plates: one per zone, one colour per VLAN, an object per asset. Orbit, zoom, filter by severity or exposure. Switch to the 2D diagram to add assets, draw flows and arrange plates; both views share the same positions, so what you draw flat is what you see in 3D.</p>
-      <ul class="facts"><li>Flows routed through the firewalls, routers and switches they cross</li><li>Plates movable anywhere on their level</li><li>Five sites in the demo, linked by WAN</li></ul>
+      <ul class="facts"><li>Flows routed through the firewalls, routers and switches they cross, each in its own lane</li><li>One colour per flow, on demand</li><li>Plates movable anywhere on their level</li><li>Five sites in the demo, linked by WAN</li></ul>
     </div>
     <figure class="shot"><img src="assets/img/diagram-1200.webp" srcset="assets/img/diagram-1200.webp 1200w, assets/img/diagram.webp 2400w" sizes="(min-width: 1000px) 60vw, 100vw" width="2400" height="1500" alt="The 2D diagram of the Lyon site: four levels of VLAN plates with asset cards and flows" loading="lazy"><figcaption>2D diagram of the demo’s Lyon site.</figcaption></figure>
   </article>
@@ -109,13 +109,31 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
     <figure class="shot"><img src="assets/img/site-day-1200.webp" srcset="assets/img/site-day-1200.webp 1200w, assets/img/site-day.webp 2400w" sizes="(min-width: 1000px) 60vw, 100vw" width="2400" height="1500" alt="The 3D model zoomed on the ERP server, with its asset sheet: applications, vulnerabilities and incident contacts" loading="lazy"><figcaption>The ERP server and its sheet: Log4j inside, two contacts to call.</figcaption></figure>
   </article>
 
+  <article class="layer" style="--edge:var(--s4)">
+    <div class="txt">
+      <h3>From the network to the business</h3>
+      <p>Look at the same IS three ways: physical, application by application, or business service by business service. Say which assets a service runs on; Strata follows the flows to find what else it relies on. Open any asset and it tells you which business services would stop if it went down or were taken over.</p>
+      <ul class="facts"><li>Dependencies worked out from the flows</li><li>A business service picked out on the model</li></ul>
+    </div>
+    <figure class="shot"><img src="assets/img/business-1200.webp" srcset="assets/img/business-1200.webp 1200w, assets/img/business.webp 2400w" sizes="(min-width: 1000px) 60vw, 100vw" width="2400" height="1500" alt="The Business view of the Lyon site: cards for the customer portal and the ERP, listing the assets they run on, call and cross" loading="lazy"><figcaption>Business view of the demo’s Lyon site.</figcaption></figure>
+  </article>
+
+  <article class="layer" style="--edge:var(--s1)">
+    <div class="txt">
+      <h3>What to fix first</h3>
+      <p>One risk score per asset, from CVSS, EPSS, the CISA list of known exploited vulnerabilities, exposure, reachability from the Internet and criticality. The result is a remediation list in the right order, exported as CSV, and a “Why?” on every asset that shows how its score was made.</p>
+      <ul class="facts"><li>EPSS and KEV from the Cyberwatch connector</li><li>Works offline: no feed to download</li></ul>
+    </div>
+    <figure class="shot"><img src="assets/img/risk-1200.webp" srcset="assets/img/risk-1200.webp 1200w, assets/img/risk.webp 2400w" sizes="(min-width: 1000px) 60vw, 100vw" width="2400" height="1500" alt="Risk priorities of the Lyon site: the fixes in order, each with its KEV, EPSS, CVSS and exposure" loading="lazy"><figcaption>Risk priorities: a firewall flaw known to be exploited comes first.</figcaption></figure>
+  </article>
+
   <article class="layer" style="--edge:var(--s2)">
     <div class="txt">
       <h3>Documents that write themselves</h3>
-      <p>Pick an asset and get its architecture plan: every path to the Internet, every device crossed, ready for a PNG or SVG in your documentation. Export its flow matrix and the firewall rules it needs as CSV.</p>
+      <p>Pick an asset and get its architecture plan, ready for a PNG or SVG in your documentation. Every flow is drawn as its own numbered line, with the table of its flows and of the firewall rules the asset needs. Filter by direction or by kind of flow. Export its flow matrix and firewall rules as CSV.</p>
       <ul class="facts"><li>Plans stay light, whatever the theme</li><li>Whole map or one site as JSON</li></ul>
     </div>
-    <figure class="shot"><img src="assets/img/plan-1200.webp" srcset="assets/img/plan-1200.webp 1200w, assets/img/plan.webp 2400w" sizes="(min-width: 1000px) 60vw, 100vw" width="2400" height="1500" alt="Architecture plan of the ERP server: Internet, Ubuntu repositories, the DMZ and the core IT zone with the devices crossed" loading="lazy"><figcaption>Architecture plan generated for app-erp.</figcaption></figure>
+    <figure class="shot"><img src="assets/img/plan-1200.webp" srcset="assets/img/plan-1200.webp 1200w, assets/img/plan.webp 2400w" sizes="(min-width: 1000px) 60vw, 100vw" width="2400" height="1500" alt="Architecture plan of the ERP server: one numbered line per flow through the edge and internal firewalls, coloured per flow" loading="lazy"><figcaption>Architecture plan generated for app-erp, one colour per flow.</figcaption></figure>
   </article>
 
   <article class="layer" style="--edge:var(--s3)">

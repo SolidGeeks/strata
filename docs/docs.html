@@ -39,6 +39,8 @@
       <li><a href="#systemd">Without Docker</a></li>
       <li><a href="#accounts">Accounts and roles</a></li>
       <li><a href="#map">Building the map</a></li>
+      <li><a href="#views">Views and business services</a></li>
+      <li><a href="#risk">Risk priorities</a></li>
       <li><a href="#proposals">Proposals and history</a></li>
       <li><a href="#services">Internet services</a></li>
       <li><a href="#connectors">Connectors</a></li>
@@ -53,7 +55,7 @@
   </nav>
 
   <article id="content">
-    <h1 class="strata-type"><span class="w">Documentation</span><span class="n">for Strata 0.5.</span></h1>
+    <h1 class="strata-type"><span class="w">Documentation</span><span class="n">for Strata 0.6.</span></h1>
     <p>Strata maps your information systems in 3D: each site is a stack of plates (zones), coloured by VLAN, holding its assets, the flows between them, what they expose, their vulnerabilities and the people to call. It runs on your own server.</p>
 
     <h2 id="install" style="--edge:var(--s7)">Install with Docker</h2>
@@ -150,13 +152,37 @@ docker compose exec strata node scripts/users.mjs disable alice</code></pre><but
     <h3>Sites, zones, VLANs</h3>
     <p>An information system (IS) is a site. <em>Zones, contacts</em> sets its zones (one level each, for example Industrial, Office, Core IT, Exposed), its VLANs with their ranges, and the IS contacts shown on assets that have none of their own. <em>Arrange plates</em> lets you drag a plate anywhere on its level; <em>Line up</em> puts a level back in a row.</p>
     <h3>Assets</h3>
-    <p>Each asset has a type (server, firewall, router, switch, workstation, PLC…), a VLAN, an IP, a system, applications with their listening ports, vulnerabilities with CVSS, a criticality, incident contacts and notes. Search by name or IP to fly to it.</p>
+    <p>Each asset has a type (server, firewall, router, switch, workstation, PLC…), a VLAN, an IP, a system, applications with their listening ports, vulnerabilities, a criticality, incident contacts and notes. A new asset starts on the first free IP of its VLAN range; an IP outside the range is pointed out. A vulnerability has a CVSS score or a severity, and optionally an EPSS (0 to 1, or a percentage) and a <em>Known exploited (CISA KEV)</em> mark. Search by name or IP to fly to it.</p>
     <h3>Flows</h3>
     <p>A flow goes from a source to a destination on a port: assets, the Internet, or a named Internet service. Strata suggests the devices it crosses (edge firewall for Internet traffic, core firewall or router between VLANs); untick <em>Suggested</em> to set the path yourself. Exposure follows from the flows: a port is <em>Internet</em>, <em>inter-VLAN</em> or <em>intra-VLAN</em> depending on where its traffic comes from.</p>
+    <p>Every flow crossing a firewall, router, switch or gateway has its own lane on that device, in 3D and in 2D. <em>Flows › Colour by</em> colours them by risk, by exposure, or <em>Per flow</em>: flows that cross the same device then never share a colour (up to 10). On a device sheet, <em>Flows crossing this equipment</em> lists them in lane order; hovering one picks it out on the model.</p>
     <h3>2D diagram</h3>
     <p>The <em>2D diagram</em> view is the same model, flat: drag assets and plates, draw a flow from one asset to another (<kbd>F</kbd>), add an asset on a plate (<kbd>A</kbd>), move (<kbd>V</kbd>). Positions are shared with the 3D model.</p>
     <h3>Theme</h3>
     <p><em>Display › Theme</em>: Auto follows the system, Day and Night force it. <kbd>N</kbd> switches.</p>
+
+    <h2 id="views" style="--edge:var(--s3)">Views and business services</h2>
+    <p>The switch at the top of an IS gives three points of view:</p>
+    <ul>
+      <li><strong>Physical</strong>: the 3D model and the 2D diagram.</li>
+      <li><strong>Application</strong>: one box per application (Nginx, Tomcat, PostgreSQL…) with the assets it runs on, and arrows for the flows between applications, from the one that sends them to the one listening on their port. Workstations and other pure clients are grouped by type and VLAN.</li>
+      <li><strong>Business</strong>: the business services of the IS, and everything each one relies on.</li>
+    </ul>
+    <p>A <strong>business service</strong> is an activity of the organisation: online sales, payroll, production line 1. Add one in the Business view (<em>+ Business service</em>) with a criticality, an owner and only the assets it runs on; an asset form also ticks the services it runs. Strata works out the rest from the flows: the assets they call, and so on, the equipment these flows cross and the equipment in front of the service, and the Internet services they use. Log and monitoring flows (syslog, SNMP traps, NetFlow) are left out. <em>Show on the model</em> picks a service out in 3D or 2D.</p>
+    <p>The asset sheet lists the <strong>business services impacted</strong> by an asset, and why: it runs on it, it relies on it through a chain of flows (<em>web-01 → app-erp → db-erp</em>), or its flows cross that equipment.</p>
+
+    <h2 id="risk" style="--edge:var(--s0)">Risk priorities</h2>
+    <p><em>Analysis › Risk priorities</em> gives one score per asset, from 0 to 100, and the vulnerabilities to fix in order. The score multiplies three factors, each between 0 and 1:</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Factor</th><th scope="col">How it is computed</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Vulnerabilities</th><td>For each one, its severity (CVSS / 10) times its likelihood of exploitation: 1 when it is on the CISA list of known exploited vulnerabilities, otherwise <code>0.15 + 0.85 × √EPSS</code>, otherwise 0.3. Combined as the chance that at least one gets exploited.</td></tr>
+        <tr><th scope="row">Context</th><td>The average of the exposure (Internet 1, inter-VLAN 0.7, intra-VLAN 0.45, none 0.3) and the reachability from the Internet along the flows (1 for one hop, 0.1 less for each extra hop, at least 0.5; 0.3 when not reachable).</td></tr>
+        <tr><th scope="row">Criticality</th><td>The higher of the asset’s own and that of the business services it would hit: low 0.5, medium 0.75, high 1.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Critical from 70, high from 40, medium from 20. The fixes are ordered by the score each vulnerability would give its asset on its own. <em>Remediation list (CSV)</em> exports the whole list. On the asset sheet, <em>Risk score › Why?</em> shows each factor.</p>
+    <p class="note">Strata does not download the EPSS and KEV feeds: it works offline. They come from the Cyberwatch connector, an import, or the asset form.</p>
 
     <h2 id="proposals" style="--edge:var(--s6)">Proposals and history</h2>
     <p>A contributor clicks <em>Propose a change</em>, then edits as usual: everything goes into a draft (blue <em>Draft</em> bar) and the live map does not move. <em>Submit for review</em> sends it to the approvers. A proposal can also start from a JSON file: a whole-map export, or one IS exported with <em>Export this IS (JSON)</em>.</p>
@@ -170,7 +196,7 @@ docker compose exec strata node scripts/users.mjs disable alice</code></pre><but
     <p>In <em>Collaboration › Connectors</em>. An admin fills in each connector’s settings; <em>Test the connection</em> checks access; <em>Sync now</em> (approver) runs it in the background; <em>Sync automatically every … hours</em> schedules it. <strong>Connectors never write the map:</strong> each run prepares one proposal per IS, refreshed in place while it is still open. When the map already matches, no proposal is created.</p>
     <p>Credentials are stored in <code>data/connectors.json</code> (mode 600), never sent back to browsers. For internal certificates, paste your CA in <em>More settings</em>, or tick <em>Accept any TLS certificate</em> on a trusted network. Assets remember their record in each tool (<code>ext</code>), so later syncs still match after a rename.</p>
     <h3>Cyberwatch</h3>
-    <p>Reads the server list and each server’s CVEs (API v3). Matches assets by host name, then IP. Lowest severity and maximum per asset are configurable; CVEs ignored in Cyberwatch are left out by default. Cyberwatch owns the <code>CVE-…</code> entries of the assets it scans; findings typed by hand are kept. Create a read-only API key in <em>Profile › API keys</em>; Basic authentication is the default, the older HMAC signature is available for older instances.</p>
+    <p>Reads the server list and each server’s CVEs (API v3). Matches assets by host name, then IP. Lowest severity and maximum per asset are configurable; CVEs ignored in Cyberwatch are left out by default. Cyberwatch owns the <code>CVE-…</code> entries of the assets it scans; findings typed by hand are kept. EPSS and the CISA KEV mark are read when Cyberwatch gives them. Create a read-only API key in <em>Profile › API keys</em>; Basic authentication is the default, the older HMAC signature is available for older instances.</p>
     <h3>GLPI</h3>
     <p>Reads computers, network devices, printers and phones through <code>apirest.php</code> (GLPI 9.5 and 10): IP addresses from network ports, operating system, installed software, technician and group in charge, location. The location picks the IS, with rules such as <code>Lyon = lyon</code> or <code>/^DC-?West/ = dcw</code>, otherwise the IS whose name appears in it. Existing assets get their system, applications and contacts (entries typed by hand stay); missing assets are created on the VLAN whose range holds their IP, or on a “To sort” plate. Enable the REST API, create an API client (App-Token) and a read-only service account with a user token.</p>
     <h3>phpIPAM</h3>
@@ -191,8 +217,9 @@ docker compose exec strata node scripts/users.mjs disable alice</code></pre><but
 
     <h2 id="exports" style="--edge:var(--s0)">Plans and exports</h2>
     <ul>
-      <li><strong>Architecture plan</strong> of an asset: every path to the Internet and every device crossed, as PNG or SVG; plans stay light whatever the theme.</li>
+      <li><strong>Architecture plan</strong> of an asset, as PNG or SVG, light whatever the theme. One right-angle line per flow, numbered, with the table of its flows (path, port, volume, exposure) and of the <strong>firewall rules</strong> the asset needs under the drawing. <em>Scope</em>: the asset’s own flows, or every path from and to the Internet. Filters: inbound, outbound, crossing; Internet, inter-VLAN, intra-VLAN. <em>Colour</em>: by exposure, or per flow.</li>
       <li><strong>Flow matrix</strong> and <strong>firewall rules</strong> of an asset as CSV (a generic table, to map to your firewall’s object names).</li>
+      <li><strong>Remediation list</strong> of an IS as CSV, from <em>Risk priorities</em>.</li>
       <li><strong>2D diagram</strong> as SVG.</li>
       <li><strong>Export JSON</strong>: the whole map, or one IS, to back up, move or edit elsewhere and bring back as a proposal.</li>
     </ul>
@@ -269,6 +296,8 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
       <li>Connectors follow the public API documentation of each tool and were tested against simulators: test, sync, and read the first proposal carefully. GLPI 11’s new API (<code>/api.php/v2</code>) is not supported yet.</li>
       <li>Palo Alto: NAT rules, security profiles, dynamic address groups and the Panorama device-group hierarchy are not interpreted.</li>
       <li>draw.io and Visio imports are not supported: only Strata JSON exports become proposals.</li>
+      <li>Business dependencies follow the recorded flows: a dependency with no flow on the map is not seen.</li>
+      <li>The risk score uses the EPSS and KEV values recorded on each vulnerability; Strata does not fetch them. A vulnerability is not tied to a port, so any open flow to its asset counts.</li>
     </ul>
   </article>
 </div>
@@ -278,7 +307,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
     <a href="https://solidgeeks.github.io/SolidGeeks/"> <img src="https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/footer/solid-geeks-footer.gif" alt="Solid Geeks: open source the world." width="100%"> </a>
   </div>
   <div class="wrap">
-    <p>Strata 0.5.5 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a> · <a href="https://github.com/SolidGeeks/strata/blob/main/CHANGELOG.md">Changelog</a></p>
+    <p>Strata 0.6.0 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a> · <a href="https://github.com/SolidGeeks/strata/blob/main/CHANGELOG.md">Changelog</a></p>
     <p>Cyberwatch, GLPI, phpIPAM and Palo Alto Networks are trademarks of their owners; Strata is not affiliated with them.</p>
   </div>
 </footer>
