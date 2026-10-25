@@ -1,217 +1,215 @@
 # Strata — v0.5
 
-[![Release](https://img.shields.io/github/v/release/SolidGeeks/strata)](https://github.com/SolidGeeks/strata/releases) [![Licence AGPL-3.0](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/license-agpl.svg)](LICENSE) [![Signed releases](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/signed-releases.svg)](#2-démarrage-rapide-avec-docker) [![Tests](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/SolidGeeks/strata)](https://github.com/SolidGeeks/strata/releases) [![License AGPL-3.0](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/license-agpl.svg)](LICENSE) [![Signed releases](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/signed-releases.svg)](#2-quick-start-with-docker) [![Tests](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml)
 
-**English:** Strata is a self-hosted 3D map of your information systems — zones, VLANs, assets, flows, exposure, vulnerabilities and incident contacts. Website and documentation: **https://solidgeeks.github.io/strata/**
+Strata is a self-hosted 3D map of your information systems (IS): zones, VLANs, low-poly assets, inbound and outbound flows, port exposure (Internet, inter-VLAN, intra-VLAN), vulnerabilities and incident contacts. Website and documentation: **https://solidgeeks.github.io/strata/**
 
-*Anciennement IS Map 3D. La suite de ce README est en français.*
+*Formerly IS Map 3D.*
 
-**Site et documentation** : le dossier `docs/` contient le site GitHub Pages (en anglais), avec le film de présentation piloté par le défilement. Activation : *Settings › Pages › Build and deployment › Deploy from a branch*, branche `main`, dossier `/docs`. Le code source du film est dans `media/reel/`.
+**Website and documentation:** the `docs/` folder holds the GitHub Pages site, with the scroll-driven presentation film. To publish it: *Settings › Pages › Build and deployment › Deploy from a branch*, branch `main`, folder `/docs`. The film's source code is in `media/reel/`.
 
-Cartographie 3D de systèmes d'information : SI, zones, VLAN, équipements low poly, flux entrants et sortants, exposition des ports (Internet, inter-VLAN, intra-VLAN), vulnérabilités et contacts d'incident.
+## Night mode (v0.5.2)
 
-## Mode nuit (v0.5.2)
+*Display › Theme*: **Auto** follows the system's light or dark setting (the default), **Day** and **Night** force one. Keyboard shortcut: **N** switches between day and night. The choice is remembered in the browser. The 3D view, the 2D diagram and the panels follow the theme; exported architecture plans (PNG/SVG) stay on a light background, for documentation.
 
-*Display › Theme* : **Auto** suit le réglage clair/sombre du système (comportement par défaut), **Day** et **Night** l'imposent. Raccourci clavier : **N** bascule entre jour et nuit. Le choix est mémorisé dans le navigateur. La 3D, le schéma 2D et les panneaux suivent le thème ; les plans d'architecture exportés (PNG/SVG) restent sur fond clair pour la documentation.
+## New name (v0.5.1)
 
-## Nouveau nom (v0.5.1)
+IS Map 3D is now called **Strata**, for the layers of plates that stack zones and VLANs. Nothing changes in the data: IS Map exports and backups import as they are, scripts that still send `X-Requested-With: is-map` keep working, and the map saved in the browser is found again.
 
-IS Map 3D s'appelle désormais **Strata**, pour les couches de plateaux qui empilent zones et VLAN. Rien ne change dans les données : les exports et sauvegardes IS Map s'importent tels quels, les scripts qui envoient encore `X-Requested-With: is-map` continuent de fonctionner, et la carte enregistrée dans le navigateur est retrouvée.
+**Upgrading an existing IS Map install:**
 
-**Mettre à jour une installation IS Map existante** :
+- **Docker:** the service is now called `strata` and the data volume `strata-data`. To keep your data, add the old volume's name to `.env` (`docker volume ls`, usually `is-map_ismap-data`): `DATA_VOLUME=is-map_ismap-data`. Then run `docker compose down --remove-orphans && docker compose up -d --build`. Commands become `docker compose logs -f strata`, `docker compose exec strata …`.
+- **systemd:** the new unit is `deploy/strata.service` (folders `/opt/strata`, `/var/lib/strata`, `/etc/strata.env`). You can also keep your old `is-map.service` unit and its paths: only the names change.
 
-- **Docker** : le service s'appelle maintenant `strata` et le volume de données `strata-data`. Pour garder vos données, ajoutez dans `.env` le nom de l'ancien volume (`docker volume ls`, en général `is-map_ismap-data`) : `DATA_VOLUME=is-map_ismap-data`. Puis `docker compose down --remove-orphans && docker compose up -d --build`. Les commandes deviennent `docker compose logs -f strata`, `docker compose exec strata …`.
-- **systemd** : le nouveau fichier est `deploy/strata.service` (dossiers `/opt/strata`, `/var/lib/strata`, `/etc/strata.env`). Vous pouvez aussi garder votre ancienne unité `is-map.service` et ses chemins : seuls les noms changent.
+## New in v0.5: connectors
 
-## Nouveautés de la v0.5 : connecteurs
+Four connectors, in *Collaboration › Connectors* (self-hosted version only). **None of them writes to the map directly:** each sync prepares **one proposal per IS**, which an `approver` reviews on the map (green / orange / red highlights) and then publishes or rejects, like a proposal made by hand. Until it is handled, the next sync updates the same proposal instead of piling up a new one. If the map already matches, no proposal is created.
 
-Quatre connecteurs, dans *Collaboration › Connectors* (version auto-hébergée uniquement). **Aucun n'écrit directement sur la carte** : chaque synchronisation prépare **une proposition par IS**, que un `approver` relit sur la carte (surlignage vert / orange / rouge) puis publie ou refuse, comme une proposition faite à la main. Tant qu'elle n'est pas traitée, la synchronisation suivante met à jour la même proposition au lieu d'en empiler une nouvelle. Si la carte correspond déjà, aucune proposition n'est créée.
-
-| Connecteur | Ce qu'il lit | Ce qu'il propose |
+| Connector | What it reads | What it proposes |
 |---|---|---|
-| **Cyberwatch** | serveurs et leurs CVE (API v3 : `/api/v3/vulnerabilities/servers`, puis le détail de chaque serveur) | les vulnérabilités des équipements, reconnus par nom d'hôte puis par IP. Sévérité minimale et nombre maximal par équipement réglables ; les CVE ignorées dans Cyberwatch sont écartées par défaut. Cyberwatch « possède » les entrées `CVE-…` des équipements qu'il scanne ; les constats saisis à la main (`Config.`…) sont conservés. |
-| **GLPI** | ordinateurs, équipements réseau, imprimantes, téléphones (API REST `apirest.php`) avec leur IP (ports réseau), système, logiciels installés, technicien et groupe responsables, lieu | le **lieu** désigne l'IS (règles `texte du lieu = id de l'IS`, ou à défaut l'IS dont le nom apparaît dans le lieu). Les équipements existants reçoivent système, applications et contacts (ceux saisis à la main restent ; une application saisie à la main garde ses ports et prend la version de l'inventaire). Les absents sont créés sur le VLAN dont la plage contient leur IP, sinon sur un plateau *To sort (from GLPI)* dans une zone *Imported*. |
-| **phpIPAM** | sections, sous-réseaux, VLAN, adresses (API `/api/{app}/…`) | les VLAN de chaque IS (numéro, nom, plage) : un sous-réseau déjà présent comme VLAN d'un IS va dans cet IS, sinon règles `section ou lieu = id de l'IS`. Les nouveaux VLAN arrivent dans la zone *Imported*. Les adresses complètent l'IP des équipements, déplacent un équipement vers le VLAN de son sous-réseau, et signalent les IP qui diffèrent (sans les changer). Création d'équipements depuis les adresses nommées : désactivée par défaut. |
-| **Palo Alto** | configuration PAN-OS d'un pare-feu ou de Panorama : **fichier XML** importé dans l'app (*Import a configuration file*, ouvert aux `contributor`) ou **API XML** (`type=export&category=configuration`, clé d'un rôle admin en lecture seule) | les règles *allow* actives deviennent des flux de l'IS choisi : objets d'adresse et groupes → équipements par IP (une plage est développée en ses équipements jusqu'à un seuil, 12 par défaut), adresses publiques et FQDN → services Internet existants (même hôte) ou nouveaux, services et groupes de services → ports (`application-default` → ports usuels des App-ID courants), et le pare-feu choisi comme équipement traversé. Une source `any` dans une zone `untrust`/`internet`/`outside`/`wan` vaut « Internet ». Les flux entrants depuis Internet sur un port d'administration ou de base de données sont marqués à risque. Les flux d'une règle disparue sont retirés (réglable) ; les flux dessinés à la main ne sont jamais touchés. Ce qui ne peut pas être dessiné (règles `any`→`any` internes, groupes dynamiques, négations, adresses sans équipement) est listé dans la proposition. |
+| **Cyberwatch** | servers and their CVEs (API v3: `/api/v3/vulnerabilities/servers`, then each server's details) | asset vulnerabilities, matched by host name, then by IP. Minimum severity and maximum count per asset can be set; CVEs ignored in Cyberwatch are left out by default. Cyberwatch "owns" the `CVE-…` entries of the assets it scans; findings entered by hand (`Config.`…) are kept. |
+| **GLPI** | computers, network devices, printers, phones (REST API `apirest.php`) with their IP (network ports), OS, installed software, technician and group in charge, location | the **location** points to the IS (rules `location text = IS id`, or else the IS whose name appears in the location). Existing assets get their OS, applications and contacts (those entered by hand stay; an application entered by hand keeps its ports and takes the version from the inventory). Missing assets are created on the VLAN whose range contains their IP, or else on a *To sort (from GLPI)* plate in an *Imported* zone. |
+| **phpIPAM** | sections, subnets, VLANs, addresses (API `/api/{app}/…`) | each IS's VLANs (number, name, range): a subnet already present as a VLAN of an IS goes to that IS, otherwise rules `section or location = IS id`. New VLANs arrive in the *Imported* zone. Addresses fill in asset IPs, move an asset to its subnet's VLAN, and flag IPs that differ (without changing them). Creating assets from named addresses: off by default. |
+| **Palo Alto** | PAN-OS configuration of a firewall or of Panorama: an **XML file** imported in the app (*Import a configuration file*, open to `contributor`) or the **XML API** (`type=export&category=configuration`, key of a read-only admin role) | active *allow* rules become flows of the chosen IS: address objects and groups → assets by IP (a range is expanded into its assets up to a threshold, 12 by default), public addresses and FQDNs → existing Internet services (same host) or new ones, services and service groups → ports (`application-default` → the usual ports of common App-IDs), and the chosen firewall as the device crossed. An `any` source in an `untrust`/`internet`/`outside`/`wan` zone means "Internet". Inbound flows from the Internet to an administration or database port are flagged as risky. Flows of a rule that disappeared are removed (can be turned off); flows drawn by hand are never touched. What cannot be drawn (internal `any`→`any` rules, dynamic groups, negations, addresses without an asset) is listed in the proposal. |
 
-Réglages : un `admin` renseigne chaque connecteur (*Settings*) ; *Test the connection* vérifie l'accès ; *Sync now* (approver) lance une synchronisation en arrière-plan ; *Sync automatically every … hours* la planifie. Les identifiants sont stockés côté serveur dans `data/connectors.json` (droits 600), **ne sont jamais renvoyés au navigateur** et ne sont pas dans les sauvegardes JSON de la carte (mais bien dans l'archive de `backup.sh`, protégez-la). Certificats internes : collez le certificat de votre AC dans *More settings*, ou cochez *Accept any TLS certificate* sur un réseau de confiance.
+Settings: an `admin` fills in each connector (*Settings*); *Test the connection* checks access; *Sync now* (approver) runs a sync in the background; *Sync automatically every … hours* schedules it. Credentials are stored on the server in `data/connectors.json` (mode 600), **are never sent back to the browser**, and are not in the map's JSON backups (but they are in the `backup.sh` archive: protect it). Internal certificates: paste your CA certificate in *More settings*, or tick *Accept any TLS certificate* on a trusted network.
 
-Les équipements gardent le lien vers leur fiche d'origine dans `ext` (par ex. `{"glpi":"Computer/12","cyberwatch":101}`), ce qui fiabilise les synchronisations suivantes, même après un renommage.
+Assets keep the link to their source record in `ext` (for example `{"glpi":"Computer/12","cyberwatch":101}`), which makes the next syncs reliable, even after a rename.
 
-Règle des quatre yeux : la proposition issue d'un **fichier** Palo Alto compte comme celle de la personne qui l'a importé (elle ne peut pas la valider elle-même). Une synchronisation en direct (données lues dans vos outils) peut être validée par celui qui l'a lancée.
+Four-eyes rule: a proposal from a Palo Alto **file** counts as the proposal of the person who imported it (they cannot approve it themselves). A live sync (data read from your tools) can be approved by the person who started it.
 
-### Préparer les comptes dans vos outils
+### Setting up the accounts in your tools
 
-- **Cyberwatch** : *Profil › Clés d'API › Ajouter*, clé en lecture seule. Authentification Basic (clé d'accès : clé secrète) ; l'ancienne signature *API Auth* HMAC-SHA256 reste disponible dans les réglages pour les anciennes instances. Le chemin de la liste des serveurs se change dans *More settings* si votre version diffère (vérifiez dans le Swagger de votre instance, bouton `</>`).
-- **GLPI** : *Configuration › Générale › API* : activer l'API REST, créer un client d'API (App-Token, restreint à l'IP du serveur Strata), puis un compte de service avec un profil en lecture sur le parc, les logiciels, les lieux, les groupes et les utilisateurs, et son *jeton d'API* (*Préférences › Clés d'accès distant*).
-- **phpIPAM** : *Administration › API* : créer une application (id `strata` par exemple), droits *Read*, sécurité *SSL with App code token* ; le code de l'application est le jeton.
-- **Palo Alto** : un rôle d'administration avec *XML API › Export* et *Configuration* en lecture seule, un compte qui l'utilise, puis sa clé (`https://pare-feu/api/?type=keygen`) ; ou laissez le connecteur générer la clé avec l'utilisateur et le mot de passe.
+- **Cyberwatch:** *Profile › API keys › Add*, read-only key. Basic authentication (access key : secret key); the older HMAC-SHA256 *API Auth* signature is still available in the settings for older instances. The path of the server list can be changed in *More settings* if your version differs (check your instance's Swagger, `</>` button).
+- **GLPI:** *Setup › General › API*: enable the REST API, create an API client (App-Token, restricted to the Strata server's IP), then a service account with a profile that can read the assets, software, locations, groups and users, and its *API token* (*Preferences › Remote access keys*).
+- **phpIPAM:** *Administration › API*: create an application (id `strata`, for example), *Read* permission, security *SSL with App code token*; the application code is the token.
+- **Palo Alto:** an admin role with *XML API › Export* and *Configuration* read-only, an account that uses it, then its key (`https://firewall/api/?type=keygen`); or let the connector generate the key from the user name and password.
 
-`CONNECTORS=false` dans `.env` désactive complètement les connecteurs.
+`CONNECTORS=false` in `.env` turns the connectors off completely.
 
-**Licence** : Strata est un logiciel libre sous [GNU AGPL v3](LICENSE). Vous pouvez l'utiliser, le modifier et le redistribuer ; si vous mettez une version **modifiée** à disposition d'utilisateurs via le réseau, vous devez leur donner accès à son code source. Le lien *Source code* en bas du panneau de contrôle pointe vers `SOURCE_URL` (dans `.env`) : faites-le pointer vers votre fork si vous modifiez le code.
+**License:** Strata is free software under the [GNU AGPL v3](LICENSE). You can use it, modify it and redistribute it; if you make a **modified** version available to users over a network, you must give them access to its source code. The *Source code* link at the bottom of the control panel points to `SOURCE_URL` (in `.env`): point it at your fork if you modify the code.
 
-Pour essayer sans brancher vos outils : chargez la démo, lancez `node scripts/connector-sim.mjs` (avec Docker : `docker compose exec -d strata node scripts/connector-sim.mjs`) (faux Cyberwatch, GLPI, phpIPAM et PAN-OS sur le port 8099, avec des données qui correspondent à l'IS Lyon) et reprenez les adresses et identifiants indiqués en tête du script.
+To try it without plugging in your tools: load the demo, run `node scripts/connector-sim.mjs` (with Docker: `docker compose exec -d strata node scripts/connector-sim.mjs`) (fake Cyberwatch, GLPI, phpIPAM and PAN-OS on port 8099, with data matching the Lyon IS) and use the addresses and credentials listed at the top of the script.
 
-## Nouveautés de la v0.4
+## New in v0.4
 
-- **Comptes nominatifs et rôles** (version auto-hébergée) :
+- **Named accounts and roles** (self-hosted version):
 
-  | Rôle | Peut |
+  | Role | Can |
   |---|---|
-  | `viewer` | consulter la carte, les fiches, les plans et l'historique |
-  | `contributor` | en plus, préparer des propositions (brouillons) et les soumettre |
-  | `approver` | en plus, modifier la carte directement, valider ou refuser les propositions, restaurer une version |
-  | `admin` | en plus, gérer les comptes |
+  | `viewer` | browse the map, the asset sheets, the plans and the history |
+  | `contributor` | also prepare proposals (drafts) and submit them |
+  | `approver` | also edit the map directly, approve or reject proposals, restore a version |
+  | `admin` | also manage accounts |
 
-  Le premier admin vient de `EDIT_USER` / `EDIT_PASS` (recréé ou réinitialisé à chaque démarrage, pratique en cas d'oubli). Les autres comptes se gèrent dans l'app (*Collaboration › Account*) ou en ligne de commande : `node scripts/users.mjs set alice contributor` (avec Docker : `docker compose exec strata node scripts/users.mjs set alice contributor`). Chacun change son mot de passe dans *Account*. Les mots de passe sont stockés hachés (scrypt) dans `data/users.json`.
-- **Historique des versions et rollback** : chaque modification est enregistrée (qui, quand, quoi) dans `data/history.jsonl`. *Collaboration › History* liste les changements, pour l'IS ouvert ou toute la carte. *View* affiche la carte telle qu'elle était (lecture seule, bandeau jaune), *Restore* remet toute la carte à cette version. La restauration est elle-même une version : elle peut être annulée.
-- **Propositions à valider** : un contributeur clique *Propose a change*, puis modifie la carte normalement (schéma 2D, fiches, formulaires). Tout va dans un brouillon (bandeau bleu *Draft*), la carte réelle ne bouge pas. *Submit for review* l'envoie aux validateurs.
-  - Le validateur ouvre la proposition depuis *Proposals* : la carte s'affiche avec les changements appliqués, surlignés (vert : ajouté, orange : modifié, rouge pointillé : flux supprimé), et la liste détaillée des changements. Il commente, puis *Approve and publish* (la proposition devient une version de l'historique) ou *Reject* (l'auteur peut la reprendre).
-  - Règle des quatre yeux : on ne valide pas sa propre proposition (sauf `ALLOW_SELF_APPROVAL=true`).
-  - Si la carte a changé entre-temps sur les mêmes éléments, le validateur est prévenu et choisit de publier quand même ou non.
-  - **Depuis un fichier** : *New proposal › A file* accepte un export JSON Strata (ou IS Map) (toute la carte, ou un seul IS exporté avec *Export this IS (JSON)* depuis la fiche de l'IS). Les différences avec la carte deviennent le contenu de la proposition.
-- **Services Internet** : au lieu d'un seul nuage « Internet », on décrit les services autorisés (serveurs de mise à jour ESET, dépôts Ubuntu, Windows Update, NTP, SaaS…) avec leurs FQDN/IP et ports. Ils sont **partagés par tous les IS** (catalogue commun, vue d'ensemble) ou **propres à un IS** (bouton *+ This IS*). Les flux peuvent avoir un service comme source ou destination : ils apparaissent à côté du nuage en 3D, en tête du schéma 2D, dans les plans d'architecture, et l'export des règles firewall utilise leurs FQDN comme adresse de destination.
+  The first admin comes from `EDIT_USER` / `EDIT_PASS` (recreated or reset on every start, handy if you forget the password). Other accounts are managed in the app (*Collaboration › Account*) or from the command line: `node scripts/users.mjs set alice contributor` (with Docker: `docker compose exec strata node scripts/users.mjs set alice contributor`). Everyone changes their own password in *Account*. Passwords are stored hashed (scrypt) in `data/users.json`.
+- **Version history and rollback:** every change is recorded (who, when, what) in `data/history.jsonl`. *Collaboration › History* lists the changes, for the open IS or the whole map. *View* shows the map as it was (read-only, yellow banner), *Restore* puts the whole map back to that version. A restore is itself a version: it can be undone.
+- **Proposals to review:** a contributor clicks *Propose a change*, then edits the map as usual (2D diagram, sheets, forms). Everything goes into a draft (blue *Draft* banner); the real map does not move. *Submit for review* sends it to the approvers.
+  - The approver opens the proposal from *Proposals*: the map shows with the changes applied and highlighted (green: added, orange: changed, dotted red: flow removed), with the detailed list of changes. They comment, then *Approve and publish* (the proposal becomes a version in the history) or *Reject* (the author can rework it).
+  - Four-eyes rule: you cannot approve your own proposal (unless `ALLOW_SELF_APPROVAL=true`).
+  - If the map changed in the meantime on the same items, the approver is warned and chooses whether to publish anyway.
+  - **From a file:** *New proposal › A file* accepts a Strata (or IS Map) JSON export (the whole map, or a single IS exported with *Export this IS (JSON)* from the IS sheet). The differences with the map become the content of the proposal.
+- **Internet services:** instead of a single "Internet" cloud, you describe the services allowed (ESET update servers, Ubuntu repositories, Windows Update, NTP, SaaS…) with their FQDNs/IPs and ports. They are **shared by every IS** (common catalogue, overview) or **specific to one IS** (*+ This IS* button). Flows can have a service as their source or destination: they appear next to the cloud in 3D, at the top of the 2D diagram, in architecture plans, and the firewall rules export uses their FQDNs as the destination address.
 
-## Nouveautés de la v0.3
+## New in v0.3
 
-- **Schéma 2D synchronisé** : dans un SI, le sélecteur en haut de l'écran bascule entre *3D model* et *2D diagram*. Le schéma 2D montre exactement les mêmes données : une bande par niveau, les plateaux VLAN dans le même ordre, les équipements à la même place, les flux avec leurs équipements traversés.
-  - Glisser un équipement le déplace sur son plateau, ou le fait changer de VLAN si on le lâche sur un autre plateau. La position est enregistrée et reprise dans la maquette 3D.
-  - Glisser l'en-tête d'un plateau le déplace sur son niveau, ou le fait changer de zone si on le lâche sur un autre niveau.
-  - Outil *+ Flow* (touche F) : appuyer sur l'équipement source et relâcher sur la destination (ou sur Internet) ouvre le formulaire du flux, déjà rempli.
-  - Outil *+ Asset* (touche A) : cliquer sur un plateau à l'endroit voulu ouvre le formulaire d'un nouvel équipement sur ce VLAN.
-  - Le bouton *Auto* d'un plateau rangé à la main revient au rangement automatique.
-  - Les filtres (direction, exposition, sévérité, VLAN masqués), la fiche des équipements, le détail des flux, le plan 2D par équipement et les exports CSV fonctionnent pareil dans les deux vues. *Export SVG* enregistre le schéma complet du SI.
-  - Le compte lecture seule peut consulter le schéma, sans rien déplacer.
+- **Synchronized 2D diagram:** in an IS, the selector at the top of the screen switches between *3D model* and *2D diagram*. The 2D diagram shows exactly the same data: one band per level, the VLAN plates in the same order, the assets in the same place, the flows with the devices they cross.
+  - Dragging an asset moves it on its plate, or moves it to another VLAN if dropped on another plate. The position is saved and used by the 3D model.
+  - Dragging a plate's header moves it along its level, or moves it to another zone if dropped on another level.
+  - *+ Flow* tool (F key): press on the source asset and release on the destination (or on the Internet) to open the flow form, already filled in.
+  - *+ Asset* tool (A key): click a plate where you want it to open the form for a new asset on that VLAN.
+  - The *Auto* button of a plate arranged by hand goes back to automatic arrangement.
+  - Filters (direction, exposure, severity, hidden VLANs), the asset sheet, flow details, the per-asset 2D plan and CSV exports work the same in both views. *Export SVG* saves the whole IS diagram.
+  - The read-only account can browse the diagram, without moving anything.
 
-## Nouveautés de la v0.2
+## New in v0.2
 
-- **Maquette plus lisible** : les pylônes sous les plateaux sont masqués par défaut (réglage *Layout › Standoffs* : Hidden, Thin ou Full) et les équipements sont rangés en grille serrée (*Asset spacing* : Compact ou Comfortable). La hauteur entre niveaux se règle dans *Display › Level height*.
-- **Ranger les VLAN** : bouton *Arrange plates*, puis glisser un plateau n'importe où sur son niveau (gauche, droite, avant, arrière ; v0.4.2), le bouton *Line up* remet le niveau en ligne, ou utiliser les flèches qui apparaissent dans la liste des VLAN (en mode « 1 VLAN per floor », les flèches changent l'étage). L'ordre est enregistré dans le SI (`vlans[].pos`).
-- **Flux à travers les équipements d'interconnexion** : chaque flux passe par les pare-feu, routeurs ou switchs qu'il traverse. Le chemin est proposé automatiquement (pare-feu de bordure pour Internet, pare-feu interne ou routeur de cœur entre VLAN) et se corrige flux par flux dans *Edit the flow › Path through the network*. Des cônes indiquent le sens à chaque saut ; survoler un fil affiche « source → équipements → destination », cliquer dessus ouvre le détail du flux. Nouveau type d'équipement : *Router / L3 core*.
-- **OS et applications** : chaque équipement liste les applications qui tournent dessus (nom, version, ports d'écoute). La fiche montre l'équipement « ouvert » : applications, système, matériel. Un port exposé indique l'application qui l'écoute.
-- **Plan d'architecture 2D** : depuis la fiche d'un équipement, bouton *2D plan*. Le plan montre l'équipement avec ses applications et son OS, ses flux directs, les équipements traversés et tous les chemins enregistrés depuis et vers Internet, rangés par zone et par VLAN. Export **SVG** (vectoriel, pour Confluence, Word, draw.io) ou **PNG**.
-- **Exports CSV** depuis la fiche : *Flow matrix* (matrice de flux de l'équipement, avec le chemin et les pare-feu traversés) et *Firewall rules* (une règle d'autorisation par flux et par pare-feu traversé, regroupées par pare-feu ; pour un pare-feu, sa propre base de règles). Séparateur point-virgule et UTF-8, pour ouvrir directement dans Excel. Les flux qui ne traversent aucun pare-feu sont listés à la fin.
+- **A more readable model:** the pylons under the plates are hidden by default (*Layout › Standoffs*: Hidden, Thin or Full) and assets are laid out in a tight grid (*Asset spacing*: Compact or Comfortable). The height between levels is set in *Display › Level height*.
+- **Arranging VLANs:** *Arrange plates* button, then drag a plate anywhere on its level (left, right, front, back; v0.4.2); the *Line up* button puts the level back in a line; or use the arrows shown in the VLAN list (in "1 VLAN per floor" mode, the arrows change the floor). The order is saved in the IS (`vlans[].pos`).
+- **Flows through network devices:** each flow goes through the firewalls, routers or switches it crosses. The path is suggested automatically (edge firewall for the Internet, internal firewall or core router between VLANs) and can be corrected flow by flow in *Edit the flow › Path through the network*. Cones show the direction at each hop; hovering a wire shows "source → devices → destination", clicking it opens the flow details. New asset type: *Router / L3 core*.
+- **OS and applications:** each asset lists the applications running on it (name, version, listening ports). The sheet shows the asset "open": applications, OS, hardware. An exposed port shows the application listening on it.
+- **2D architecture plan:** from an asset's sheet, *2D plan* button. The plan shows the asset with its applications and OS, its direct flows, the devices crossed and every recorded path to and from the Internet, grouped by zone and by VLAN. Export as **SVG** (vector, for Confluence, Word, draw.io) or **PNG**.
+- **CSV exports** from the sheet: *Flow matrix* (the asset's flow matrix, with the path and the firewalls crossed) and *Firewall rules* (one allow rule per flow and per firewall crossed, grouped by firewall; for a firewall, its own rule base). Semicolon separator and UTF-8, to open directly in Excel. Flows that cross no firewall are listed at the end.
 
-Le paquet contient l'application web et un petit serveur Node.js **sans dépendance** :
+The package contains the web app and a small Node.js server **with no runtime dependencies**:
 
-- les données sont partagées entre tous les utilisateurs et stockées dans un seul fichier JSON ;
-- les modifications apparaissent en direct chez les autres utilisateurs ;
-- l'accès est protégé par mot de passe, avec un compte éditeur et un compte lecture seule optionnel ;
-- des sauvegardes automatiques sont faites au démarrage, chaque jour et avant chaque import ;
-- tout fonctionne hors ligne : three.js et les polices sont servis localement, sans CDN ni Google Fonts.
+- data is shared by all users and stored in a single JSON file;
+- changes show up live for the other users;
+- access is protected by named accounts with roles, and an optional shared read-only account;
+- automatic backups are made at startup, every day, and before each import;
+- everything works offline: three.js and the fonts are served locally, with no CDN or Google Fonts.
 
 ```
 strata/
-├── public/            l'application (index.html, app.js, app.css)
-├── server/server.js   le serveur (API + fichiers statiques)
-├── scripts/           vendor.mjs (récupère three.js et les polices), users.mjs (comptes), backup.sh, restore.sh
+├── public/            the app (index.html, app.js, app.css)
+├── server/server.js   the server (API + static files)
+├── scripts/           vendor.mjs (fetches three.js and the fonts), users.mjs (accounts), backup.sh, restore.sh
 ├── deploy/            Caddyfile (HTTPS), strata.service (systemd)
-├── tests/             tests de l'API (npm test)
+├── tests/             API tests (npm test)
 ├── Dockerfile, docker-compose.yml, .env.example
 └── package.json
 ```
 
 ---
 
-## 1. Prérequis
+## 1. Requirements
 
-L'une des deux options suivantes :
+One of these two options:
 
-- **Docker** avec Docker Compose v2 (`docker compose version`), recommandé ;
-- **Node.js 20 ou plus** (`node --version`).
+- **Docker** with Docker Compose v2 (`docker compose version`), recommended;
+- **Node.js 20 or later** (`node --version`).
 
-La machine a besoin d'un accès au registre npm **une seule fois**, lors de la construction, pour télécharger three.js 0.128 et les polices. Ensuite, l'application tourne sans Internet.
+The machine needs access to the npm registry **once**, during the build, to download three.js 0.128 and the fonts. After that, the app runs without Internet access.
 
-Côté utilisateurs, il faut un navigateur récent avec WebGL (Chrome, Edge, Firefox ou Safari récents).
+Users need a recent browser with WebGL (recent Chrome, Edge, Firefox or Safari).
 
 ---
 
-## 2. Démarrage rapide avec Docker
+## 2. Quick start with Docker
 
 ```bash
 cd strata
 cp .env.example .env
-nano .env                       # changez EDIT_PASS
-docker compose up -d --build    # construit l'image ici (accès au registre npm nécessaire pendant la construction)
+nano .env                       # change EDIT_PASS
+docker compose up -d --build    # builds the image here (needs the npm registry during the build)
 ```
 
-Sous Windows (PowerShell ou cmd) : `copy .env.example .env`, puis éditez `.env` avec le Bloc-notes (`notepad .env`).
+On Windows (PowerShell or cmd): `copy .env.example .env`, then edit `.env` with Notepad (`notepad .env`).
 
-Une fois une version publiée sur GitHub (tag `vX.Y.Z`, voir le workflow `Release`), `docker compose pull && docker compose up -d` récupère l'image toute prête `ghcr.io/solidgeeks/strata`. Avant cela, `pull` répond `denied` : l'image n'existe pas encore.
+Or use the prebuilt image published with each release (tag `vX.Y.Z`, see the `Release` workflow): `docker compose pull && docker compose up -d` fetches `ghcr.io/solidgeeks/strata`.
 
-Chaque image publiée est **signée** : une attestation prouve qu'elle a été construite par le workflow `Release` de ce dépôt, à partir du code du tag. Pour le vérifier avant de la déployer (il faut la [CLI GitHub](https://cli.github.com/)) :
+Every published image is **signed**: an attestation proves it was built by this repository's `Release` workflow, from the code of the tag. To check it before deploying (you need the [GitHub CLI](https://cli.github.com/)):
 
 ```bash
 gh attestation verify oci://ghcr.io/solidgeeks/strata:0.5.4 --owner SolidGeeks
 ```
 
-La commande doit afficher `Verification succeeded!`. Si elle échoue, n'utilisez pas l'image et signalez-le (voir [SECURITY.md](SECURITY.md)). Les images antérieures à 0.5.4 ne sont pas signées.
+The command must print `Verification succeeded!`. If it fails, do not use the image, and report it (see [SECURITY.md](SECURITY.md)). Images older than 0.5.4 are not signed.
 
-Ouvrez ensuite http://localhost:8080 et connectez-vous avec `EDIT_USER` / `EDIT_PASS`.
+Then open http://localhost:8080 and sign in with `EDIT_USER` / `EDIT_PASS`.
 
-La carte est vide au départ. Pour l'explorer, cliquez sur **Load demo (5 IS)**. Pour repartir de zéro, cliquez sur **Delete everything**.
+The map starts empty. To explore it, click **Load demo (5 IS)**. To start from scratch, click **Delete everything**.
 
-Commandes utiles :
+Useful commands:
 
 ```bash
-docker compose logs -f strata    # journaux
-docker compose restart strata    # redémarrer
-docker compose down             # arrêter (les données restent dans le volume)
+docker compose logs -f strata    # logs
+docker compose restart strata    # restart
+docker compose down             # stop (the data stays in the volume)
 ```
 
-Par défaut, le port n'écoute que sur la machine elle-même (`127.0.0.1:8080`). Pour l'ouvrir à votre réseau, voir la section 4.
+By default, the port only listens on the machine itself (`127.0.0.1:8080`). To open it to your network, see section 4.
 
 ---
 
 ## 3. Configuration (`.env`)
 
-| Variable | Défaut | Rôle |
+| Variable | Default | Meaning |
 |---|---|---|
-| `EDIT_USER` / `EDIT_PASS` | `admin` / vide | Premier compte admin, recréé ou réinitialisé à chaque démarrage. **Sans `EDIT_PASS` et sans compte dans `data/users.json`, il n'y a aucune authentification.** |
-| `VIEW_USER` / `VIEW_PASS` | `viewer` / vide | Compte lecture seule partagé, ignoré si `VIEW_PASS` est vide. |
-| `ALLOW_SELF_APPROVAL` | `false` | `true` permet à un validateur de valider ses propres propositions. |
-| `HISTORY_KEEP` | `5000` | Nombre de changements conservés dans l'historique. |
-| `READ_ONLY` | `false` | Fige la carte pour tout le monde. |
-| `BACKUP_KEEP` | `14` | Nombre de sauvegardes automatiques conservées. |
-| `BACKUP_EVERY_HOURS` | `24` | Fréquence des sauvegardes automatiques. |
-| `MAX_IMPORT_MB` | `20` | Taille maximale d'un fichier importé. |
-| `PORT` / `HOST` | `8080` / `0.0.0.0` | Écoute du serveur. |
-| `DATA_DIR` | `/data` (Docker) | Dossier des données et des sauvegardes. |
-| `SITE_ADDRESS` | — | Nom DNS utilisé par le proxy HTTPS (section 4). |
-| `CONNECTORS` | activés | `false` désactive les connecteurs (Cyberwatch, GLPI, phpIPAM, Palo Alto). |
-| `SOURCE_URL` | `https://github.com/SolidGeeks/strata` | Lien *Source code* de l'app (AGPL) : faites-le pointer vers votre fork si vous modifiez le code. |
-| `DATA_VOLUME` | `strata-data` | Nom du volume Docker des données (reprise d'une installation IS Map, voir plus haut). |
+| `EDIT_USER` / `EDIT_PASS` | `admin` / empty | First admin account, recreated or reset on every start. **With no `EDIT_PASS` and no account in `data/users.json`, there is no authentication at all.** |
+| `VIEW_USER` / `VIEW_PASS` | `viewer` / empty | Shared read-only account, ignored while `VIEW_PASS` is empty. |
+| `ALLOW_SELF_APPROVAL` | `false` | `true` lets an approver approve their own proposals. |
+| `HISTORY_KEEP` | `5000` | Number of changes kept in the history. |
+| `READ_ONLY` | `false` | Freezes the map for everyone. |
+| `BACKUP_KEEP` | `14` | Number of automatic backups kept. |
+| `BACKUP_EVERY_HOURS` | `24` | How often automatic backups are made. |
+| `MAX_IMPORT_MB` | `20` | Maximum size of an imported file. |
+| `PORT` / `HOST` | `8080` / `0.0.0.0` | Where the server listens. |
+| `DATA_DIR` | `/data` (Docker) | Folder for the data and the backups. |
+| `SITE_ADDRESS` | — | DNS name used by the HTTPS proxy (section 4). |
+| `CONNECTORS` | on | `false` turns the connectors off (Cyberwatch, GLPI, phpIPAM, Palo Alto). |
+| `SOURCE_URL` | `https://github.com/SolidGeeks/strata` | The app's *Source code* link (AGPL): point it at your fork if you modify the code. |
+| `DATA_VOLUME` | `strata-data` | Name of the Docker data volume (to take over an IS Map install, see above). |
 
-Après une modification de `.env`, appliquez-la avec `docker compose up -d`.
+After changing `.env`, apply it with `docker compose up -d`.
 
 ---
 
-## 4. Accès réseau et HTTPS
+## 4. Network access and HTTPS
 
-Les mots de passe circulent en Basic Auth : **n'exposez jamais l'application en HTTP simple en dehors de la machine**.
+Passwords travel with Basic Auth: **never expose the app over plain HTTP outside the machine**.
 
-### Option A — proxy HTTPS fourni (Caddy)
+### Option A — the bundled HTTPS proxy (Caddy)
 
-1. Dans `.env`, renseignez `SITE_ADDRESS=strata.mondomaine.lan`, le nom que vos utilisateurs taperont.
-2. Faites pointer ce nom vers la machine (DNS interne ou fichier hosts).
-3. Lancez :
+1. In `.env`, set `SITE_ADDRESS=strata.example.lan`, the name your users will type.
+2. Point that name at the machine (internal DNS or hosts file).
+3. Run:
    ```bash
    docker compose --profile https up -d --build
    ```
-4. Ouvrez https://strata.mondomaine.lan.
+4. Open https://strata.example.lan.
 
-Le `Caddyfile` utilise `tls internal` : Caddy signe le certificat avec sa propre autorité locale, ce qui convient à un réseau interne ou à un VPN. Pour supprimer l'avertissement du navigateur, installez cette autorité sur vos postes :
+The `Caddyfile` uses `tls internal`: Caddy signs the certificate with its own local authority, which suits an internal network or a VPN. To remove the browser warning, install that authority on your users' machines:
 
 ```bash
 docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
 ```
 
-Si le nom est public et joignable depuis Internet sur les ports 80 et 443, supprimez la ligne `tls internal` et Caddy obtiendra un certificat Let's Encrypt tout seul.
+If the name is public and reachable from the Internet on ports 80 and 443, remove the `tls internal` line and Caddy gets a Let's Encrypt certificate by itself.
 
-### Option B — votre reverse proxy existant (nginx, Traefik…)
+### Option B — your existing reverse proxy (nginx, Traefik…)
 
-Faites pointer le proxy vers `http://127.0.0.1:8080`. Les mises à jour en direct passent par Server-Sent Events sur `/api/events` : il faut **désactiver la mise en tampon** sur ce chemin. Exemple nginx :
+Point the proxy at `http://127.0.0.1:8080`. Live updates use Server-Sent Events on `/api/events`: **response buffering must be turned off** on that path. nginx example:
 
 ```nginx
 location / {
@@ -225,16 +223,16 @@ location /api/events {
 }
 ```
 
-L'application fonctionne aussi dans un sous-chemin (par exemple `https://intranet/strata/`), car elle n'utilise que des chemins relatifs.
+The app also works under a sub-path (for example `https://intranet/strata/`), because it only uses relative paths.
 
 ---
 
-## 5. Installation sans Docker (systemd)
+## 5. Install without Docker (systemd)
 
 ```bash
 sudo mkdir -p /opt/strata && sudo cp -r strata/* /opt/strata/
 cd /opt/strata
-sudo npm run setup        # npm install + copie de three.js et des polices dans public/vendor
+sudo npm run setup        # npm ci + copies three.js and the fonts into public/vendor
 sudo useradd --system --home /opt/strata --shell /usr/sbin/nologin strata
 sudo mkdir -p /var/lib/strata && sudo chown strata:strata /var/lib/strata
 sudo cp .env.example /etc/strata.env && sudo nano /etc/strata.env && sudo chmod 600 /etc/strata.env
@@ -243,171 +241,171 @@ sudo systemctl daemon-reload && sudo systemctl enable --now strata
 journalctl -u strata -f
 ```
 
-Le service écoute sur `127.0.0.1:8080`. Placez un reverse proxy HTTPS devant, comme dans l'option B.
+The service listens on `127.0.0.1:8080`. Put an HTTPS reverse proxy in front of it, as in option B.
 
-Pour un test rapide sur un poste :
+For a quick test on a workstation:
 
 ```bash
 npm run setup
 EDIT_PASS=test npm start
 ```
 
-Ouvrez ensuite http://localhost:8080.
+Then open http://localhost:8080.
 
 ---
 
-## 6. Sauvegardes et restauration
+## 6. Backups and restore
 
-Pour revenir sur une erreur de saisie, le plus simple est l'historique dans l'app (*Collaboration › History › Restore*). Les sauvegardes servent en cas de perte du serveur.
+To undo a mistake, the simplest is the history in the app (*Collaboration › History › Restore*). Backups are for losing the server.
 
-**Automatiques** : le serveur copie `db.json` dans `/data/backups/` au démarrage, toutes les `BACKUP_EVERY_HOURS` heures, avant chaque import et avant chaque restauration de version. Il garde les `BACKUP_KEEP` plus récentes.
+**Automatic:** the server copies `db.json` into `/data/backups/` at startup, every `BACKUP_EVERY_HOURS` hours, before each import and before each version restore. It keeps the `BACKUP_KEEP` most recent ones.
 
-**Manuelles** (Docker) :
+**Manual** (Docker):
 
 ```bash
-./scripts/backup.sh                                          # backups/strata-AAAAMMJJ-HHMMSS.tar.gz : carte, historique, propositions, comptes
-./scripts/restore.sh backups/strata-20261024-120000.tar.gz   # remet tout
-./scripts/restore.sh export.json                             # remet seulement la carte (db.json ou Export JSON)
+./scripts/backup.sh                                          # backups/strata-YYYYMMDD-HHMMSS.tar.gz: map, history, proposals, accounts
+./scripts/restore.sh backups/strata-20261024-120000.tar.gz   # restores everything
+./scripts/restore.sh export.json                             # restores the map only (db.json or Export JSON)
 ```
 
-Le script de restauration sauvegarde automatiquement l'existant avant de le remplacer. Après la restauration d'un `db.json` seul, les lignes d'historique plus récentes que ce fichier sont ignorées.
+The restore script backs up what is there before replacing it. After restoring a `db.json` on its own, history lines newer than that file are ignored.
 
-Depuis l'interface, **Export JSON** télécharge la carte complète et **Import JSON** la recharge (sur la même instance ou une autre).
+From the interface, **Export JSON** downloads the whole map and **Import JSON** loads it back (on the same instance or another one).
 
-Pensez à inclure le dossier de sauvegardes ou le volume Docker `strata-data` dans votre sauvegarde habituelle.
-
----
-
-## 7. Reprendre les données saisies dans la version Claude
-
-1. Dans la version publiée sur Claude, sur la vue d'ensemble, cliquez sur **Export JSON** et enregistrez le fichier.
-2. Dans votre instance, connecté en éditeur, cliquez sur **Import JSON** et choisissez ce fichier.
-
-Le format est le même : SI, zones, VLAN, équipements, contacts, flux et liens inter-SI sont repris tels quels. Un export de la v0.1 s'importe sans changement dans la v0.2 : les chemins des flux sont alors proposés automatiquement.
+Remember to include the backups folder or the `strata-data` Docker volume in your usual backups.
 
 ---
 
-## 8. Mise à jour
+## 7. Taking over the data entered in the Claude version
+
+1. In the version published on Claude, on the overview, click **Export JSON** and save the file.
+2. In your instance, signed in as an editor, click **Import JSON** and pick that file.
+
+The format is the same: IS, zones, VLANs, assets, contacts, flows and links between IS are taken over as they are. A v0.1 export imports unchanged into v0.2: flow paths are then suggested automatically.
+
+---
+
+## 8. Upgrading
 
 ```bash
 ./scripts/backup.sh
-# remplacez les fichiers du dossier par la nouvelle version (gardez votre .env)
+# replace the folder's files with the new version (keep your .env)
 docker compose up -d --build
 ```
 
-Les données vivent dans le volume Docker et ne sont pas touchées par la reconstruction.
+The data lives in the Docker volume and is not touched by the rebuild.
 
 ---
 
-## 9. API (pour automatiser)
+## 9. API (for automation)
 
-Toutes les routes demandent les mêmes identifiants que l'interface, avec les droits du rôle du compte (les écritures directes demandent `approver`). Les écritures exigent les en-têtes `Content-Type: application/json` et `X-Requested-With: strata` (`is-map` reste accepté). Un script peut grouper plusieurs écritures en une seule entrée d'historique avec les en-têtes `X-Batch: <identifiant>` et `X-Batch-Label: <libellé encodé en URL>`. Pour qu'un outil propose au lieu d'écrire, donnez-lui un compte `contributor` et passez par `POST /api/proposals` avec `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (un document à `null` = suppression).
+Every route needs the same credentials as the interface, with the rights of the account's role (direct writes need `approver`). Writes require the headers `Content-Type: application/json` and `X-Requested-With: strata` (`is-map` is still accepted). A script can group several writes into a single history entry with the headers `X-Batch: <id>` and `X-Batch-Label: <URL-encoded label>`. To have a tool propose instead of write, give it a `contributor` account and use `POST /api/proposals` with `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (a document set to `null` = deletion).
 
-| Méthode et route | Rôle |
+| Method and route | What it does |
 |---|---|
-| `GET /api/state` | Toute la carte : `{si, assets, wan, rev}` |
-| `GET /api/export` | Même contenu, en fichier à télécharger |
-| `PUT /api/si/{id}` | Crée ou remplace un SI (zones, VLAN, flux, contacts) |
-| `DELETE /api/si/{id}` | Supprime un SI (pas ses équipements) |
-| `PUT /api/assets/{id}` | Crée ou remplace un équipement |
-| `DELETE /api/assets/{id}` | Supprime un équipement |
-| `PUT /api/wan` | Remplace les liens inter-SI : `{"links": [...]}` |
-| `POST /api/import` | Remplace toute la carte : `{si, assets, wan, services}` |
-| `PUT /api/services` | Remplace le catalogue commun des services Internet : `{"services": [...]}` |
-| `GET /api/history` | Derniers changements (`?before=REV&limit=N`) ; `GET /api/history/{rev}` : le détail avant/après |
-| `GET /api/state?at=REV` | La carte telle qu'elle était juste après la version REV |
-| `POST /api/rollback` | `{"rev": N}` : remet la carte à la version N (approver) |
-| `GET/POST /api/proposals`, `GET/PUT/DELETE /api/proposals/{id}` | Propositions ; `POST …/{id}/submit`, `/withdraw`, `/comment`, `/approve` (`{"force": true}` en cas de conflit), `/reject` |
-| `GET /api/users`, `PUT/DELETE /api/users/{name}` | Comptes (admin) ; `PUT /api/me/password` : `{"current","next"}` |
-| `GET /api/connectors` | Connecteurs, réglages (secrets masqués) et dernières synchronisations |
-| `PUT /api/connectors/{id}` | Réglages d'un connecteur (admin) ; `id` : `cyberwatch`, `glpi`, `phpipam`, `paloalto` |
-| `POST /api/connectors/{id}/test` | Teste l'accès (approver) |
-| `POST /api/connectors/{id}/run` | Lance une synchronisation (approver) ; `{"wait": true}` attend le résultat. Palo Alto : `{"xml": "<config>…", "fileName": "…", "overrides": {"site", "firewall", "scope"}}` importe un fichier (contributor) |
-| `GET /api/events` | Flux SSE : `event: change` avec la nouvelle révision, `proposals`, `connectors` |
-| `GET /healthz` | Santé (sans authentification) |
+| `GET /api/state` | The whole map: `{si, assets, wan, services, rev, updatedAt}` |
+| `GET /api/export` | The same content, as a file to download |
+| `PUT /api/si/{id}` | Creates or replaces an IS (zones, VLANs, flows, contacts) |
+| `DELETE /api/si/{id}` | Deletes an IS (not its assets) |
+| `PUT /api/assets/{id}` | Creates or replaces an asset |
+| `DELETE /api/assets/{id}` | Deletes an asset |
+| `PUT /api/wan` | Replaces the links between IS: `{"links": [...]}` |
+| `POST /api/import` | Replaces the whole map: `{si, assets, wan, services}` |
+| `PUT /api/services` | Replaces the common catalogue of Internet services: `{"services": [...]}` |
+| `GET /api/history` | Latest changes (`?before=REV&limit=N`); `GET /api/history/{rev}`: the before/after details |
+| `GET /api/state?at=REV` | The map as it was right after version REV |
+| `POST /api/rollback` | `{"rev": N}`: puts the map back to version N (approver) |
+| `GET/POST /api/proposals`, `GET/PUT/DELETE /api/proposals/{id}` | Proposals; `POST …/{id}/submit`, `/withdraw`, `/comment`, `/approve` (`{"force": true}` on a conflict), `/reject` |
+| `GET /api/users`, `PUT/DELETE /api/users/{name}` | Accounts (admin); `PUT /api/me/password`: `{"current","next"}` |
+| `GET /api/connectors` | Connectors, settings (secrets masked) and latest syncs |
+| `PUT /api/connectors/{id}` | A connector's settings (admin); `id`: `cyberwatch`, `glpi`, `phpipam`, `paloalto` |
+| `POST /api/connectors/{id}/test` | Tests access (approver) |
+| `POST /api/connectors/{id}/run` | Runs a sync (approver); `{"wait": true}` waits for the result. Palo Alto: `{"xml": "<config>…", "fileName": "…", "overrides": {"site", "firewall", "scope"}}` imports a file (contributor) |
+| `GET /api/events` | SSE stream: `event: change` with the new revision, `proposals`, `connectors` |
+| `GET /healthz` | Health check (no authentication) |
 
-Exemple : ajouter un équipement depuis un script (inventaire, NetBox, export de scanner…) :
+Example: adding an asset from a script (inventory, NetBox, scanner export…):
 
 ```bash
-curl -u admin:MOTDEPASSE -H 'Content-Type: application/json' -H 'X-Requested-With: strata' \
-  -X PUT https://strata.mondomaine.lan/api/assets/srv-erp-01 \
+curl -u admin:PASSWORD -H 'Content-Type: application/json' -H 'X-Requested-With: strata' \
+  -X PUT https://strata.example.lan/api/assets/srv-erp-01 \
   -d '{"site":"lyon","name":"srv-erp-01","type":"server","vlan":"v-lyo-20","ip":"10.20.0.20",
        "os":"RHEL 8","role":"ERP","crit":3,
        "vulns":[{"id":"CVE-2021-44228","title":"Log4Shell","cvss":10,"sev":"crit"}],
-       "contacts":[{"name":"Application team","role":"Technical owner","phone":"+33 1 99 00 18 66","email":"apps@exemple.fr","dispo":"Business hours"}],
+       "contacts":[{"name":"Application team","role":"Technical owner","phone":"+33 1 99 00 18 66","email":"apps@example.com","dispo":"Business hours"}],
        "notes":""}'
 ```
 
-Le plus simple pour connaître la structure exacte est de faire un **Export JSON** de la démo.
+The simplest way to learn the exact structure is to **Export JSON** the demo.
 
-Les **flux** et les **VLAN** sont stockés dans le document du SI (`si.flows`, `si.vlans`). Pour en ajouter par script : lisez le SI avec `GET /api/state`, modifiez-le, puis renvoyez-le avec `PUT /api/si/{id}`.
+**Flows** and **VLANs** are stored in the IS document (`si.flows`, `si.vlans`). To add some from a script: read the IS with `GET /api/state`, change it, then send it back with `PUT /api/si/{id}`.
 
-Champs ajoutés en v0.2 (tous facultatifs) :
+Fields added since v0.2 (all optional):
 
-| Champ | Où | Contenu |
+| Field | Where | Content |
 |---|---|---|
-| `apps` | équipement | `[{"name":"Apache Tomcat","version":"9.0.54","ports":["tcp/8080","tcp/443"]}]` |
-| `via` | flux | identifiants des équipements traversés, dans l'ordre, par ex. `["lyo-fw-edge","lyo-fw-int"]`. Absent : chemin proposé automatiquement. `[]` : flux direct imposé. |
-| `place` | VLAN | (v0.4.2) position du plateau sur son niveau, `[x, z]` depuis le centre du niveau. Absent sur tout le niveau : plateaux alignés de gauche à droite. |
-| `pos` | VLAN | position de gauche à droite dans sa zone (0, 1, 2…). Absent : tri par numéro de VLAN. |
-| `services` | racine de la carte, et IS | services Internet : `[{"id":"svc-eset","name":"ESET update servers","category":"Antivirus / EDR","hosts":["update.eset.com"],"ports":["tcp/443"],"notes":""}]` ; dans un flux, la source ou la destination `"svc:svc-eset"` |
-| `layout` | VLAN | (v0.3) positions posées à la main dans le schéma 2D : `{"lyo-app-erp":[3.75,0.5], …}`, en unités du plateau depuis son centre (x vers la droite, z vers l'avant). Absent : rangement automatique. |
-| `type: "router"` | équipement | nouveau type *Router / L3 core* |
-| `ext` | équipement, VLAN | (v0.5) identifiants dans les outils connectés : `{"glpi":"Computer/12","cyberwatch":101,"ipam":"57"}` |
-| `src` | vulnérabilité, application, contact | (v0.5) `cyberwatch` ou `glpi` quand l'entrée vient d'un connecteur (les autres sont considérées comme saisies à la main) |
-| `pan` | flux | (v0.5) règle(s) Palo Alto à l'origine du flux : `{"rules":["in-web"],"scope":"vsys1"}` |
+| `apps` | asset | `[{"name":"Apache Tomcat","version":"9.0.54","ports":["tcp/8080","tcp/443"]}]` |
+| `via` | flow | ids of the devices crossed, in order, for example `["lyo-fw-edge","lyo-fw-int"]`. Missing: path suggested automatically. `[]`: direct flow, forced. |
+| `place` | VLAN | (v0.4.2) position of the plate on its level, `[x, z]` from the level's centre. Missing on the whole level: plates lined up from left to right. |
+| `pos` | VLAN | position from left to right in its zone (0, 1, 2…). Missing: sorted by VLAN number. |
+| `services` | map root, and IS | Internet services: `[{"id":"svc-eset","name":"ESET update servers","category":"Antivirus / EDR","hosts":["update.eset.com"],"ports":["tcp/443"],"notes":""}]`; in a flow, the source or destination `"svc:svc-eset"` |
+| `layout` | VLAN | (v0.3) positions set by hand in the 2D diagram: `{"lyo-app-erp":[3.75,0.5], …}`, in plate units from its centre (x to the right, z to the front). Missing: automatic arrangement. |
+| `type: "router"` | asset | new type *Router / L3 core* |
+| `ext` | asset, VLAN | (v0.5) ids in the connected tools: `{"glpi":"Computer/12","cyberwatch":101,"ipam":"57"}` |
+| `src` | vulnerability, application, contact | (v0.5) `cyberwatch` or `glpi` when the entry comes from a connector (the others count as entered by hand) |
+| `pan` | flow | (v0.5) Palo Alto rule(s) behind the flow: `{"rules":["in-web"],"scope":"vsys1"}` |
 
 ---
 
-## 10. Sécurité
+## 10. Security
 
-Cette carte décrit précisément vos points faibles : traitez-la comme une donnée sensible.
+This map describes your weak spots precisely: treat it as sensitive data.
 
-- Gardez-la sur un réseau interne ou derrière un VPN, en HTTPS, avec un `EDIT_PASS` long et unique.
-- Donnez le compte `viewer` aux personnes qui n'ont qu'à consulter.
-- Le serveur envoie des en-têtes de sécurité stricts (CSP sans script externe, pas d'intégration en iframe, pas de référent) et refuse les écritures inter-sites.
-- Les images Docker publiées sont signées (attestation de provenance Sigstore) : vérifiez-les avec `gh attestation verify` (section 2).
-- Ces protections (authentification, rôles, écritures inter-sites, règle des quatre yeux, accès aux fichiers du serveur) sont vérifiées par les tests automatiques à chaque modification du code (section 13).
-- Donnez à chacun un compte nominatif avec le rôle le plus bas qui suffit : chaque changement est attribué dans l'historique.
-- Connecteurs : utilisez des comptes de service en **lecture seule** dans Cyberwatch, GLPI, phpIPAM et PAN-OS, restreints à l'IP du serveur Strata quand l'outil le permet. Leurs secrets sont dans `data/connectors.json` : protégez le volume et les archives de sauvegarde.
+- Keep it on an internal network or behind a VPN, over HTTPS, with a long and unique `EDIT_PASS`.
+- Give the `viewer` account to people who only need to look.
+- The server sends strict security headers (CSP with no external scripts, no framing, no referrer) and refuses cross-site writes.
+- Published Docker images are signed (Sigstore provenance attestation): check them with `gh attestation verify` (section 2).
+- These protections (authentication, roles, cross-site writes, four-eyes rule, access to the server's files) are checked by the automated tests on every code change (section 13).
+- Give everyone a named account with the lowest role that is enough: every change is attributed in the history.
+- Connectors: use **read-only** service accounts in Cyberwatch, GLPI, phpIPAM and PAN-OS, restricted to the Strata server's IP when the tool allows it. Their secrets are in `data/connectors.json`: protect the volume and the backup archives.
 
 ---
 
-## 11. Dépannage
+## 11. Troubleshooting
 
-| Symptôme | Piste |
+| Symptom | Where to look |
 |---|---|
-| Page blanche, rien en 3D | `public/vendor/` manque : relancez `docker compose up -d --build` ou `npm run setup`, et vérifiez l'accès au registre npm pendant la construction. |
-| Badge « This browser only » en haut à gauche | La page ne joint pas l'API : elle est ouverte en fichier local, ou le proxy bloque `/api/`. |
-| Les autres utilisateurs ne voient les changements qu'après un rechargement | Le proxy met en tampon `/api/events` (voir section 4, option B). |
-| « You have read-only access » | Vous êtes connecté avec le compte viewer, ou `READ_ONLY=true`. |
-| Changer de compte dans le navigateur | Le navigateur garde les identifiants Basic Auth : ouvrez une fenêtre privée ou fermez le navigateur. |
-| Erreur de droits sur `/data` (Docker) | Gardez le volume nommé de `docker-compose.yml`. Si vous montez un dossier de l'hôte, donnez-le à l'UID 1000 : `chown -R 1000:1000 ./data`. |
+| Blank page, nothing in 3D | `public/vendor/` is missing: run `docker compose up -d --build` or `npm run setup` again, and check access to the npm registry during the build. |
+| "This browser only" badge at the top left | The page cannot reach the API: it is opened as a local file, or the proxy blocks `/api/`. |
+| Other users only see changes after a reload | The proxy buffers `/api/events` (see section 4, option B). |
+| "You have read-only access" | You are signed in with the viewer account, or `READ_ONLY=true`. |
+| Switching accounts in the browser | The browser keeps Basic Auth credentials: open a private window or close the browser. |
+| Permission error on `/data` (Docker) | Keep the named volume from `docker-compose.yml`. If you mount a host folder, give it to UID 1000: `chown -R 1000:1000 ./data`. |
 
 ---
 
-## 12. Limites de la v0.5
+## 12. Limits of v0.5
 
-- Le stockage est un seul fichier JSON, adapté à quelques milliers d'équipements. Au-delà, il faudra passer à une vraie base.
-- L'authentification reste en Basic Auth (identifiants demandés par le navigateur). Pour du SSO (Entra ID, LDAP…), placez un proxy d'authentification devant et créez les mêmes noms de comptes.
-- Deux approbateurs qui modifient directement le même IS en même temps : la dernière sauvegarde l'emporte (l'historique permet de revenir en arrière). Les propositions, elles, détectent les conflits.
-- L'import de schémas draw.io ou Visio n'est pas pris en charge : seuls les exports JSON Strata peuvent devenir une proposition.
-- La version Claude (artefact) n'a ni comptes, ni historique, ni propositions : seulement les services Internet.
-- Le chemin proposé pour les flux suit une règle simple (pare-feu de bordure, puis pare-feu interne ou routeur de cœur). Vérifiez-le pour les architectures à plusieurs pare-feu en cascade et corrigez-le flux par flux si besoin.
-- Les règles firewall exportées sont un tableau générique, pas une configuration prête à coller : les noms d'interfaces et d'objets de vos pare-feu restent à faire correspondre.
-- Les connecteurs ont été écrits d'après la documentation publique des API (Cyberwatch v3, GLPI `apirest.php` 9.5/10, phpIPAM 1.4+, PAN-OS 10/11) et testés contre des simulateurs, pas contre vos instances : faites un premier *Test the connection* puis une synchronisation, et relisez la proposition avant de la publier. Les champs propres à votre version (chemin Cyberwatch, règles de lieu) se règlent sans toucher au code.
-- Palo Alto : les règles NAT, les profils de sécurité, les groupes d'adresses dynamiques et la hiérarchie des groupes de périphériques Panorama ne sont pas interprétés ; seules les règles de sécurité *allow*. Une règle trop large (`any` interne, grande plage) est signalée au lieu d'être dessinée.
-- GLPI : un appel par équipement (plus un par technicien et par logiciel inconnu, mis en cache) ; comptez quelques minutes pour plusieurs milliers d'équipements. Le nouveau API GLPI 11 (`/api.php/v2`) n'est pas encore pris en charge.
-- NetBox et NetFlow ne sont pas encore connectés.
+- Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
+- Authentication is still Basic Auth (credentials asked by the browser). For SSO (Entra ID, LDAP…), put an authenticating proxy in front and create the same account names.
+- Two approvers editing the same IS directly at the same time: the last save wins (the history lets you go back). Proposals, on the other hand, detect conflicts.
+- draw.io or Visio diagrams cannot be imported: only Strata JSON exports can become a proposal.
+- The Claude version (artifact) has no accounts, history or proposals: of the v0.4 features, it only has Internet services.
+- The path suggested for flows follows a simple rule (edge firewall, then internal firewall or core router). Check it for architectures with several firewalls in a row, and correct it flow by flow if needed.
+- Exported firewall rules are a generic table, not a configuration ready to paste: your firewalls' interface and object names still have to be mapped.
+- The connectors were written from the public API documentation (Cyberwatch v3, GLPI `apirest.php` 9.5/10, phpIPAM 1.4+, PAN-OS 10/11) and tested against simulators, not against your instances: run *Test the connection*, then a first sync, and review the proposal before publishing it. Fields specific to your version (Cyberwatch path, location rules) can be set without touching the code.
+- Palo Alto: NAT rules, security profiles, dynamic address groups and the Panorama device-group hierarchy are not interpreted; only *allow* security rules are. A rule that is too broad (internal `any`, large range) is flagged instead of drawn.
+- GLPI: one call per asset (plus one per technician and per unknown software, cached); allow a few minutes for several thousand assets. The new GLPI 11 API (`/api.php/v2`) is not supported yet.
+- NetBox and NetFlow are not connected yet.
 
-## 13. Développement et tests
+## 13. Development and tests
 
 ```bash
 npm test
 ```
 
-Les tests démarrent un vrai serveur sur un dossier de données temporaire, créent un compte par rôle et vérifient l'API par HTTP : authentification, rôles, protection contre les écritures inter-sites, cycle des propositions et règle des quatre yeux, conflits, historique et rollback, import (ids, taille maximale), et impossibilité de lire les fichiers du serveur avec `../`. Aucune dépendance à installer : il faut seulement Node.js 20 ou plus.
+The tests start a real server on a temporary data folder, create one account per role and check the API over HTTP: authentication, roles, protection against cross-site writes, the proposal cycle and the four-eyes rule, conflicts, history and rollback, import (ids, maximum size), and that the server's files cannot be read with `../`. Nothing to install: you only need Node.js 20 or later.
 
-Le workflow `CI` les lance sur Node 20 et 22 à chaque push sur `main` et à chaque pull request. Une modification qui touche à l'API doit être accompagnée d'un test.
+The `CI` workflow runs them on Node 20 and 22 on every push to `main` and every pull request. A change that touches the API must come with a test.
 
-Les contributions suivent le [Solid standard](https://github.com/SolidGeeks/.github/blob/main/CONTRIBUTING.md) : commits signés avec `git commit -s` (DCO), pas de CLA. Pour signaler une vulnérabilité : [SECURITY.md](SECURITY.md).
+Contributions follow the [Solid standard](https://github.com/SolidGeeks/.github/blob/main/CONTRIBUTING.md): sign off every commit with `git commit -s` (DCO), no CLA. To report a vulnerability, see [SECURITY.md](SECURITY.md).
