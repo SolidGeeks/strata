@@ -20,7 +20,9 @@
 <body>
 <div id="scene" aria-label="3D model of the information systems"></div>
 <div id="flat" hidden><svg id="flatSvg" role="application" aria-label="2D diagram of the information system: drag assets and plates, draw flows"></svg></div>
+<div id="lens" hidden><div id="lensBody"></div></div>
 <div id="viewSw" class="panel" hidden>
+  <div class="seg three" id="lensSeg" role="group" aria-label="Point of view"><button data-lens="physical" aria-pressed="true" title="The network: zones, VLANs, assets and flows">Physical</button><button data-lens="app" aria-pressed="false" title="Applications and who calls whom">Application</button><button data-lens="business" aria-pressed="false" title="Business services and what they rely on">Business</button></div>
   <div class="seg two" id="viewSeg" role="group" aria-label="View"><button data-v="3d" aria-pressed="true">3D model</button><button data-v="2d" aria-pressed="false">2D diagram</button></div>
   <div id="tools2d" hidden>
     <div class="seg three edit-only" role="group" aria-label="Tool"><button data-tool="move" aria-pressed="true" title="Select and move (V)">Move</button><button data-tool="flow" aria-pressed="false" title="Draw a flow from one asset to another (F)">+ Flow</button><button data-tool="asset" aria-pressed="false" title="Click on a plate to add an asset there (A)">+ Asset</button></div>

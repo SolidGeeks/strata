@@ -399,3 +399,35 @@ details.adv>*+*{margin-top:12px}
 .fsw{display:inline-block;width:10px;height:4px;border-radius:2px;margin-right:6px;vertical-align:middle}
 .linkbtn{background:none;border:0;padding:0;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer}
 .flow[data-hl-flow]:hover{outline:1px solid var(--line)}
+/* views: application and business */
+#lens{position:fixed;inset:0;z-index:2;background:var(--bg);overflow:auto}
+#lensBody{box-sizing:border-box;min-height:100%;padding:90px 24px 60px}
+.lens-head{max-width:760px;margin-bottom:18px}
+.lens-head h2{margin:0 0 6px;font-family:var(--f-display);font-size:20px;letter-spacing:.02em}
+.lens-head p{margin:0 0 10px;color:var(--muted)}
+.lens-svg{display:block;max-width:none}
+.lens-svg .an{cursor:pointer}
+.lens-svg .an:hover rect:first-child,.lens-svg .an:focus rect:first-child{stroke:var(--accent);stroke-width:2}
+.lens-svg .an:focus{outline:none}
+.bizgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.bizcard{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.bizcard.on{outline:2px solid var(--accent)}
+.bizcard header{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.bizcard .bname{background:none;border:0;padding:0;font-family:var(--f-display);font-weight:700;font-size:16px;color:var(--fg);text-align:left;cursor:pointer}
+.bizcard .bname:hover{text-decoration:underline}
+.bmeta{margin:0;color:var(--muted);font-size:12px}
+.bgrp{display:flex;flex-direction:column;gap:4px}
+.bchips{display:flex;flex-wrap:wrap;gap:4px}
+.bchip{display:inline-flex;align-items:center;gap:5px;font-family:var(--f-mono);font-size:11px;padding:3px 7px;border-radius:2px;background:var(--panel-2);border:1px solid var(--line);color:var(--fg);cursor:pointer;min-height:24px}
+.bchip i{width:7px;height:7px;border-radius:50%;flex:none}
+.bchip.net{border-color:var(--x-net)}
+.bchip:hover{border-color:var(--accent)}
+.bfoot{display:flex;gap:6px;margin-top:4px}
+.bizempty{max-width:560px;color:var(--muted)}
+.biz button{display:flex;flex-direction:column;align-items:flex-start;background:none;border:0;padding:0;text-align:left;color:var(--accent);font:inherit;cursor:pointer;min-width:0}
+.biz button small{color:var(--muted);font-size:11.5px}
+li.biz{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px 6px 10px;background:var(--panel-2);border-radius:3px}
+.bizpick{display:flex;flex-direction:column;gap:10px;max-height:320px;overflow:auto}
+.bp-v{display:flex;flex-direction:column;gap:2px}
+.bp-v label small{color:var(--muted);margin-left:6px}
+body.lens #hint{display:none}

@@ -30,6 +30,8 @@ const CONTACT_ROLES=['Technical owner','On-call','Business owner','Vendor / supp
 const ROLE_LEGACY={'Responsable technique':'Technical owner','Astreinte':'On-call','Responsable métier':'Business owner','Prestataire / support':'Vendor / support','RSSI':'CISO','Autre':'Other'};
 const roleEn=r=>ROLE_LEGACY[r]||r||'';
 const CRIT_LBL=['','Low','Medium','High'];
+const CRIT_CSS=['','--low','--med','--crit'];
+const critTag=c=>`<span class="tag" style="color:var(${CRIT_CSS[c]||'--none'})"><i style="background:var(${CRIT_CSS[c]||'--none'})"></i>${CRIT_LBL[c]||'—'}</span>`;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
@@ -134,6 +136,15 @@ const LYON={
     ['historian','server',50,'10.50.0.30','Windows Server 2016','Historian',2,[F('CVE-2021-34527','PrintNightmare',8.8)]],
     ['cam-04','camera',55,'10.55.0.104','Firmware 5.1 (2018)','Plant IP camera',1,[F('Config.','Outdated firmware',null,'med'),F('Config.','TLS 1.0 enabled',null,'low')]],
     ['badge-ctrl','iot',55,'10.55.0.120','Embedded Linux','Badge access controller',2,[F('Config.','Telnet exposed',null,'high')]]
+  ],
+  business:[
+    ['Customer portal',3,'E-commerce manager',['rproxy','web-01','web-02']],
+    ['ERP & accounting',3,'Finance director',['app-erp','db-erp']],
+    ['Production line 1',3,'Plant manager',['plc-l1','hmi-01','historian']],
+    ['Email',2,'IT manager',['mail-relay']],
+    ['Remote access',2,'IT manager',['vpn-gw']],
+    ['Telephony',1,'Facilities manager',['ipbx']],
+    ['Internal wiki',1,'Knowledge manager',['wiki']]
   ],
   flows:[
     ['internet','fw-edge','tcp/443',820],['internet','vpn-gw','tcp/443',140],['internet','mail-relay','tcp/25',60],
@@ -242,6 +253,12 @@ const RISKY=[
   ['pc','hv','tcp/443',3,'User workstation on a hypervisor management UI'],
   ['internet','bast','tcp/22',4,'SSH bastion published to the Internet']
 ];
+// Business services of the generated IS: [name, criticality, owner, asset prefixes]
+const BIZ_TPL={
+  office:[['Customer portal',3,'E-commerce manager',['rp','web']],['ERP & accounting',3,'Finance director',['app','db']],['Email',2,'IT manager',['mx']],['Telephony',1,'Facilities manager',['ipbx']],['Remote access',2,'IT manager',['vpn']]],
+  warehouse:[['Warehouse management (WMS)',3,'Logistics director',['app','db','rf']],['Conveyor line',3,'Plant manager',['plc','ihm']],['Remote access',2,'IT manager',['vpn']]],
+  datacenter:[['Hosted applications',3,'Hosting service manager',['lb','web','app','db']],['Backup & recovery',3,'Infrastructure manager',['bkp','sto','rep']],['Monitoring',2,'Operations manager',['sup']]]
+};
 // Builds the demo in storage format: {si:{id:doc}, assets:{id:doc}, wan:[...]}
 function buildDemo(){
   const out={si:{},assets:{},wan:[]};let n=0;
@@ -257,6 +274,7 @@ function buildDemo(){
   site('lyon','lyo','Lyon','HQ & plant',2,LYON.zones.map(([z,vl])=>[z,vl.map(([num,name,cidr])=>({num,name,cidr}))]),
     LYON.assets.map(([name,type,vnum,ip,os,role,crit,vulns])=>({id:'lyo-'+name,name,type,vlan:`v-lyo-${vnum}`,ip,os,role,crit,vulns,notes:''})),
     LYON.flows.map(([s,d,port,vol,risk,note],i)=>({id:'f-lyo-'+i,src:isNet(s)?s:'lyo-'+s,dst:isNet(d)?d:'lyo-'+d,port,vol,risk:!!risk,note:note||''})));
+  out.si.lyon.business=LYON.business.map(([name,crit,owner,ids],i)=>({id:'b-lyo-'+i,name,crit,owner,notes:'',assets:ids.map(x=>'lyo-'+x)}));
   [['paris','par','Paris','Head office',OFFICE,0.32,11,17,1],['dcw','dcw','West Datacenter','Hosting',DATACENTER,0.38,51,20,3],['nantes','nte','Nantes','Logistics warehouse',WAREHOUSE,0.75,23,18,4],['bordeaux','bdx','Bordeaux','Sales branch',OFFICE,0.55,37,19,5,true]]
   .forEach(([id,code,name,kind,tpl,hyg,seed,net,order,small])=>{
     const rng=rngOf(seed),pick=a=>a[Math.floor(rng()*a.length)],cnt=c=>Array.isArray(c)?c[0]+Math.floor(rng()*(c[1]-c[0]+1)):c;
@@ -283,6 +301,9 @@ function buildDemo(){
     RISKY.forEach(([s,d,port,vol,note])=>{const S=by(s),Dd=by(d);if(!S.length||!Dd.length||rng()>hyg)return;
       flows.push({id:`f-${code}-${fi++}`,src:pick(S),dst:pick(Dd),port,vol,risk:true,note});});
     site(id,code,name,kind,order,zs,assets,flows);
+    out.si[id].business=BIZ_TPL[tpl===WAREHOUSE?'warehouse':tpl===DATACENTER?'datacenter':'office']
+      .map(([bname,crit,owner,pfx])=>({name:bname,crit,owner,notes:'',assets:assets.filter(a=>pfx.includes(a.pfx)).map(a=>a.id)}))
+      .filter(b=>b.assets.length).map((b,i)=>Object.assign({id:`b-${code}-${i}`},b));
     assets.forEach(a=>delete a.pfx);
   });
   // Internet services shared by every IS, and one that only Lyon uses
@@ -512,6 +533,11 @@ function compile(){
       f.hops=[f.src,...f.via,f.dst];
     });
     s.lanes=SA.lanes(s.flows);s.fcol=SA.flowColours(s.flows,FLOW_PAL);
+    // Business services: what the organisation does, and the assets it runs on
+    s.business=(Array.isArray(d.business)?d.business:[]).filter(b=>b&&b.id&&b.name).map(b=>({id:String(b.id),name:String(b.name),crit:[1,2,3].includes(+b.crit)?+b.crit:2,owner:String(b.owner||''),notes:String(b.notes||''),
+      assets:(Array.isArray(b.assets)?b.assets:[]).filter((id,i,arr)=>s.byId[id]&&arr.indexOf(id)===i)})).sort((a,b)=>b.crit-a.crit||a.name.localeCompare(b.name));
+    s.bizById={};s.business.forEach(b=>s.bizById[b.id]=b);
+    s.impact=SA.businessImpact(s);
     // Exposed ports: grouped inbound flows per destination port
     s.assets.forEach(a=>{a.ports=[];a.exp='none';});
     s.flows.forEach(f=>{
@@ -526,7 +552,7 @@ function compile(){
     s.stats={vlans:s.vlans.length,assets:s.assets.length,crit:s.assets.reduce((n,a)=>n+a.vulns.filter(v=>v.sev==='crit').length,0),
       high:s.assets.reduce((n,a)=>n+a.vulns.filter(v=>v.sev==='high').length,0),risk:s.flows.filter(f=>f.risk).length,
       reach:s.assets.filter(a=>s.expo[a.id]!==undefined).length,xNet:cnt('internet'),xInter:cnt('inter'),xIntra:cnt('intra'),
-      ports:s.assets.reduce((n,a)=>n+a.ports.length,0)};
+      ports:s.assets.reduce((n,a)=>n+a.ports.length,0),business:s.business.length};
     return s;
   });
   siteById={};SITES.forEach(s=>siteById[s.id]=s);
@@ -542,7 +568,7 @@ const nameOf=id=>id==='internet'?'Internet':SVC[id]?SVC[id].name:(byId[id]&&!byI
 const siteServices=()=>SITE?SITE.services.filter(x=>x.scope==='site'||SITE.usedSvc.has(x.id)):[];
 const vnum=a=>{const v=vlanById[a.vlan];return v?v.num:'?';};
 
-const state={hoverFlow:null,view:'overview',siteId:null,ovSelId:null,selId:null,mode:'zones',hidden:new Set(),minSev:0,minExp:0,dir:'all',color:'risk',flows:true,riskOnly:false,labels:true,ports:false,rotate:false,gap:8,path:false,panel:null,posts:'off',compact:true,arrange:false,flat:false,tool:'move'};
+const state={hoverFlow:null,lens:'physical',biz:null,view:'overview',siteId:null,ovSelId:null,selId:null,mode:'zones',hidden:new Set(),minSev:0,minExp:0,dir:'all',color:'risk',flows:true,riskOnly:false,labels:true,ports:false,rotate:false,gap:8,path:false,panel:null,posts:'off',compact:true,arrange:false,flat:false,tool:'move'};
 const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
 // saved theme applied before the first frame, so the page does not flash
 try{const t=localStorage.getItem('strata-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}
@@ -980,13 +1006,14 @@ function center(){return state.view==='overview'?new THREE.Vector3(0,TABLE_Y+3,0
 function computeVis(){
   const sel=selAsset(),nb=sel?neighborsOf(sel.id):null,fsel=(state.hoverFlow&&FLOWS.find(x=>x.id===state.hoverFlow))||(state.panel==='flow'?FLOWS.find(x=>x.id===state.flowId):null);
   const dirPeers=sel&&state.dir!=='all'?new Set(FLOWS.filter(f=>dirOk(f,sel)).flatMap(f=>f.hops)):null;
-  const aOp={},fv={};
+  const aOp={},fv={},bdep=state.biz&&SITE.impact.byBusiness[state.biz]?SITE.impact.byBusiness[state.biz].assets:null;
   ASSETS.forEach(a=>{let op=1;
     if(SEV[a.sev].rank<state.minSev)op=0.15;
     if(EXP[a.exp].rank<state.minExp)op=Math.min(op,0.15);
     if(sel&&sel!==a&&!(dirPeers?dirPeers.has(a.id):nb.has(a.id)))op=Math.min(op,0.18);
     if(state.path&&EXPO[a.id]===undefined)op=Math.min(op,0.15);
     if(fsel&&!fsel.hops.includes(a.id))op=Math.min(op,0.18);
+    if(bdep&&!bdep[a.id])op=Math.min(op,0.15);
     aOp[a.id]=op;});
   const shown=id=>isNet(id)||(byId[id]&&!state.hidden.has(byId[id].vlan));
   FLOWS.forEach(f=>{
@@ -997,6 +1024,7 @@ function computeVis(){
     if(sel)op=dirOk(f,sel)?1:0.07;
     if(state.path)op=(EXPO[f.src]!==undefined&&EXPO[f.dst]===EXPO[f.src]+1)?1:0.07;
     if(fsel)op=f===fsel?1:0.06;
+    else if(bdep)op=(bdep[f.src]||isNet(f.src))&&(bdep[f.dst]||isNet(f.dst))?1:0.06;
     const dimEnd=id=>!isNet(id)&&SEV[byId[id].sev].rank<state.minSev;
     if(state.minSev>0&&dimEnd(f.src)&&dimEnd(f.dst))op=Math.min(op,0.07);
     fv[f.id]={vis,op};});
@@ -1020,6 +1048,7 @@ function refresh(){
   });
   placeSelRing();renderDirNote();
   if(state.flat)renderFlat();
+  if(state.lens!=='physical')renderLens();
 }
 function placeSelRing(){
   const a=state.view==='site'?selAsset():null;
@@ -1031,8 +1060,8 @@ function placeSelRing(){
 const det=$('#det');
 const tag=k=>`<span class="tag" style="color:var(${SEV[k].css})"><i style="background:var(${SEV[k].css})"></i>${SEV[k].label}</span>`;
 const xtag=k=>`<span class="xtag" style="color:var(${EXP[k].css})">${EXP[k].label}</span>`;
-function openDet(html,panel){det.innerHTML=html;det.hidden=false;det.scrollTop=0;document.body.classList.add('has-det');state.panel=panel;renderEmpty();syncUI();}
-function closeDet(){const wasFlow=state.panel==='flow';det.hidden=true;document.body.classList.remove('has-det');state.panel=null;renderEmpty();syncUI();if(wasFlow&&state.view==='site')refresh();}
+function openDet(html,panel){det.innerHTML=html;det.hidden=false;det.scrollTop=0;document.body.classList.add('has-det');state.panel=panel;renderEmpty();syncUI();placeLens();}
+function closeDet(){const wasFlow=state.panel==='flow';det.hidden=true;document.body.classList.remove('has-det');state.panel=null;renderEmpty();syncUI();placeLens();if(wasFlow&&state.view==='site')refresh();}
 function contactsHtml(list){
   return `<ul class="list">${list.map(c=>`<li class="contact"><div class="who"><b>${esc(c.name||'Contact')}</b><span>${esc(c.role||'')}${c.dispo?' · '+esc(c.dispo):''}</span></div>
     ${c.phone?`<div class="line"><span>${esc(c.phone)}</span><button class="copy" data-copy="${esc(c.phone)}">Copy</button></div>`:''}
@@ -1054,6 +1083,14 @@ function insideHtml(a){
   return `<div class="inside"><div class="in-apps">${apps.length?apps.map(x=>`<div class="in-app"><b>${esc(x.name)}</b><span>${esc(x.version||'')}</span>${x.ports.length?`<span class="chips">${x.ports.map(p=>`<span class="chip${a.ports.some(q=>q.port===p)?' on':''}">${esc(p)}</span>`).join('')}</span>`:''}</div>`).join(''):'<p class="empty">No application recorded. Add them with Edit.</p>'}</div>
   <div class="in-os"><span class="cap">System</span><b>${esc(a.os||'Unknown')}</b></div>
   <div class="in-hw"><span class="cap">${esc(TYPE_LABEL[a.type])}</span><span>${esc(a.ip||'No IP')} · VLAN ${esc(vnum(a))}</span></div></div>`;
+}
+// The business services that stop or degrade when this asset fails or is compromised
+const impactOf=a=>SITE.impact.byAsset[a.id]||[];
+const chain=ids=>ids.map(id=>esc(nameOf(id))).join(' → ');
+function impactHtml(a){
+  const l=impactOf(a);
+  if(!l.length)return `<p class="empty">No business service relies on this asset${SITE.business.length?'':', because none is recorded yet for this IS. Add them in the Business view'}.</p>`;
+  return `<ul class="list">${l.map(x=>`<li class="biz"><button data-biz="${esc(x.id)}"><b>${esc(x.name)}</b><small>${x.direct?'Runs on this asset':x.how==='crossed'?`Its flows cross this equipment: ${chain(x.path)}`:`Relies on it: ${chain(x.path)}`}</small></button>${critTag(x.crit)}</li>`).join('')}</ul>`;
 }
 function showFlow(f){
   state.flowId=f.id;
@@ -1088,6 +1125,7 @@ function showAsset(a){
     <dt>Exposure</dt><dd>${xtag(a.exp)}</dd>
     <dt>From Internet</dt><dd>${hops===undefined?'Not reachable':`Reachable in ${plural(hops,'hop')}`}</dd>
   </dl>
+  <h3 class="cap">Business services impacted · ${impactOf(a).length}</h3>${impactHtml(a)}
   <h3 class="cap">Inside · ${plural((a.apps||[]).length,'application')}</h3>${insideHtml(a)}
   <h3 class="cap">Incident contacts</h3>${contacts}
   ${a.notes?`<h3 class="cap">Notes</h3><p style="margin:0;white-space:pre-wrap">${esc(a.notes)}</p>`:''}
@@ -1100,6 +1138,42 @@ function showAsset(a){
   ${state.dir!=='all'?`<p class="dirnote">Showing ${state.dir==='in'?'inbound':'outbound'} flows only. Change it under Flows › Direction.</p>`:''}
   </div>`,'asset');
 }
+// A business service: its own assets, what they call, the equipment crossed, the Internet services used
+function bizGroups(b){
+  const d=SITE.impact.byBusiness[b.id],L=Object.entries(d.assets).map(([id,x])=>Object.assign({a:byId[id]},x));
+  const by=k=>L.filter(k).sort((x,y)=>SEV[y.a.sev].rank-SEV[x.a.sev].rank||x.a.name.localeCompare(y.a.name));
+  return [['Runs on',by(x=>x.direct)],['Calls',by(x=>!x.direct&&x.how==='called')],['Flows cross',by(x=>!x.direct&&x.how==='crossed')],['Internet services',d.services.map(id=>({svc:SVC[id]})).filter(x=>x.svc)]];
+}
+function showBusiness(b){
+  state.bizPanel=b.id;
+  const g=bizGroups(b),worst=Object.keys(SITE.impact.byBusiness[b.id].assets).reduce((m,id)=>SEV[byId[id].sev].rank>SEV[m].rank?byId[id].sev:m,'none');
+  openDet(`<div class="d-head"><div><span class="cap">Business service</span><h2>${esc(b.name)}</h2><p>${b.owner?esc(b.owner)+' · ':''}${CRIT_LBL[b.crit]} criticality</p></div><button class="close" data-close-biz aria-label="Close the business service">×</button></div>
+  <div class="d-body">
+  <div class="actions"><button class="btn small" data-biz-hl="${esc(b.id)}" aria-pressed="${state.biz===b.id}">${state.biz===b.id?'Shown on the model':'Show on the model'}</button><button class="btn small edit-only" data-edit-biz="${esc(b.id)}">Edit</button></div>
+  <dl class="kv"><dt>Criticality</dt><dd>${critTag(b.crit)}</dd><dt>Owner</dt><dd>${esc(b.owner||'—')}</dd><dt>Worst vulnerability</dt><dd>${tag(worst)}</dd><dt>Assets involved</dt><dd>${Object.keys(SITE.impact.byBusiness[b.id].assets).length}</dd></dl>
+  ${b.notes?`<p style="white-space:pre-wrap">${esc(b.notes)}</p>`:''}
+  ${g.map(([t,l],i)=>`<h3 class="cap">${t} · ${l.length}</h3>${l.length?`<ul class="list">${l.map(x=>x.svc?`<li class="reach"><button data-svc="${esc(x.svc.id)}">${esc(x.svc.name)}<small>${esc(x.svc.hosts.join(', '))}</small></button></li>`:`<li class="reach"><button data-goto="${esc(x.a.id)}">${esc(x.a.name)}<small>${x.direct?esc(x.a.role||TYPE_LABEL[x.a.type]):chain(x.path)}</small></button>${tag(x.a.sev)}</li>`).join('')}</ul>`:`<p class="empty">${['No asset recorded. Edit the service to add some.','Its assets call no other asset.','No equipment crossed.','No Internet service used.'][i]}</p>`}`).join('')}
+  <p class="fhint">Strata works out the dependencies from the flows: what the service's assets call, and so on, the equipment these flows cross, and the equipment in front of its assets. Log and monitoring flows (syslog, SNMP traps, NetFlow) are left out.</p>
+  </div>`,'business');
+}
+function businessForm(b,preset){
+  const d=b?clone((SITE.raw.business||[]).find(x=>x.id===b.id)||b):{name:'',crit:2,owner:'',notes:'',assets:preset?[preset]:[]};
+  const on=new Set(d.assets||[]);
+  openForm(b?b.name:'New business service',`IS ${SITE.name}`,`
+    ${fIn('fName','Name *',d.name,'required maxlength="80" placeholder="e.g. Online sales, Payroll, Production line 1"')}
+    <div class="f2">${fSel('fCrit','Criticality',[[1,'Low'],[2,'Medium'],[3,'High']],d.crit)}${fIn('fOwner','Owner',d.owner,'maxlength="80" placeholder="e.g. Finance director"')}</div>
+    <fieldset><legend>Assets it runs on</legend><span class="fhint">Only the assets of the service itself (its servers, databases, PLCs). Strata adds what they depend on from the flows.</span>
+      <div class="bizpick">${ZONES.slice().reverse().flatMap(z=>z.vlans).filter(v=>ASSETS.some(a=>a.vlan===v.id)).map(v=>`<div class="bp-v"><span class="cap">VLAN ${esc(v.num)} · ${esc(v.name)}</span>${ASSETS.filter(a=>a.vlan===v.id).map(a=>`<label class="chk plain"><input type="checkbox" data-biz-asset="${esc(a.id)}"${on.has(a.id)?' checked':''}>${esc(a.name)}<small>${esc(a.role||'')}</small></label>`).join('')}</div>`).join('')}</div></fieldset>
+    <div class="f"><label for="fNotes">Notes</label><textarea id="fNotes" maxlength="2000" placeholder="Hours of service, maximum outage, continuity plan…">${esc(d.notes)}</textarea></div>`,
+  async()=>{
+    const name=$('#fName').value.trim();if(!name)return formErr('The name is required.','fName');
+    const doc={id:b?b.id:uid('b'),name,crit:+$('#fCrit').value,owner:$('#fOwner').value.trim(),notes:$('#fNotes').value.trim(),assets:[...det.querySelectorAll('[data-biz-asset]:checked')].map(x=>x.dataset.bizAsset)};
+    const sd=clone(SITE.raw);sd.business=(sd.business||[]).filter(x=>x.id!==doc.id);sd.business.push(doc);
+    await Store.putSite(SITE.id,sd);toast(b?'Business service saved.':'Business service added.');
+    afterSave(()=>{const nb=SITE.bizById[doc.id];if(nb)showBusiness(nb);else restorePanel();});
+  },{del:b?{label:'Delete the business service',run:async()=>{const sd=clone(SITE.raw);sd.business=(sd.business||[]).filter(x=>x.id!==b.id);if(state.biz===b.id)state.biz=null;await Store.putSite(SITE.id,sd);toast('Business service deleted.');closeDet();}}:null});
+}
+function setBizHighlight(id){state.biz=id;if(id)state.selId=null;if(id&&state.lens!=='physical')setLens('physical');refresh();}
 function showPorts(){
   const groups=['internet','inter','intra'].map(k=>({k,list:ASSETS.filter(a=>a.exp===k).sort((a,b)=>SEV[b.sev].rank-SEV[a.sev].rank)}));
   openDet(`<div class="d-head"><div><span class="cap">Analysis · IS ${esc(SITE.name)}</span><h2>Exposed ports</h2><p>Ports that receive at least one inbound flow</p></div><button class="close" data-close aria-label="Close the analysis">×</button></div>
@@ -1198,7 +1272,8 @@ function siteForm(s){
     if(!zones.length)return formErr('Keep at least one zone.');
     const zIds=new Set(zones.map(z=>z.id));
     const vlans=(d.vlans||[]).map(v=>zIds.has(v.zone)?v:Object.assign({},v,{zone:zones[0].id}));
-    const doc={name,kind:$('#fKind').value.trim(),order:s?(d.order||0):(SITES.reduce((m,x)=>Math.max(m,x.order||0),0)+1),zones,vlans,flows:d.flows||[],contacts:readRep(det,'contact').filter(c=>c.name||c.phone||c.email)};
+    // fields this form does not show (site services, business services…) are kept as they are
+    const doc=Object.assign({},d,{name,kind:$('#fKind').value.trim(),order:s?(d.order||0):(SITES.reduce((m,x)=>Math.max(m,x.order||0),0)+1),zones,vlans,flows:d.flows||[],contacts:readRep(det,'contact').filter(c=>c.name||c.phone||c.email)});
     const id=s?s.id:uid('si-');
     await Store.putSite(id,doc);toast(s?'IS saved.':'IS created.');
     if(!s){state.ovSelId=id;afterSave(()=>{const ns=siteById[id];if(ns&&state.view==='overview')showSite(ns);else restorePanel();});}
@@ -1258,6 +1333,8 @@ function assetForm(a,presetVlan,opts={}){
     <fieldset><legend>Vulnerabilities</legend>
       <div id="repVuln" class="btns">${(d.vulns||[]).map(v=>REP.vuln(v)).join('')}</div>
       <button type="button" class="add" data-add="vuln" data-into="repVuln">+ Add a vulnerability</button></fieldset>
+    ${SITE.business.length?`<fieldset><legend>Business services it runs</legend><span class="fhint">Services that rely on it through the flows are worked out on their own.</span>
+      <div class="btns">${SITE.business.map(b=>`<label class="chk plain"><input type="checkbox" data-asset-biz="${esc(b.id)}"${a&&b.assets.includes(a.id)?' checked':''}>${esc(b.name)}</label>`).join('')}</div></fieldset>`:''}
     <div class="f"><label for="fNotes">Notes</label><textarea id="fNotes" maxlength="2000" placeholder="Restart procedure, dependencies…">${esc(d.notes)}</textarea></div>
     <p class="fhint">Exposed ports come from the inbound flows. Add them from the asset sheet with “+ Inbound flow”.</p>`,
   async()=>{
@@ -1278,7 +1355,12 @@ function assetForm(a,presetVlan,opts={}){
       if(ports.some(p=>!/^(tcp|udp|icmp|any)(\/[\d-]+)?$/.test(p)))return formErr(`Write the ports of “${x.name}” as protocol/number, e.g. tcp/8080.`);
       apps.push({name:x.name,version:x.version,ports});}
     doc.apps=apps;
-    await Store.putAsset(id,doc);toast(a?'Asset saved.':'Asset added.');
+    // business services it runs: saved on the IS, only when the ticks changed
+    const want=new Set([...det.querySelectorAll('[data-asset-biz]:checked')].map(x=>x.dataset.assetBiz));
+    const sd=clone(SITE.raw);let bizChanged=false;
+    (sd.business||[]).forEach(b=>{const has=(b.assets||[]).includes(id);if(has!==want.has(b.id)){bizChanged=true;b.assets=has?b.assets.filter(x=>x!==id):[...(b.assets||[]),id];}});
+    if(bizChanged)await Store.many([()=>Store.putAsset(id,doc),()=>Store.putSite(SITE.id,sd)],'Saving');else await Store.putAsset(id,doc);
+    toast(a?'Asset saved.':'Asset added.');
     // placed by clicking in the 2D diagram: keep that spot (the plate's other assets stay where they are)
     if(!a&&opts.pos&&FL&&doc.vlan===presetVlan){const l=frozen(doc.vlan);l[id]=opts.pos;try{await saveLayouts({[doc.vlan]:l});}catch(e){}}
     state.selId=id;afterSave(()=>{const na=byId[id];if(na){state.hidden.delete(na.vlan);showAsset(na);refresh();}else closeDet();});
@@ -1396,6 +1478,11 @@ det.addEventListener('click',async e=>{
   if(q('[data-new-flow-from]')){flowForm(null,{src:q('[data-new-flow-from]').dataset.newFlowFrom});return;}
   if(q('[data-new-flow-to]')){flowForm(null,{dst:q('[data-new-flow-to]').dataset.newFlowTo});return;}
   if(q('[data-edit-flow]')){flowForm(FLOWS.find(f=>f.id===q('[data-edit-flow]').dataset.editFlow));return;}
+  if(q('[data-biz]')){const b=SITE&&SITE.bizById[q('[data-biz]').dataset.biz];if(b)showBusiness(b);return;}
+  if(q('[data-biz-hl]')){const id=q('[data-biz-hl]').dataset.bizHl;setBizHighlight(state.biz===id?null:id);showBusiness(SITE.bizById[id]);return;}
+  if(q('[data-edit-biz]')){businessForm(SITE.bizById[q('[data-edit-biz]').dataset.editBiz]);return;}
+  if(q('[data-close-biz]')){state.biz=null;closeDet();refresh();return;}
+  if(q('[data-app-node]')){showAppNode(q('[data-app-node]').dataset.appNode);return;}
   if(q('[data-col-flow]')){setColour('flow');if(selAsset())showAsset(selAsset());return;}
   if(q('[data-show-flow]')){const f=FLOWS.find(x=>x.id===q('[data-show-flow]').dataset.showFlow);if(f)showFlow(f);return;}
   if(q('[data-close-flow]')){state.flowId=null;const a=selAsset();if(a)showAsset(a);else closeDet();refresh();return;}
@@ -1418,6 +1505,7 @@ async function act(name){
   if(name==='new-flow')return flowForm(null,selAsset()?{dst:selAsset().id}:{});
   if(name==='new-vlan')return vlanForm(null);
   if(name==='edit-site')return siteForm(SITE);
+  if(name==='new-biz')return businessForm(null);
   if(name==='demo'){if(SITES.length&&!confirmArm('demo'))return;await replaceAll(buildDemo(),'Loading the demo');return;}
   if(name==='wipe'){if(!confirmArm('wipe'))return;await replaceAll({si:{},assets:{},wan:[]},'Deleting');state.ovSelId=null;closeDet();return;}
   if(name==='export')return exportJson();
@@ -1958,9 +2046,12 @@ function setFlat(on){
   syncUI();
 }
 function showFlatUI(){
-  const on=state.flat&&state.view==='site';
+  const lens=state.view==='site'&&state.lens!=='physical',on=state.flat&&state.view==='site'&&!lens;
   flatEl.hidden=!on;document.body.classList.toggle('flat',on);
-  $('#viewSw').hidden=state.view!=='site';$('#tools2d').hidden=!on;
+  $('#viewSw').hidden=state.view!=='site';$('#tools2d').hidden=!on;$('#viewSeg').hidden=lens;
+  lensEl.hidden=!lens;document.body.classList.toggle('lens',lens);
+  document.querySelectorAll('#lensSeg button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.lens===state.lens)));
+  if(lens)renderLens();
 }
 async function exportFlat(){
   if(!FL)return;
@@ -1974,11 +2065,99 @@ $('#tools2d').addEventListener('click',e=>{const b=e.target.closest('button');if
   else if(b.dataset.f==='out')zoomFlat(0.8);
   else if(b.dataset.f==='svg')exportFlat();});
 document.addEventListener('keydown',e=>{
-  if(!state.flat||state.view!=='site'||e.target.closest('input,textarea,select')||e.metaKey||e.ctrlKey||e.altKey)return;
+  if(!state.flat||state.view!=='site'||state.lens!=='physical'||e.target.closest('input,textarea,select')||e.metaKey||e.ctrlKey||e.altKey)return;
   const k=e.key.toLowerCase();
   if(k==='v')setTool('move');else if(k==='f'&&Store.canWrite)setTool('flow');else if(k==='a'&&Store.canWrite)setTool('asset');
   else if(k==='escape'&&flatDrag){flatDrag=null;renderFlat();}
 });
+
+/* ================= Views: physical, application, business ================= */
+// Physical is the 3D model or the 2D diagram. Application groups the assets by the applications
+// they run and draws who calls whom. Business lists the business services and what they rely on.
+const lensEl=$('#lens'),lensBody=$('#lensBody');
+let APPG=null;
+function setLens(l){if(l===state.lens)return;state.lens=l;state.hoverFlow=null;showFlatUI();syncUI();if(l==='physical'){if(state.flat){flatFitFor=null;renderFlat();}refresh();}}
+function placeLens(){
+  if(!lensEl||lensEl.hidden)return;
+  const narrow=innerWidth<=760,sw=$('#viewSw').getBoundingClientRect();
+  lensBody.style.paddingLeft=(narrow?12:document.querySelector('#ctl').getBoundingClientRect().right+16)+'px';
+  lensBody.style.paddingRight=(narrow||!document.body.classList.contains('has-det')?(narrow?12:24):det.getBoundingClientRect().width+32)+'px';
+  lensBody.style.paddingTop=(narrow?sw.bottom+12:Math.max(sw.bottom,$('#cart').getBoundingClientRect().bottom)+16)+'px';
+}
+addEventListener('resize',placeLens);
+function renderLens(){
+  if(state.view!=='site'||state.lens==='physical')return;
+  if(state.lens==='app')renderAppLens();else renderBizLens();
+  placeLens();
+}
+const worstOf=ids=>ids.reduce((m,id)=>byId[id]&&SEV[byId[id].sev].rank>SEV[m].rank?byId[id].sev:m,'none');
+function appNodeLabel(n){
+  if(n.kind==='clients'){const v=vlanById[n.vlan];return [n.hosts.length===1?nameOf(n.hosts[0]):`${n.hosts.length} × ${TYPE_LABEL[n.type]||n.type}`,`client${n.hosts.length===1?'':'s'} · VLAN ${v?v.num:'?'}`];}
+  if(n.kind==='app')return [n.name,`${n.versions.length?n.versions.join(', ')+' · ':''}on ${n.hosts.map(id=>nameOf(id)).join(', ')}`];
+  if(n.kind==='asset')return [n.name,'no application recorded'];
+  return [n.name,n.key==='internet'?'any address':(SVC[n.key]?SVC[n.key].hosts.join(', '):'')];
+}
+function renderAppLens(){
+  const G=APPG=SA.appGraph(SITE),W=230,H=50,CG=120,RG=14;
+  // external services go to a last column of their own
+  const maxR=Math.max(0,...G.nodes.filter(n=>!(n.kind==='net'&&n.key!=='internet')).map(n=>n.rank));
+  G.nodes.forEach(n=>{if(n.kind==='net'&&n.key!=='internet')n.rank=maxR+1;});
+  const cols={};G.nodes.forEach(n=>(cols[n.rank]=cols[n.rank]||[]).push(n));
+  const KO={net:0,clients:1,app:2,asset:3};
+  Object.values(cols).forEach(c=>c.sort((a,b)=>KO[a.kind]-KO[b.kind]||a.name.localeCompare(b.name)).forEach((n,i)=>{n.x=n.rank*(W+CG);n.y=i*(H+RG)+40;}));
+  const at={};G.nodes.forEach(n=>at[n.key]=n);
+  const hW=Math.max(...G.nodes.map(n=>n.x+W),W)+20,hH=Math.max(...G.nodes.map(n=>n.y+H),H)+30;
+  const C=n=>css(n),ink=C('--fg'),mu=C('--muted');
+  let o='';
+  // column titles
+  Object.keys(cols).forEach(r=>{o+=`<text x="${r*(W+CG)}" y="18" font-family="${PF.d}" font-weight="700" font-size="11" letter-spacing="1.2" fill="${mu}">${+r===0?'WHERE TRAFFIC STARTS':+r===maxR+1&&cols[r].every(n=>n.kind==='net')?'INTERNET SERVICES':'TIER '+r}</text>`;});
+  G.edges.forEach(e=>{const a=at[e.from],b=at[e.to],x1=a.x+W,y1=a.y+H/2,x2=b.x,y2=b.y+H/2,w=Math.min(5,1+Math.log2(e.flows.length));
+    const fl=e.flows.map(id=>FLOWS.find(f=>f.id===id)).filter(Boolean),col=C(e.risk?'--crit':'--thread');
+    const d=b.rank>a.rank?`M${x1},${y1} C${x1+CG*0.6},${y1} ${x2-CG*0.6},${y2} ${x2},${y2}`:`M${x1},${y1} C${x1+60},${y1} ${x1+60},${Math.max(y1,y2)+H} ${(x1+x2)/2},${Math.max(y1,y2)+H} S${x2-60},${y2} ${x2},${y2}`;
+    o+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="${w}" opacity="0.75"${e.risk?' stroke-dasharray="6 4"':''} marker-end="url(#am${e.risk?'r':'n'})"><title>${esc(a.name+' → '+b.name+' · '+[...new Set(fl.map(f=>f.port))].join(', ')+' · '+plural(fl.length,'flow'))}</title></path>`;});
+  G.nodes.forEach(n=>{const [t,sub]=appNodeLabel(n),sev=n.kind==='net'?'none':worstOf(n.hosts),dev=n.kind==='asset'&&byId[n.assetId]&&INTERCO.has(byId[n.assetId].type);
+    o+=`<g class="an" data-app-node="${esc(n.key)}" role="button" tabindex="0"><rect x="${n.x}" y="${n.y}" width="${W}" height="${H}" rx="4" fill="${C(dev?'--detail':'--panel')}" stroke="${C(n.kind==='net'?'--x-net':'--line')}" stroke-width="${n.kind==='net'?1.6:1}"/>`+
+      (sev!=='none'?`<rect x="${n.x}" y="${n.y+H-4}" width="${W}" height="4" fill="${C(SEV[sev].css)}"/>`:'')+
+      `<text x="${n.x+10}" y="${n.y+20}" font-family="${PF.d}" font-weight="700" font-size="13" fill="${dev?'#eef0ec':ink}">${esc(clip(t,13,700,PF.d,W-20))}</text>`+
+      `<text x="${n.x+10}" y="${n.y+36}" font-family="${PF.m}" font-size="10" fill="${dev?'#aeb6bb':mu}">${esc(clip(sub,10,400,PF.m,W-20))}</text><title>${esc(t+' · '+sub)}</title></g>`;});
+  const mk=(id,c)=>`<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`;
+  lensBody.innerHTML=`<div class="lens-head"><h2>Application view</h2><p>One box per application, with the assets it runs on. Arrows follow the flows: from the application that sends them to the one listening on their port. Red dashes: risky flows. Bar under a box: worst vulnerability of its hosts.</p></div>
+  ${G.nodes.length?`<svg class="lens-svg" viewBox="-10 0 ${hW+10} ${hH}" width="${hW+10}" height="${hH}" role="img" aria-label="Applications of IS ${esc(SITE.name)} and the flows between them"><defs>${mk('amn',C('--thread'))}${mk('amr',C('--crit'))}</defs>${o}</svg>`:'<p class="empty">No flow recorded yet: the application view draws the flows between applications.</p>'}`;
+}
+function showAppNode(key){
+  if(state.lens==='business'){const b=SITE.bizById[key];if(b)showBusiness(b);return;}
+  const n=APPG&&APPG.nodes.find(x=>x.key===key);if(!n)return;
+  if(n.kind==='net'){if(SVC[key])showService(SVC[key]);return;}
+  if(n.hosts.length===1){select(byId[n.hosts[0]],false);return;}
+  const [t,sub]=appNodeLabel(n),ins=APPG.edges.filter(e=>e.to===key),outs=APPG.edges.filter(e=>e.from===key),nm=k=>appNodeLabel(APPG.nodes.find(x=>x.key===k))[0];
+  openDet(`<div class="d-head"><div><span class="cap">${n.kind==='app'?'Application':'Clients'}</span><h2>${esc(t)}</h2><p>${esc(sub)}</p></div><button class="close" data-close aria-label="Close">×</button></div>
+  <div class="d-body"><h3 class="cap">Runs on · ${n.hosts.length}</h3><ul class="list">${n.hosts.map(id=>`<li class="reach"><button data-goto="${esc(id)}">${esc(nameOf(id))}<small>${esc(byId[id].ip||'')} · VLAN ${esc(vnum(byId[id]))}</small></button>${tag(byId[id].sev)}</li>`).join('')}</ul>
+  <h3 class="cap">Called by · ${ins.length}</h3>${ins.length?`<ul class="list">${ins.map(e=>`<li class="reach"><button data-app-node="${esc(e.from)}">${esc(nm(e.from))}<small>${plural(e.flows.length,'flow')}</small></button></li>`).join('')}</ul>`:'<p class="empty">Nothing calls it.</p>'}
+  <h3 class="cap">Calls · ${outs.length}</h3>${outs.length?`<ul class="list">${outs.map(e=>`<li class="reach"><button data-app-node="${esc(e.to)}">${esc(nm(e.to))}<small>${plural(e.flows.length,'flow')}</small></button></li>`).join('')}</ul>`:'<p class="empty">It calls nothing.</p>'}</div>`,'app');
+}
+function renderBizLens(){
+  const B=SITE.business;
+  const chips=l=>l.map(x=>x.svc?`<button class="bchip net" data-svc="${esc(x.svc.id)}">${esc(x.svc.name)}</button>`:`<button class="bchip" data-goto="${esc(x.a.id)}" title="${esc(x.direct?x.a.role||'':chain(x.path))}"><i style="background:var(${SEV[x.a.sev].css})"></i>${esc(x.a.name)}</button>`).join('');
+  lensBody.innerHTML=`<div class="lens-head"><h2>Business view</h2><p>What the organisation does here, and every asset each business service relies on: the ones it runs on, what they call, the equipment their flows cross and the Internet services they use. Open an asset to see all the services it would hit.</p>
+  <div class="btns row2 edit-only" style="max-width:260px"><button class="btn small" data-act="new-biz"><span>+ Business service</span></button></div></div>
+  ${B.length?`<div class="bizgrid">${B.map(b=>{const g=bizGroups(b),ids=Object.keys(SITE.impact.byBusiness[b.id].assets),w=worstOf(ids);
+    return `<section class="bizcard${state.biz===b.id?' on':''}"><header><button class="bname" data-biz="${esc(b.id)}">${esc(b.name)}</button>${critTag(b.crit)}</header>
+    <p class="bmeta">${b.owner?esc(b.owner)+' · ':''}${plural(ids.length,'asset')}${w!=='none'?` · worst: <span style="color:var(${SEV[w].css})">${SEV[w].label}</span>`:''}</p>
+    ${g.map(([t,l])=>l.length?`<div class="bgrp"><span class="cap">${t}</span><div class="bchips">${chips(l)}</div></div>`:'').join('')}
+    <div class="bfoot"><button class="btn small" data-biz-hl="${esc(b.id)}">Show on the model</button><button class="btn small edit-only" data-edit-biz="${esc(b.id)}">Edit</button></div></section>`;}).join('')}</div>`
+  :`<div class="bizempty"><p>No business service recorded for this IS yet. A business service is an activity of the organisation (online sales, payroll, production line 1) and the assets it runs on. Strata works out the rest from the flows.</p></div>`}`;
+}
+lensEl.addEventListener('click',e=>{
+  const t=e.target,q=s=>t.closest(s);
+  if(q('[data-app-node]')){showAppNode(q('[data-app-node]').dataset.appNode);return;}
+  if(q('[data-biz]')){showBusiness(SITE.bizById[q('[data-biz]').dataset.biz]);return;}
+  if(q('[data-biz-hl]')){const id=q('[data-biz-hl]').dataset.bizHl;setBizHighlight(id);showBusiness(SITE.bizById[id]);return;}
+  if(q('[data-edit-biz]')){businessForm(SITE.bizById[q('[data-edit-biz]').dataset.editBiz]);return;}
+  if(q('[data-goto]')){const a=byId[q('[data-goto]').dataset.goto];if(a){state.selId=a.id;showAsset(a);}return;}
+  if(q('[data-svc]')){const x=SVC[q('[data-svc]').dataset.svc];if(x)showService(x);return;}
+});
+lensEl.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('[data-app-node]')){e.preventDefault();showAppNode(e.target.closest('[data-app-node]').dataset.appNode);}});
+$('#lensSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setLens(b.dataset.lens);});
 
 /* ================= Internet services ================= */
 function compileSvcList(list,scope){return (Array.isArray(list)?list:[]).filter(x=>x&&x.id&&x.name).map(x=>({id:'svc:'+x.id,key:x.id,name:String(x.name),category:x.category||'Other',hosts:svcHosts(x.hosts),ports:parsePorts(x.ports),notes:x.notes||'',scope}));}
@@ -2438,7 +2617,7 @@ function selectSite(s,focus){
 }
 function enterSite(s){
   if(!s)return;
-  state.view='site';state.siteId=s.id;state.ovSelId=s.id;state.selId=null;state.path=false;state.hidden=new Set();
+  state.view='site';state.siteId=s.id;state.ovSelId=s.id;state.selId=null;state.path=false;state.hidden=new Set();state.biz=null;
   $('#pathBtn').setAttribute('aria-pressed','false');
   setSite(s);closeDet();flatFitFor=null;showFlatUI();renderVlanList();buildScene();layout();refresh();renderCart();syncUI();setViewNow();renderEmpty();
 }
@@ -2468,12 +2647,14 @@ function onData(){
   if(state.view==='site'){
     const s=siteById[state.siteId];
     if(!s){toast('This IS was deleted.');backToOverview();runPending();return;}
+    if(state.biz&&!s.bizById[state.biz])state.biz=null;
     setSite(s);renderVlanList();buildScene();layout();refresh();
     if(state.selId&&!byId[state.selId])state.selId=null;
     if(state.panel!=='form'){
       if(state.panel==='asset'){const a=selAsset();if(a)showAsset(a);else closeDet();}
       else if(state.panel==='path')showPath();else if(state.panel==='ports')showPorts();
       else if(state.panel==='flow'){const f=FLOWS.find(x=>x.id===state.flowId);if(f)showFlow(f);else closeDet();}
+      else if(state.panel==='business'){const b=SITE.bizById[state.bizPanel];if(b)showBusiness(b);else closeDet();}
     }
   }else{
     buildOverview();

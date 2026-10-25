@@ -8,6 +8,14 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 - Colour by › **Per flow**: each flow gets its own colour, and flows that cross the same equipment never share one (up to 10).
 - Hovering a flow in an asset sheet picks it out on the model and the diagram. The sheet lists the flows crossing a device in lane order, with their colour.
 - Unit tests of the graph analysis (`tests/analysis.test.mjs`), run by `npm test`.
+- Three points of view on an IS, Physical, Application and Business:
+  - **Physical** is the 3D model and the 2D diagram, as before.
+  - **Application** draws one box per application, with the assets it runs on, and arrows for the flows between applications.
+  - **Business** lists the business services of the IS (new, saved on the IS: name, criticality, owner, the assets it runs on) and everything each one relies on, worked out from the flows: what its assets call, the equipment crossed, the Internet services used. "Show on the model" picks a service out in 3D or 2D.
+- The asset sheet says which business services an asset would hit, and through which chain of flows. The asset form ticks the services an asset runs.
+- The demo has business services on every IS.
+### Fixed
+- Editing an IS (name, zones, contacts) dropped the Internet services recorded on that IS.
 
 ## [0.5.5] - 2026-10-25
 ### Security
