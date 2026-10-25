@@ -1630,7 +1630,7 @@ const tw=(t,size,weight,fam)=>{measureCtx.font=`${weight} ${size}px ${fam}`;retu
 function clip(t,size,weight,fam,max){t=String(t||'');if(tw(t,size,weight,fam)<=max)return t;while(t.length>1&&tw(t+'…',size,weight,fam)>max)t=t.slice(0,-1);return t+'…';}
 // Which flows and assets the plan of an asset shows: its own flows, the equipment they cross,
 // and every recorded path from the Internet to it and from it to the Internet
-function planScope(a){
+function planScope(a,full){
   const succ={},pred={};FLOWS.forEach(f=>{(succ[f.src]=succ[f.src]||[]).push(f);(pred[f.dst]=pred[f.dst]||[]).push(f);});
   const reach=(start,adj,key)=>{const st=[].concat(start),d={},q=st.slice();st.forEach(x=>d[x]=0);while(q.length){const x=q.shift();(adj[x]||[]).forEach(f=>{const m=f[key];if(d[m]===undefined){d[m]=d[x]+1;q.push(m);}});}return d;};
   const NET=['internet',...SITE.services.map(x=>x.id)];
@@ -1640,14 +1640,16 @@ function planScope(a){
     const inP=fromNet[a.id]!==undefined&&fromNet[f.src]!==undefined&&toSel[f.dst]!==undefined&&(!short||fromNet[f.src]+1+toSel[f.dst]===fromNet[a.id]);
     const outP=toNet[a.id]!==undefined&&fromSel[f.src]!==undefined&&toNet[f.dst]!==undefined&&(!short||fromSel[f.src]+1+toNet[f.dst]===toNet[a.id]);
     if(own||inP||outP)set.add(f);});return set;};
+  if(!full){const own=FLOWS.filter(f=>f.src===a.id||f.dst===a.id||f.via.includes(a.id)),nodes=new Set([a.id]);own.forEach(f=>f.hops.forEach(h=>nodes.add(h)));
+    return {flows:own,nodes,short:false,full:false,inbound:fromNet[a.id],outbound:toNet[a.id]};}
   let flows=pick(false),short=false;
   const count=fs=>new Set([a.id,...[...fs].flatMap(f=>f.hops)]).size;
   if(count(flows)>36){flows=pick(true);short=true;}
   const nodes=new Set([a.id]);flows.forEach(f=>f.hops.forEach(h=>nodes.add(h)));
-  return {flows:[...flows],nodes,short,inbound:fromNet[a.id],outbound:toNet[a.id]};
+  return {flows:[...flows],nodes,short,full:true,inbound:fromNet[a.id],outbound:toNet[a.id]};
 }
-function buildPlanSvg(a,perFlow){
-  const sc=planScope(a),M=40,GAP=16,PAD=14,VH=30,BANDGAP=96,CARD_W=196,CARD_H=74;
+function buildPlanSvg(a,perFlow,full){
+  const sc=planScope(a,full),STEP=8,M=40,GAP=16,PAD=14,VH=30,BANDGAP=96,CARD_W=196,CARD_H=74;
   const appsOf=a.apps||[],APP_W=150,APP_H=48,apCols=Math.min(3,Math.max(2,appsOf.length>4?3:2));
   const selW=Math.max(340,apCols*APP_W+(apCols+1)*10),apRows=Math.max(1,Math.ceil(appsOf.length/apCols));
   const selH=66+apRows*(APP_H+10)+10+34;
@@ -1667,38 +1669,62 @@ function buildPlanSvg(a,perFlow){
     const pad=vb.net?0:PAD,head=vb.net?0:VH;
     vb.w=Math.max(vb.net?0:Math.max(220,tw(`VLAN ${vb.v.num} · ${vb.v.name}`,13.5,700,PF.d)+(vb.v.cidr?tw(vb.v.cidr,11,400,PF.m):0)+44),...vb.rows.map(r=>r.w))+pad*2;vb.h=head+vb.rows.reduce((t,r)=>t+r.h,0)+(vb.rows.length-1)*GAP+pad*(vb.net?0:2);
   });b.w=b.vlans.reduce((t,v)=>t+v.w,0)+(b.vlans.length-1)*40;b.h=Math.max(...b.vlans.map(v=>v.h));});
-  const TITLE=118,LEG=96;
-  const W=Math.max(1100,...bands.map(b=>b.w+M*2+40));
+  // Flows of the plan, numbered: into the asset, through it, out of it, then the paths beyond
+  const grp=f=>f.dst===a.id?0:f.via.includes(a.id)?1:f.src===a.id?2:3;
+  const FLS=sc.flows.slice().sort((x,y)=>grp(x)-grp(y)||nameOf(x.src).localeCompare(nameOf(y.src),'en',{numeric:true})||nameOf(x.dst).localeCompare(nameOf(y.dst),'en',{numeric:true})||String(x.port).localeCompare(String(y.port)));
+  const num={};FLS.forEach((f,i)=>num[f.id]=i+1);
+  const pcol=perFlow?SA.flowColours(FLS.map(f=>({id:f.id,via:f.hops})),PC_FLOW.length):{};
+  const colOf=f=>perFlow?PC_FLOW[pcol[f.id]||0]:f.risk?PC.crit:f.level==='internet'?PC.net:f.level==='inter'?PC.inter:PC.intra;
+  // One segment per flow and hop
+  const bandOf={};bands.forEach((b,bi)=>b.vlans.forEach(vb=>vb.ids.forEach(id=>bandOf[id]=bi)));
+  const list=[];
+  FLS.forEach(f=>f.hops.forEach((p,i)=>{if(i===f.hops.length-1)return;const q=f.hops[i+1],last=i===f.hops.length-2;
+    list.push({f,n:num[f.id],p,q,last,c:colOf(f),app:last&&q===a.id?appsOf.findIndex(x=>x.ports.includes(f.port)):-1,A:bandOf[p],B:bandOf[q]});}));
+  // Lines run at right angles: out of a card, along the corridor under or over its zone, into the other card.
+  // Between zones that are not next to each other, they go round by the left-hand corridor.
+  const gapUse={},corr=[];
+  list.forEach(s=>{const {A,B}=s;
+    s.gaps=A===B?[A]:B===A+1?[A]:B===A-1?[B]:B>A?[A,B-1]:[A-1,B];
+    s.corr=Math.abs(B-A)>1;if(s.corr)corr.push(s);
+    s.gaps.forEach(g=>(gapUse[g]=gapUse[g]||[]).push(s));});
+  const gapH=g=>Math.max(BANDGAP,40+((gapUse[g]||[]).length)*STEP);
+  const CORR=corr.length?corr.length*STEP+28:0;
+  const TITLE=118,LEG=96,ROW=22,TAB=FLS.length?56+FLS.length*ROW:0;
+  const W=Math.max(1100,...bands.map(b=>b.w+M*2+40+CORR*2));
   let y=M+TITLE;
-  bands.forEach(b=>{b.y=y;const label=b.net?0:24;b.x=(W-b.w)/2;let x=b.x;
+  bands.forEach((b,bi)=>{b.y=y;const label=b.net?0:24;b.x=(W-b.w)/2;let x=b.x;
     b.vlans.forEach(vb=>{vb.x=x;vb.y=y+label;x+=vb.w+40;
-      let ry=vb.y+(vb.net?0:VH+PAD);vb.rows.forEach(r=>{let cx=vb.x+(vb.w-r.w)/2;r.ids.forEach(id=>{const [w,h]=sizeOf(id);box[id]={x:cx,y:ry+(r.h-h)/2,w,h,band:bands.indexOf(b)};cx+=w+GAP;});ry+=r.h+GAP;});});
-    b.h+=label;y+=b.h+BANDGAP;});
-  const H=y-BANDGAP+M+LEG+70;
-  // Hops: one segment per pair of consecutive nodes on a flow path, merged when shared.
-  // Per flow: one segment per flow and hop, so each flow can be followed through the equipment it crosses.
-  const segs={},rankL={internet:3,inter:2,intra:1};
-  // the plan picks its own colours: flows that share any node of the plan never share one while the palette lasts
-  const pcol=perFlow?SA.flowColours(sc.flows.map(f=>({id:f.id,via:f.hops})),PC_FLOW.length):{};
-  sc.flows.forEach(f=>{f.hops.forEach((p,i)=>{if(i===f.hops.length-1)return;const q=f.hops[i+1],last=i===f.hops.length-2;
-    const app=last&&q===a.id?appsOf.findIndex(x=>x.ports.includes(f.port)):-1;
-    const k=`${p}>${q}>${app}${perFlow?'>'+f.id:''}`;const s=segs[k]=segs[k]||{p,q,app,flows:[],ports:new Set(),level:'intra',risk:false,fc:perFlow?PC_FLOW[pcol[f.id]||0]:null};
-    s.flows.push(f);if(last)s.ports.add(f.port);if(rankL[f.level]>rankL[s.level])s.level=f.level;if(f.risk)s.risk=true;});});
-  const list=Object.values(segs);
+      let ry=vb.y+(vb.net?0:VH+PAD);vb.rows.forEach(r=>{let cx=vb.x+(vb.w-r.w)/2;r.ids.forEach(id=>{const [w,h]=sizeOf(id);box[id]={x:cx,y:ry+(r.h-h)/2,w,h,band:bi};cx+=w+GAP;});ry+=r.h+GAP;});});
+    b.h+=label;y+=b.h+gapH(bi);});
+  const lastB=bands.length-1;
+  if(!(gapUse[lastB]||[]).length)y-=gapH(lastB)-40;
+  const tabY=y,H=tabY+TAB+LEG+M+30;
   const cy=id=>box[id].y+box[id].h/2,cx=id=>box[id].x+box[id].w/2;
-  const sameBand=s=>box[s.p].band===box[s.q].band;
   const side=(s,end)=>{const me=end?s.q:s.p,other=end?s.p:s.q;
-    if(sameBand(s))return 'bottom';return cy(other)>cy(me)?'bottom':'top';};
-  // Spread the attachment points along each side, ordered by where the other end is
+    if(s.A===s.B)return 'bottom';return cy(other)>cy(me)?'bottom':'top';};
+  // Spread the attachment points along each side: on equipment, in the order of the flow lanes,
+  // so a flow enters and leaves at the same rank; elsewhere, by where the other end is
   const slots={};list.forEach(s=>{[[s.p,0],[s.q,1]].forEach(([id,end])=>{const sd=side(s,end),k=id+'|'+sd;(slots[k]=slots[k]||[]).push({s,end});});});
-  // on equipment crossed, per flow: in the order of the flow lanes, so a flow enters and leaves at the same rank
-  const laneAt=(id,s)=>{const L=SITE.lanes[id];return L&&s.flows.length===1&&L.idx[s.flows[0].id]!==undefined?L.idx[s.flows[0].id]:null;};
-  Object.entries(slots).forEach(([k,arr])=>{const [id]=k.split('|'),b=box[id];
-    arr.sort((u,v)=>{const lu=perFlow?laneAt(id,u.s):null,lv=perFlow?laneAt(id,v.s):null;return lu!=null&&lv!=null?lu-lv:cx(u.end?u.s.p:u.s.q)-cx(v.end?v.s.p:v.s.q);});
+  const laneAt=(id,s)=>{const L=SITE.lanes[id];return L&&L.idx[s.f.id]!==undefined?L.idx[s.f.id]:null;};
+  Object.entries(slots).forEach(([k,arr])=>{const [id,sd]=k.split('|'),b=box[id];
+    arr.sort((u,v)=>{const lu=laneAt(id,u.s),lv=laneAt(id,v.s);return lu!=null&&lv!=null?lu-lv:cx(u.end?u.s.p:u.s.q)-cx(v.end?v.s.p:v.s.q)||u.s.n-v.s.n;});
     arr.forEach((o,i)=>{let x=b.x+b.w*(i+1)/(arr.length+1);
       if(o.end&&id===a.id&&o.s.app>=0){const ai=o.s.app,col=ai%apCols;x=b.x+10+col*(APP_W+10)+APP_W/2+((i%3)-1)*6;}
-      const sd=k.split('|')[1];o.s[o.end?'q2':'p2']={x,y:sd==='top'?b.y:b.y+b.h,sd};});});
-  const colorOf=s=>s.fc?s.fc:s.risk?PC.crit:s.level==='internet'?PC.net:s.level==='inter'?PC.inter:PC.intra;
+      o.s[o.end?'q2':'p2']={x,y:sd==='top'?b.y:b.y+b.h,sd,rank:i};});});
+  // Tracks: each segment gets its own height in each corridor it uses, and its own x in the left one
+  Object.entries(gapUse).forEach(([g,arr])=>{const top=bands[g].y+bands[g].h;
+    arr.slice().sort((u,v)=>((u.p2.x+u.q2.x)/2)-((v.p2.x+v.q2.x)/2)||u.n-v.n).forEach((s,i)=>{(s.ty=s.ty||{})[g]=top+22+i*STEP;});});
+  const minX=Math.min(...bands.map(b=>b.x));
+  corr.forEach((s,i)=>s.cx=minX-18-i*STEP);
+  list.forEach(s=>{const p=s.p2,q=s.q2;if(!p||!q)return;const t=s.gaps.map(g=>s.ty[g]);
+    s.pts=s.corr?[[p.x,p.y],[p.x,t[0]],[s.cx,t[0]],[s.cx,t[1]],[q.x,t[1]],[q.x,q.y]]:[[p.x,p.y],[p.x,t[0]],[q.x,t[0]],[q.x,q.y]];});
+  // A polyline with rounded corners
+  const orth=(pts,r=7)=>{let d=`M${pts[0][0]},${pts[0][1]}`;
+    for(let i=1;i<pts.length-1;i++){const [x0,y0]=pts[i-1],[x1,y1]=pts[i],[x2,y2]=pts[i+1];
+      const r1=Math.min(r,Math.hypot(x1-x0,y1-y0)/2,Math.hypot(x2-x1,y2-y1)/2);
+      const ux=Math.sign(x1-x0),uy=Math.sign(y1-y0),vx=Math.sign(x2-x1),vy=Math.sign(y2-y1);
+      d+=` L${x1-ux*r1},${y1-uy*r1} Q${x1},${y1} ${x1+vx*r1},${y1+vy*r1}`;}
+    const e=pts[pts.length-1];return d+` L${e[0]},${e[1]}`;};
   const X=t=>esc(t);
   let out='';
   // Title block
@@ -1712,21 +1738,20 @@ function buildPlanSvg(a,perFlow){
   out+=`<text x="${W-M}" y="${M+12}" text-anchor="end" font-family="${PF.m}" font-size="11.5" fill="${PC.muted}">${X(today())} · Strata</text>`;
   out+=`<line x1="${M}" y1="${M+TITLE-14}" x2="${W-M}" y2="${M+TITLE-14}" stroke="${PC.line}" stroke-width="1"/>`;
   // Bands and VLAN boxes
-  bands.forEach(b=>{if(!b.net)out+=`<text x="${b.x}" y="${b.y+12}" font-family="${PF.d}" font-weight="700" font-size="12" letter-spacing="1.4" fill="${PC.muted}">${X(b.name)}</text>`;
+  let vlanLabels='';
+  bands.forEach(b=>{if(!b.net)vlanLabels+=`<text x="${b.x}" y="${b.y+12}" font-family="${PF.d}" font-weight="700" font-size="12" letter-spacing="1.4" fill="${PC.muted}" stroke="${PC.paper}" stroke-width="4" stroke-linejoin="round" paint-order="stroke">${X(b.name)}</text>`;
     b.vlans.forEach(vb=>{if(vb.net)return;const c=PC.vlan[vb.v.ci%10];
       out+=`<rect x="${vb.x}" y="${vb.y}" width="${vb.w}" height="${vb.h}" rx="6" fill="${c}" fill-opacity="0.28" stroke="${c}" stroke-width="1.5"/>`;
       out+=`<rect x="${vb.x}" y="${vb.y}" width="6" height="${vb.h}" rx="3" fill="${c}"/>`;
-      out+=`<text x="${vb.x+16}" y="${vb.y+20}" font-family="${PF.d}" font-weight="700" font-size="13.5" fill="${PC.ink}">${X(clip(`VLAN ${vb.v.num} · ${vb.v.name}`,13.5,700,PF.d,vb.w-130))}</text>`;
-      out+=`<text x="${vb.x+vb.w-12}" y="${vb.y+20}" text-anchor="end" font-family="${PF.m}" font-size="11" fill="${PC.muted}">${X(vb.v.cidr||'')}</text>`;});});
-  // Flows, under the cards
+      // names go on top of the lines, with a halo, so a line crossing the header does not hide them
+      vlanLabels+=`<text x="${vb.x+16}" y="${vb.y+20}" font-family="${PF.d}" font-weight="700" font-size="13.5" fill="${PC.ink}" stroke="${PC.paper}" stroke-width="4" stroke-linejoin="round" paint-order="stroke">${X(clip(`VLAN ${vb.v.num} · ${vb.v.name}`,13.5,700,PF.d,vb.w-130))}</text>`;
+      vlanLabels+=`<text x="${vb.x+vb.w-12}" y="${vb.y+20}" text-anchor="end" font-family="${PF.m}" font-size="11" fill="${PC.muted}" stroke="${PC.paper}" stroke-width="4" stroke-linejoin="round" paint-order="stroke">${X(vb.v.cidr||'')}</text>`;});});
+  // Flows, under the cards; a white casing keeps crossing lines apart
   const marks=new Set();
-  list.forEach(s=>{const c=colorOf(s),p=s.p2,q=s.q2;if(!p||!q)return;
-    let d;
-    if(sameBand(s)){const yb=Math.max(p.y,q.y);const h=34+Math.min(60,Math.abs(q.x-p.x)*0.1);d=`M${p.x},${p.y} C${p.x},${yb+h} ${q.x},${yb+h} ${q.x},${q.y}`;}
-    else{const dir=p.sd==='bottom'?1:-1,dy=Math.max(40,Math.abs(q.y-p.y)*0.45);d=`M${p.x},${p.y} C${p.x},${p.y+dir*dy} ${q.x},${q.y-dir*dy} ${q.x},${q.y}`;}
-    const mk='a'+c.slice(1);marks.add(c);
-    out+=`<path d="${d}" fill="none" stroke="${c}" stroke-width="${s.risk?2.4:2}" ${s.risk?'stroke-dasharray="7 5"':''} marker-end="url(#${mk})" opacity="0.92"/>`;
-    s.d=d;s.c=c;});
+  list.forEach(s=>{if(!s.pts)return;s.d=orth(s.pts);marks.add(s.c);
+    out+=`<path d="${s.d}" fill="none" stroke="${PC.paper}" stroke-width="5.5" stroke-linejoin="round"/>`;
+    out+=`<path d="${s.d}" fill="none" stroke="${s.c}" stroke-width="${s.f.risk?2.2:1.8}" ${s.f.risk?'stroke-dasharray="7 4"':''} stroke-linejoin="round" marker-end="url(#a${s.c.slice(1)})"/>`;});
+  out+=vlanLabels;
   // Cards
   const card=id=>{const b=box[id];
     if(SVC[id]){const x=SVC[id];return `<g><rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="10" fill="${PC.panel}" stroke="${PC.net}" stroke-width="1.6"/><text x="${b.x+12}" y="${b.y+17}" font-family="${PF.d}" font-weight="700" font-size="10" letter-spacing="1.2" fill="${PC.net}">${X(clip(('INTERNET · '+x.category).toUpperCase(),10,700,PF.d,b.w-24))}</text><text x="${b.x+12}" y="${b.y+38}" font-family="${PF.d}" font-weight="700" font-size="16" fill="${PC.ink}">${X(clip(x.name,16,700,PF.d,b.w-24))}</text><text x="${b.x+12}" y="${b.y+56}" font-family="${PF.m}" font-size="10.5" fill="${PC.muted}">${X(clip(x.hosts.join(', '),10.5,400,PF.m,b.w-24))}</text></g>`;}
@@ -1754,29 +1779,45 @@ function buildPlanSvg(a,perFlow){
     g+=`<text x="${b.x+11}" y="${b.y+68}" font-family="${PF.m}" font-size="10" fill="${mut}">${X(clip(x.os||'',10,400,PF.m,b.w-22))}</text>`;
     return g+'</g>';};
   Object.keys(box).forEach(id=>out+=card(id));
-  // Port labels, on top
-  const ptOn=(d,t)=>{const n=d.match(/-?[\d.]+/g).map(Number);const [x0,y0,x1,y1,x2,y2,x3,y3]=n,u=1-t;
-    return [u*u*u*x0+3*u*u*t*x1+3*u*t*t*x2+t*t*t*x3,u*u*u*y0+3*u*u*t*y1+3*u*t*t*y2+t*t*t*y3];};
-  list.forEach(s=>{if(!s.d||!s.ports.size)return;const ps=[...s.ports],txt=ps.length>3?ps.slice(0,3).join(', ')+` +${ps.length-3}`:ps.join(', ');
-    const [lx,ly]=ptOn(s.d,0.62),w=tw(txt,10.5,500,PF.m)+12;
-    out+=`<rect x="${lx-w/2}" y="${ly-9}" width="${w}" height="17" rx="3" fill="${PC.panel}" stroke="${s.c}" stroke-width="1"/><text x="${lx}" y="${ly+3.5}" text-anchor="middle" font-family="${PF.m}" font-size="10.5" font-weight="500" fill="${s.c}">${X(txt)}</text>`;});
+  // Badges, on top: number and port where a flow arrives, number alone where it reaches equipment it crosses.
+  // Neighbouring badges are staggered so they do not overlap.
+  list.forEach(s=>{if(!s.q2)return;const q=s.q2,out1=q.sd==='top'?-1:1,lvl=q.rank%3,by=q.y+out1*(15+lvl*17);
+    if(s.last){const txt=`${s.n} · ${s.f.port}`,w=tw(txt,10.5,600,PF.m)+14;
+      out+=`<rect x="${q.x-w/2}" y="${by-8.5}" width="${w}" height="17" rx="8.5" fill="${PC.panel}" stroke="${s.c}" stroke-width="1.3"/><text x="${q.x}" y="${by+3.6}" text-anchor="middle" font-family="${PF.m}" font-size="10.5" font-weight="600" fill="${s.c}">${X(txt)}</text>`;}
+    else out+=`<circle cx="${q.x}" cy="${by}" r="8" fill="${PC.panel}" stroke="${s.c}" stroke-width="1.3"/><text x="${q.x}" y="${by+3.5}" text-anchor="middle" font-family="${PF.m}" font-size="10" font-weight="600" fill="${s.c}">${s.n}</text>`;});
+  // Table of the flows
+  if(FLS.length){
+    const ty=tabY,C1=M,C2=M+40,C3=W-M-380,C4=W-M-290,C5=W-M-200,C6=W-M-110;
+    out+=`<line x1="${M}" y1="${ty}" x2="${W-M}" y2="${ty}" stroke="${PC.line}" stroke-width="1"/>`;
+    out+=`<text x="${M}" y="${ty+24}" font-family="${PF.d}" font-weight="700" font-size="12" letter-spacing="1.4" fill="${PC.muted}">FLOWS ON THIS PLAN · ${FLS.length}</text>`;
+    [['Path',C2],['Port',C3],['Volume',C4],['Exposure',C5],['Note',C6]].forEach(([t,x])=>out+=`<text x="${x}" y="${ty+44}" font-family="${PF.d}" font-weight="700" font-size="10.5" letter-spacing="1.1" fill="${PC.muted}">${t.toUpperCase()}</text>`);
+    FLS.forEach((f,i)=>{const ry=ty+64+i*ROW,c=colOf(f);
+      if(i%2)out+=`<rect x="${M-6}" y="${ry-15}" width="${W-M*2+12}" height="${ROW}" fill="${PC.zone}" opacity="0.55"/>`;
+      out+=`<circle cx="${C1+10}" cy="${ry-4}" r="9" fill="${PC.panel}" stroke="${c}" stroke-width="1.5"/><text x="${C1+10}" y="${ry}" text-anchor="middle" font-family="${PF.m}" font-size="10.5" font-weight="600" fill="${c}">${num[f.id]}</text>`;
+      out+=`<text x="${C2}" y="${ry}" font-family="${PF.b}" font-size="12" fill="${PC.ink}" ${f.src===a.id||f.dst===a.id?'font-weight="600"':''}>${X(clip(f.hops.map(nameOf).join(' → '),12,400,PF.b,C3-C2-16))}</text>`;
+      out+=`<text x="${C3}" y="${ry}" font-family="${PF.m}" font-size="11" fill="${PC.ink}">${X(f.port)}</text>`;
+      out+=`<text x="${C4}" y="${ry}" font-family="${PF.m}" font-size="11" fill="${PC.muted}">${f.vol} MB/h</text>`;
+      out+=`<text x="${C5}" y="${ry}" font-family="${PF.b}" font-size="11.5" fill="${f.level==='internet'?PC.net:f.level==='inter'?PC.inter:PC.muted}">${X(EXP[f.level].label)}</text>`;
+      out+=`<text x="${C6}" y="${ry}" font-family="${PF.b}" font-size="11.5" fill="${PC.crit}">${f.risk?X(clip(f.note||'Risky',11.5,400,PF.b,W-M-C6)):''}</text>`;});
+  }
   // Legend and scope note
   const ly=H-M-LEG+26;
   out+=`<line x1="${M}" y1="${ly-18}" x2="${W-M}" y2="${ly-18}" stroke="${PC.line}" stroke-width="1"/>`;
   const legend=perFlow?[[PC_FLOW[0],''],[PC_FLOW[1],''],[PC_FLOW[2],'One colour per flow'],[PC.ink,'Risky flow',true]]:[[PC.net,'Internet'],[PC.inter,'Between VLANs'],[PC.intra,'Inside a VLAN'],[PC.crit,'Risky flow',true]];
   let lx=M;legend.forEach(([c,t,dash])=>{out+=`<line x1="${lx}" y1="${ly}" x2="${lx+30}" y2="${ly}" stroke="${c}" stroke-width="2.4" ${dash?'stroke-dasharray="7 5"':''}/><text x="${lx+38}" y="${ly+4}" font-family="${PF.b}" font-size="12" fill="${PC.ink}">${t}</text>`;lx+=t?60+tw(t,12,400,PF.b)+26:40;});
-  out+=`<rect x="${lx}" y="${ly-9}" width="26" height="18" rx="3" fill="${PC.dev}"/><text x="${lx+34}" y="${ly+4}" font-family="${PF.b}" font-size="12" fill="${PC.ink}">Interconnection equipment</text>`;lx+=34+tw('Interconnection equipment',12,400,PF.b)+26;
-  out+=`<text x="${M}" y="${ly+28}" font-family="${PF.b}" font-size="12" fill="${PC.ink}">Arrow: from the source to the destination of the connection. Label: destination port.</text>`;
-  out+=`<text x="${M}" y="${ly+50}" font-family="${PF.b}" font-size="11.5" fill="${PC.muted}">${X(`Scope: ${a.name}, its direct flows, the equipment they cross and ${sc.short?'the shortest':'every'} recorded path from and to the Internet. ${plural(Object.keys(box).length,'node')} · ${plural(sc.flows.length,'flow')}.`)}</text>`;
+  out+=`<rect x="${lx}" y="${ly-9}" width="26" height="18" rx="3" fill="${PC.dev}"/><text x="${lx+34}" y="${ly+4}" font-family="${PF.b}" font-size="12" fill="${PC.ink}">Interconnection equipment</text>`;
+  out+=`<text x="${M}" y="${ly+28}" font-family="${PF.b}" font-size="12" fill="${PC.ink}">Each line is one flow, from its source to its destination. Its number refers to the table; the badge where it arrives gives the destination port.</text>`;
+  out+=`<text x="${M}" y="${ly+50}" font-family="${PF.b}" font-size="11.5" fill="${PC.muted}">${X(`Scope: ${a.name} and ${sc.full?`its flows, the equipment they cross and ${sc.short?'the shortest':'every'} recorded path from and to the Internet`:'its own flows, with the equipment they cross'}. ${plural(Object.keys(box).length,'node')} · ${plural(FLS.length,'flow')}.`)}</text>`;
   const defs=[...marks].map(c=>`<marker id="a${c.slice(1)}" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`).join('');
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${PF.b}"><title>${X(`Architecture plan · ${a.name} · IS ${SITE.name}`)}</title><defs>${defs}</defs>${out}</svg>`;
-  return {svg,w:W,h:H,nodes:Object.keys(box).length,flows:sc.flows.length};
+  return {svg,w:W,h:H,nodes:Object.keys(box).length,flows:FLS.length};
 }
 let PLAN=null;
-function openPlan(a,perFlow=state.color==='flow'){
+function openPlan(a,perFlow=state.color==='flow',full=false){
   if(!a)return;
-  PLAN=Object.assign(buildPlanSvg(a,perFlow),{asset:a,zoom:0,perFlow});
+  PLAN=Object.assign(buildPlanSvg(a,perFlow,full),{asset:a,zoom:0,perFlow,full});
   const cb=$('#planColour');cb.textContent=perFlow?'Colour: per flow':'Colour: exposure';cb.setAttribute('aria-pressed',String(perFlow));
+  const sb=$('#planScope');sb.textContent=full?'Scope: full paths':'Scope: direct flows';sb.setAttribute('aria-pressed',String(full));
   $('#planTitle').textContent=`${a.name} · IS ${SITE.name}`;
   $('#planView').innerHTML=PLAN.svg;$('#plan').hidden=false;document.body.classList.add('has-plan');planZoom(0);
 }
@@ -1798,7 +1839,8 @@ async function planPng(){
 }
 $('#plan').addEventListener('click',e=>{const b=e.target.closest('[data-plan]');if(!b||!PLAN)return;const k=b.dataset.plan;
   if(k==='close')closePlan();
-  else if(k==='colour'){const z=PLAN.zoom;openPlan(PLAN.asset,!PLAN.perFlow);planZoom(z);}
+  else if(k==='colour'){const z=PLAN.zoom;openPlan(PLAN.asset,!PLAN.perFlow,PLAN.full);planZoom(z);}
+  else if(k==='scope'){const z=PLAN.zoom;openPlan(PLAN.asset,PLAN.perFlow,!PLAN.full);planZoom(z);}
   else if(k==='fit')planZoom(0);
   else if(k==='zoom-in'||k==='zoom-out'){const cur=PLAN.zoom||Math.min(1,$('#planView').clientWidth/PLAN.w);planZoom(Math.max(0.25,Math.min(3,cur*(k==='zoom-in'?1.25:0.8))));}
   else if(k==='svg')saveFile(`architecture-plan_${fileStem(PLAN.asset.name)}_${today()}.svg`,'image/svg+xml','<?xml version="1.0" encoding="UTF-8"?>\n'+PLAN.svg);
