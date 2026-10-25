@@ -21,6 +21,7 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
   - **Business** lists the business services of the IS (new, saved on the IS: name, criticality, owner, the assets it runs on) and everything each one relies on, worked out from the flows: what its assets call, the equipment crossed, the Internet services used. "Show on the model" picks a service out in 3D or 2D.
 - The asset sheet says which business services an asset would hit, and through which chain of flows. The asset form ticks the services an asset runs.
 - The demo has business services on every IS.
+- Asset form: a new asset gets the first free address of its VLAN range as IP, and picking another VLAN moves it to that VLAN's first free address. An IP outside the range of the VLAN picked is pointed out, with the free address to use instead. An IP typed by hand is never overwritten.
 ### Fixed
 - Editing an IS (name, zones, contacts) dropped the Internet services recorded on that IS.
 

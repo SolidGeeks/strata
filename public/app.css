@@ -434,3 +434,4 @@ body.lens #hint{display:none}
 .plan-seg button{padding:6px 10px;min-height:30px;font-size:11.5px}
 .plan-seg button[hidden]{display:none}
 #planDir:has(button[hidden]){grid-template-columns:repeat(3,1fr)}
+#ipHint .warn{color:var(--high)}

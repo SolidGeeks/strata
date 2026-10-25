@@ -112,5 +112,17 @@ function appGraph(site){
   return {nodes:list,edges:E};
 }
 
-root.StrataAnalysis={lanes,flowColours,dependencies,businessImpact,appGraph};
+/* ---- Addresses ---- */
+// IPv4 only: '10.20.0.15' -> integer, or null
+function ip4(t){const m=/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(t||'').trim());if(!m||m.slice(1).some(x=>+x>255))return null;return ((+m[1]<<24)>>>0)+(+m[2]<<16)+(+m[3]<<8)+(+m[4]);}
+const ip4s=n=>[n>>>24,(n>>>16)&255,(n>>>8)&255,n&255].join('.');
+// '10.20.0.0/24' -> {base, bits, first, last} (first and last usable host), or null
+function cidr4(c){const m=/^\s*([\d.]+)\/(\d{1,2})\s*$/.exec(String(c||''));if(!m)return null;const b=ip4(m[1]),bits=+m[2];if(b===null||bits>32)return null;
+  const size=2**(32-bits),base=b-(b%size);return {base,bits,first:bits>=31?base:base+1,last:bits>=31?base+size-1:base+size-2};}
+function inCidr(ip,c){const n=ip4(ip),r=cidr4(c);return n!==null&&!!r&&n>=r.base&&n<r.base+2**(32-r.bits);}
+// First host address of the range that no asset uses yet, or null when the range is full or unreadable
+function nextFreeIp(c,used){const r=cidr4(c);if(!r)return null;const u=new Set([...(used||[])].map(ip4).filter(x=>x!==null));
+  for(let n=r.first;n<=r.last&&n-r.first<65536;n++)if(!u.has(n))return ip4s(n);return null;}
+
+root.StrataAnalysis={inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph};
 })(typeof globalThis!=='undefined'?globalThis:this);

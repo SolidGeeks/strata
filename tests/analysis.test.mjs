@@ -107,3 +107,23 @@ test('application view: one node per application, clients grouped, columns follo
   // the SIEM listens on no recorded application: it shows as itself
   assert.equal(at['asset:siem'].kind, 'asset');
 });
+
+test('addresses: the first free host of a VLAN range, skipping the network address and those in use', () => {
+  assert.equal(A.nextFreeIp('10.20.0.0/24', []), '10.20.0.1');
+  assert.equal(A.nextFreeIp('10.20.0.0/24', ['10.20.0.1', '10.20.0.2', '10.20.0.4']), '10.20.0.3');
+  // a range written from one of its hosts still starts at its network address
+  assert.equal(A.nextFreeIp('10.30.1.7/23', ['10.30.0.1']), '10.30.0.2');
+  // full range: nothing to suggest (broadcast excluded)
+  assert.equal(A.nextFreeIp('192.168.1.0/30', ['192.168.1.1', '192.168.1.2']), null);
+  assert.equal(A.nextFreeIp('10.0.0.8/31', ['10.0.0.8']), '10.0.0.9');
+  assert.equal(A.nextFreeIp('not a range', []), null);
+  assert.equal(A.nextFreeIp('', []), null);
+});
+
+test('addresses: inside or outside a range', () => {
+  assert.equal(A.inCidr('10.20.0.15', '10.20.0.0/24'), true);
+  assert.equal(A.inCidr('10.20.1.15', '10.20.0.0/24'), false);
+  assert.equal(A.inCidr('10.30.1.200', '10.30.0.0/23'), true);
+  assert.equal(A.inCidr('10.20.0.300', '10.20.0.0/24'), false);
+  assert.equal(A.inCidr('fe80::1', '10.20.0.0/24'), false);
+});

@@ -1368,6 +1368,29 @@ function assetForm(a,presetVlan,opts={}){
     const d=clone(SITE.raw);d.flows=(d.flows||[]).filter(f=>f.src!==a.id&&f.dst!==a.id);
     state.selId=null;await Store.many([()=>Store.delAsset(a.id),()=>Store.putSite(SITE.id,d)],'Deleting');closeDet();
   }}:null});
+  ipFromVlan(a);
+}
+// The IP field follows the VLAN range: a new asset starts on the first free address of its VLAN,
+// and an address outside the range of the VLAN picked is pointed out, with the free one to use instead
+function ipFromVlan(a){
+  const ipIn=$('#fIp'),vSel=$('#fVlan'),hint=document.createElement('span');hint.className='hint';hint.id='ipHint';ipIn.after(hint);
+  const used=()=>ASSETS.filter(x=>!a||x.id!==a.id).map(x=>x.ip).filter(Boolean);
+  let auto=null;
+  const sync=fromVlan=>{
+    const v=vlanById[vSel.value],cidr=v&&v.cidr,cur=ipIn.value.trim();
+    const free=cidr?SA.nextFreeIp(cidr,used()):null;
+    if(!a&&fromVlan&&(cur===''||cur===auto)){auto=free;ipIn.value=free||'';}
+    const ip=ipIn.value.trim();
+    if(!cidr)hint.innerHTML=ip?'':'This VLAN has no address range: give the IP by hand.';
+    else if(ip&&/^[\d.]+$/.test(ip)&&!SA.inCidr(ip,cidr))hint.innerHTML=`<span class="warn">Outside VLAN ${esc(v.num)} (${esc(cidr)}).</span>${free?` <button type="button" class="linkbtn" data-use-ip="${esc(free)}">Use ${esc(free)}</button>`:''}`;
+    else if(ip&&ip===auto)hint.innerHTML=`First free address in ${esc(cidr)}.`;
+    else if(!ip&&!free)hint.innerHTML=`No free address left in ${esc(cidr)}.`;
+    else hint.innerHTML='';
+  };
+  vSel.addEventListener('change',()=>sync(true));
+  ipIn.addEventListener('input',()=>sync(false));
+  hint.addEventListener('click',e=>{const b=e.target.closest('[data-use-ip]');if(b){ipIn.value=auto=b.dataset.useIp;sync(false);}});
+  sync(true);
 }
 // preset: {src} for an outbound flow, {dst} for an inbound flow
 function flowForm(f,preset={}){
