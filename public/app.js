@@ -1589,34 +1589,38 @@ function exportFlowMatrix(a){
   saveFile(`flow-matrix_${fileStem(SITE.name)}_${fileStem(a.name)}_${today()}.csv`,'text/csv;charset=utf-8',csv(rows));
 }
 // Firewall rules: one allow rule per flow and per firewall crossed. For a firewall, its own rule base.
-function exportFwRules(a){
+// Returns {rules: [...], unfiltered: [...]}, rules grouped by firewall in rule order; shared by the CSV export and the plan.
+function fwRules(a){
   const isFw=a.type==='firewall';
   const list=FLOWS.filter(f=>isFw?(f.via.includes(a.id)||f.dst===a.id||f.src===a.id):(f.src===a.id||f.dst===a.id));
-  const rows=[['Firewall','Rule','Name','Source','Source address','Source zone','Destination','Destination address','Destination zone','Protocol','Port','Service','Action','Log','Flow direction (for '+a.name+')','Comment']];
   const n={},addr=id=>{const i=nodeInfo(id);return id==='internet'?'all':i.svc?(i.ip||i.name):(i.ip?i.ip+'/32':i.name);};
-  const unfiltered=[],head=rows;
   const zoneOf=id=>{const i=nodeInfo(id);return isNet(id)?'Internet':[i.zone,i.vlan].filter(Boolean).join(' / ');};
+  const rules=[],unfiltered=[];
   list.forEach(f=>{
     let fws=f.via.filter(id=>byId[id].type==='firewall');
     if(isFw)fws=f.via.includes(a.id)?[a.id]:[];
     const dir=f.src===a.id?'Outbound':f.dst===a.id?'Inbound':'Crossing';
     const S=Object.assign(nodeInfo(f.src),{zone:zoneOf(f.src)}),T=Object.assign(nodeInfo(f.dst),{zone:zoneOf(f.dst)}),[proto,port]=splitPort(f.port);
     const comment=[f.risk?'RISKY: '+(f.note||'review this flow'):f.note,f.via.length&&f.viaAuto?'path suggested by Strata':''].filter(Boolean).join(' · ');
-    const nm=`${fileStem(S.name)}_to_${fileStem(T.name)}_${proto}${port}`.slice(0,63);
+    const r={flow:f,name:`${fileStem(S.name)}_to_${fileStem(T.name)}_${proto}${port}`.slice(0,63),src:S.name,srcAddr:addr(f.src),srcZone:S.zone,dst:T.name,dstAddr:addr(f.dst),dstZone:T.zone,proto,port,service:f.port,dir};
     if(isFw&&!fws.length){
       // Traffic to or from the firewall itself (management, logs, VPN)
-      rows.push([a.name,(n[a.id]=(n[a.id]||0)+1),nm,S.name,addr(f.src),S.zone,T.name,addr(f.dst),T.zone,proto,port,f.port,'accept','yes',dir,['local traffic (to or from the firewall)',comment].filter(Boolean).join(' · ')]);return;}
-    if(!fws.length){unfiltered.push(f);return;}
-    fws.forEach(fw=>rows.push([nameOf(fw),(n[fw]=(n[fw]||0)+1),nm,S.name,addr(f.src),S.zone,T.name,addr(f.dst),T.zone,proto,port,f.port,'accept','yes',dir,comment]));
+      rules.push(Object.assign(r,{fw:a.name,n:(n[a.id]=(n[a.id]||0)+1),action:'accept',comment:['local traffic (to or from the firewall)',comment].filter(Boolean).join(' · ')}));return;}
+    if(!fws.length){unfiltered.push(Object.assign(r,{fw:'(no firewall on the path)',n:'',action:'—',dir:f.src===a.id?'Outbound':'Inbound',
+      comment:['not filtered by a firewall: '+(f.level==='intra'?'same VLAN':'check the path'),f.risk?'RISKY: '+(f.note||''):''].filter(Boolean).join(' · ')}));return;}
+    fws.forEach(fw=>rules.push(Object.assign({},r,{fw:nameOf(fw),n:(n[fw]=(n[fw]||0)+1),action:'accept',comment})));
   });
-  // Group the rules by firewall, in rule order
-  const body=rows.splice(1).sort((x,y)=>String(x[0]).localeCompare(String(y[0]),'en',{numeric:true})||x[1]-y[1]);rows.push(...body);
-  unfiltered.forEach(f=>{const S=Object.assign(nodeInfo(f.src),{zone:zoneOf(f.src)}),T=Object.assign(nodeInfo(f.dst),{zone:zoneOf(f.dst)}),[proto,port]=splitPort(f.port);
-    rows.push(['(no firewall on the path)','',`${fileStem(S.name)}_to_${fileStem(T.name)}_${proto}${port}`.slice(0,63),S.name,addr(f.src),S.zone,T.name,addr(f.dst),T.zone,proto,port,f.port,'—','',f.src===a.id?'Outbound':'Inbound',['not filtered by a firewall: '+(f.level==='intra'?'same VLAN':'check the path'),f.risk?'RISKY: '+(f.note||''):''].filter(Boolean).join(' · ')]);});
+  rules.sort((x,y)=>String(x.fw).localeCompare(String(y.fw),'en',{numeric:true})||x.n-y.n);
+  return {rules,unfiltered,count:list.length};
+}
+function exportFwRules(a){
+  const R=fwRules(a);
+  if(R.count===0){toast('No flow recorded for this asset.',true);return;}
+  const row=r=>[r.fw,r.n,r.name,r.src,r.srcAddr,r.srcZone,r.dst,r.dstAddr,r.dstZone,r.proto,r.port,r.service,r.action,r.action==='accept'?'yes':'',r.dir,r.comment];
+  const rows=[['Firewall','Rule','Name','Source','Source address','Source zone','Destination','Destination address','Destination zone','Protocol','Port','Service','Action','Log','Flow direction (for '+a.name+')','Comment'],...R.rules.map(row),...R.unfiltered.map(row)];
   rows.push([]);rows.push(['Default rule','','deny_all','any','all','','any','all','','any','','','deny','yes','','Implicit last rule on every firewall listed above']);
-  if(list.length===0){toast('No flow recorded for this asset.',true);return;}
   saveFile(`firewall-rules_${fileStem(SITE.name)}_${fileStem(a.name)}_${today()}.csv`,'text/csv;charset=utf-8',csv(rows));
-  if(unfiltered.length)toast(`${unfiltered.length===1?'1 flow crosses':unfiltered.length+' flows cross'} no firewall: listed at the end of the file.`);
+  if(R.unfiltered.length)toast(`${R.unfiltered.length===1?'1 flow crosses':R.unfiltered.length+' flows cross'} no firewall: listed at the end of the file.`);
 }
 
 /* ================= 2D architecture plan ================= */
@@ -1689,8 +1693,10 @@ function buildPlanSvg(a,perFlow,full){
     s.gaps.forEach(g=>(gapUse[g]=gapUse[g]||[]).push(s));});
   const gapH=g=>Math.max(BANDGAP,40+((gapUse[g]||[]).length)*STEP);
   const CORR=corr.length?corr.length*STEP+28:0;
-  const TITLE=118,LEG=96,ROW=22,TAB=FLS.length?56+FLS.length*ROW:0;
-  const W=Math.max(1100,...bands.map(b=>b.w+M*2+40+CORR*2));
+  const FW=fwRules(a),FWROWS=[...FW.rules,...FW.unfiltered],FROW=34;
+  const TITLE=118,LEG=96,ROW=22,TAB=FLS.length?56+FLS.length*ROW:0,FWTAB=FWROWS.length?40+56+FWROWS.length*FROW+FROW:0;
+  // wider when the rules table is there, so its comments have room
+  const W=Math.max(FWROWS.length?1280:1100,...bands.map(b=>b.w+M*2+40+CORR*2));
   let y=M+TITLE;
   bands.forEach((b,bi)=>{b.y=y;const label=b.net?0:24;b.x=(W-b.w)/2;let x=b.x;
     b.vlans.forEach(vb=>{vb.x=x;vb.y=y+label;x+=vb.w+40;
@@ -1698,7 +1704,7 @@ function buildPlanSvg(a,perFlow,full){
     b.h+=label;y+=b.h+gapH(bi);});
   const lastB=bands.length-1;
   if(!(gapUse[lastB]||[]).length)y-=gapH(lastB)-40;
-  const tabY=y,H=tabY+TAB+LEG+M+30;
+  const tabY=y,fwY=tabY+TAB,H=fwY+FWTAB+LEG+M+30;
   const cy=id=>box[id].y+box[id].h/2,cx=id=>box[id].x+box[id].w/2;
   const side=(s,end)=>{const me=end?s.q:s.p,other=end?s.p:s.q;
     if(s.A===s.B)return 'bottom';return cy(other)>cy(me)?'bottom':'top';};
@@ -1799,6 +1805,26 @@ function buildPlanSvg(a,perFlow,full){
       out+=`<text x="${C4}" y="${ry}" font-family="${PF.m}" font-size="11" fill="${PC.muted}">${f.vol} MB/h</text>`;
       out+=`<text x="${C5}" y="${ry}" font-family="${PF.b}" font-size="11.5" fill="${f.level==='internet'?PC.net:f.level==='inter'?PC.inter:PC.muted}">${X(EXP[f.level].label)}</text>`;
       out+=`<text x="${C6}" y="${ry}" font-family="${PF.b}" font-size="11.5" fill="${PC.crit}">${f.risk?X(clip(f.note||'Risky',11.5,400,PF.b,W-M-C6)):''}</text>`;});
+  }
+  // Firewall rules for this asset: one allow rule per flow and firewall crossed, then the default deny
+  if(FWROWS.length){
+    const ty=fwY+40,cols=[['Rule',M],['Firewall',M+48],['Source',M+196],['Destination',M+436],['Service',M+676],['Action',M+770],['Flow',M+836]],CM=M+884;
+    out+=`<line x1="${M}" y1="${ty}" x2="${W-M}" y2="${ty}" stroke="${PC.line}" stroke-width="1"/>`;
+    out+=`<text x="${M}" y="${ty+24}" font-family="${PF.d}" font-weight="700" font-size="12" letter-spacing="1.4" fill="${PC.muted}">FIREWALL RULES FOR ${X(a.name.toUpperCase())} · ${FW.rules.length}${FW.unfiltered.length?` · ${FW.unfiltered.length} UNFILTERED`:''}</text>`;
+    [...cols,['Comment',CM]].forEach(([t,x])=>out+=`<text x="${x}" y="${ty+44}" font-family="${PF.d}" font-weight="700" font-size="10.5" letter-spacing="1.1" fill="${PC.muted}">${t.toUpperCase()}</text>`);
+    const cell=(x,y,top,sub,w,o={})=>`<text x="${x}" y="${y}" font-family="${o.mono?PF.m:PF.b}" font-size="${o.mono?11:12}" ${o.bold?'font-weight="600"':''} fill="${o.c||PC.ink}">${X(clip(top,o.mono?11:12,o.bold?600:400,o.mono?PF.m:PF.b,w))}</text>`+(sub?`<text x="${x}" y="${y+13}" font-family="${PF.m}" font-size="10" fill="${PC.muted}">${X(clip(sub,10,400,PF.m,w))}</text>`:'');
+    const rowAt=(r,i,deny)=>{const ry=ty+66+i*FROW,none=r.action==='—';
+      if(i%2)out+=`<rect x="${M-6}" y="${ry-15}" width="${W-M*2+12}" height="${FROW}" fill="${PC.zone}" opacity="0.55"/>`;
+      out+=cell(cols[0][1],ry,String(r.n||'—'),'',40,{mono:true});
+      out+=cell(cols[1][1],ry,r.fw,'',140,{bold:!none,c:none?PC.crit:PC.ink});
+      out+=cell(cols[2][1],ry,r.src,r.srcAddr,226);
+      out+=cell(cols[3][1],ry,r.dst,r.dstAddr,226);
+      out+=cell(cols[4][1],ry,r.service,'',88,{mono:true});
+      out+=cell(cols[5][1],ry,r.action,'',60,{mono:true,c:deny?PC.crit:none?PC.muted:PC.low});
+      if(r.flow&&num[r.flow.id]){const c=colOf(r.flow);out+=`<circle cx="${cols[6][1]+10}" cy="${ry-4}" r="9" fill="${PC.panel}" stroke="${c}" stroke-width="1.5"/><text x="${cols[6][1]+10}" y="${ry}" text-anchor="middle" font-family="${PF.m}" font-size="10.5" font-weight="600" fill="${c}">${num[r.flow.id]}</text>`;}
+      out+=cell(CM,ry,r.comment||'',r.dir,W-M-CM,{c:/RISKY|not filtered/.test(r.comment||'')?PC.crit:PC.ink});};
+    FWROWS.forEach((r,i)=>rowAt(r,i,false));
+    rowAt({n:'',fw:'Every firewall above',src:'any',srcAddr:'all',dst:'any',dstAddr:'all',service:'any',action:'deny',comment:'Default rule, last on each firewall',dir:''},FWROWS.length,true);
   }
   // Legend and scope note
   const ly=H-M-LEG+26;

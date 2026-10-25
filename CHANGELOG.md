@@ -11,6 +11,7 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
   - every flow is numbered; a table under the plan gives its path, port, volume, exposure and note; a badge where it arrives gives its number and port, and a number marks it on each equipment it crosses;
   - **Scope**: the asset's own flows (default), or every path from and to the Internet as before;
   - **Colour**: by exposure, or one colour per flow. The plan opens per flow when the model is coloured per flow.
+  - a **Firewall rules** table under the flows: the rules this asset needs (one allow rule per flow and firewall crossed, the flows no firewall filters, the default deny), each linked to its flow number. For a firewall, its own rule base. It holds the same rules as the Firewall rules (CSV) export.
 - Hovering a flow in an asset sheet picks it out on the model and the diagram. The sheet lists the flows crossing a device in lane order, with their colour.
 - Unit tests of the graph analysis (`tests/analysis.test.mjs`), run by `npm test`.
 - Three points of view on an IS, Physical, Application and Business:
