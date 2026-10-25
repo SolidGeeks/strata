@@ -35,6 +35,13 @@ const scoreOf = c => {
   return null;
 };
 
+// EPSS (probability of exploitation, 0 to 1) and presence on the CISA KEV list, when Cyberwatch gives them
+const epssOf = c => {
+  for (const v of [c.epss?.score, c.epss?.epss, typeof c.epss === 'object' ? null : c.epss, c.epss_score]) if (v !== undefined && v !== null && v !== '' && isFinite(+v) && +v >= 0) return +v > 1 ? Math.min(1, +v / 100) : +v;
+  return null;
+};
+const kevOf = c => [c.cisa_kev, c.kev, c.known_exploited, c.exploited_in_the_wild, c.cisa?.kev].some(v => v === true || v === 'true' || v === 1);
+
 function client(cfg) {
   const base = String(cfg.url || '').replace(/\/+$/, '');
   if (!/^https?:\/\//.test(base)) throw new ConnectorError('Give the Cyberwatch URL (https://…).');
@@ -99,7 +106,7 @@ export async function run(cfg, ctx) {
     const list = (d && (d.cve_announcements || d.vulnerabilities || d.cves)) || [];
     const vulns = list
       .filter(c => cfg.includeIgnored || !(c.ignored === true || c.active === false))
-      .map(c => { const score = scoreOf(c); const sev = sevOf(c, score); return { id: String(c.cve_code || c.code || c.id || ''), title: String(c.title || c.content || c.summary || '').replace(/\s+/g, ' ').slice(0, 160), cvss: score, sev, src: 'cyberwatch' }; })
+      .map(c => { const score = scoreOf(c); const sev = sevOf(c, score); const v = { id: String(c.cve_code || c.code || c.id || ''), title: String(c.title || c.content || c.summary || '').replace(/\s+/g, ' ').slice(0, 160), cvss: score, sev, src: 'cyberwatch' }; const ep = epssOf(c); if (ep !== null) v.epss = Math.round(ep * 1e5) / 1e5; if (kevOf(c)) v.kev = true; return v; })
       .filter(v => v.id && SEV_RANK[v.sev] >= min)
       .sort((a, b) => SEV_RANK[b.sev] - SEV_RANK[a.sev] || (b.cvss ?? 0) - (a.cvss ?? 0))
       .slice(0, cap);

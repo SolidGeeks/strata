@@ -127,3 +127,43 @@ test('addresses: inside or outside a range', () => {
   assert.equal(A.inCidr('10.20.0.300', '10.20.0.0/24'), false);
   assert.equal(A.inCidr('fe80::1', '10.20.0.0/24'), false);
 });
+
+// Risk: an exposed web server with a known exploited flaw, an internal one with the same CVSS but unlikely to be exploited
+const riskSite = () => {
+  const V = (id, cvss, epss, kev) => ({ id, cvss, sev: cvss >= 9 ? 'crit' : 'high', epss, kev });
+  const assets = [
+    { id: 'web', exp: 'internet', crit: 2, vulns: [V('CVE-A', 9.8, 0.95, true)] },
+    { id: 'db', exp: 'inter', crit: 3, vulns: [V('CVE-B', 9.8, 0.001, false), V('CVE-C', 7.5, null, false)] },
+    { id: 'pc', exp: 'none', crit: 1, vulns: [] },
+  ];
+  return { assets, expo: { web: 1, db: 2 } };
+};
+
+test('risk score: known exploitation, exposure and reachability raise it; no vulnerability, no risk', () => {
+  const s = riskSite(), [web, db, pc] = s.assets;
+  const rw = A.riskScore(web, 1, 0), rd = A.riskScore(db, 2, 0), rp = A.riskScore(pc, undefined, 0);
+  assert.ok(rw.score > rd.score, `${rw.score} > ${rd.score}`);
+  assert.equal(rw.band, 'crit');
+  assert.equal(rw.kev, 1);
+  assert.equal(rp.score, 0);
+  // the same asset, not reachable from the Internet and not exposed, scores lower
+  assert.ok(A.riskScore({ ...web, exp: 'none' }, undefined, 0).score < rw.score);
+  // a critical business service on the asset raises its criticality
+  assert.ok(A.riskScore(web, 1, 3).score > rw.score);
+  // a second vulnerability never lowers the score
+  assert.ok(A.riskScore({ ...db, vulns: db.vulns.slice(0, 1) }, 2, 0).score <= rd.score);
+  // two flaws are worse than one: the chance that at least one is exploited adds up
+  assert.ok(A.riskScore({ ...db, vulns: [db.vulns[1], db.vulns[1]] }, 2, 0).score > A.riskScore({ ...db, vulns: [db.vulns[1]] }, 2, 0).score);
+  // scores stay between 0 and 100
+  assert.ok(A.riskScore({ exp: 'internet', crit: 3, vulns: Array(20).fill({ cvss: 10, kev: true }) }, 1, 3).score <= 100);
+});
+
+test('risk priorities: assets highest first, and the known exploited flaw is the first fix', () => {
+  const R = A.riskPriorities(riskSite(), { db: 3 });
+  assert.deepEqual(J(R.assets.map(x => x.id)), ['web', 'db']);
+  assert.equal(R.fixes[0].vuln.id, 'CVE-A');
+  assert.deepEqual(J(R.fixes.map(x => x.vuln.id)), ['CVE-A', 'CVE-C', 'CVE-B']);
+  // EPSS given as unknown counts as a middle likelihood, above a near-zero EPSS
+  assert.ok(A.likelihoodOf({ epss: null }) > A.likelihoodOf({ epss: 0.01 }));
+  assert.equal(A.likelihoodOf({ kev: true, epss: 0 }), 1);
+});

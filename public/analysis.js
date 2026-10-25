@@ -124,5 +124,49 @@ function inCidr(ip,c){const n=ip4(ip),r=cidr4(c);return n!==null&&!!r&&n>=r.base
 function nextFreeIp(c,used){const r=cidr4(c);if(!r)return null;const u=new Set([...(used||[])].map(ip4).filter(x=>x!==null));
   for(let n=r.first;n<=r.last&&n-r.first<65536;n++)if(!u.has(n))return ip4s(n);return null;}
 
-root.StrataAnalysis={inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph};
+/* ---- Risk prioritization ---- */
+// One score per asset, 0 to 100, from four factors multiplied together, each between 0 and 1:
+//  - vulnerabilities: for each one, severity (CVSS / 10) times likelihood of exploitation
+//    (1 when it is on the CISA list of known exploited vulnerabilities, else from its EPSS,
+//    else 0.3), combined over all of them as the chance that at least one gets exploited;
+//  - context: the average of its exposure (Internet, other VLANs, its own VLAN, none)
+//    and its reachability from the Internet along the recorded flows (fewer hops, higher);
+//  - criticality: the higher of its own and that of the business services it would hit.
+const SEV_SCORE={crit:0.95,high:0.8,med:0.5,low:0.2,none:0};
+const EXPO_F={internet:1,inter:0.7,intra:0.45,none:0.3};
+const CRIT_F=[0.5,0.5,0.75,1];
+const BANDS=[[70,'crit'],[40,'high'],[20,'med'],[1,'low']];
+const severityOf=v=>v.cvss!=null&&isFinite(v.cvss)?Math.max(0,Math.min(10,+v.cvss))/10:(SEV_SCORE[v.sev]||0);
+const likelihoodOf=v=>v.kev?1:v.epss!=null&&isFinite(v.epss)?0.15+0.85*Math.sqrt(Math.max(0,Math.min(1,+v.epss))):0.3;
+const vulnRisk=v=>severityOf(v)*likelihoodOf(v);
+const bandOf=n=>(BANDS.find(([min])=>n>=min)||[0,'none'])[1];
+// asset: {vulns, exp, crit}; hops: steps from the Internet (undefined: not reachable); bizCrit: 0 to 3
+function riskScore(asset,hops,bizCrit){
+  const vs=asset.vulns||[];
+  const vuln=1-vs.reduce((p,v)=>p*(1-vulnRisk(v)),1);
+  const exposure=EXPO_F[asset.exp]!=null?EXPO_F[asset.exp]:0.3;
+  const reach=hops===undefined||hops===null?0.3:Math.max(0.5,1-0.1*Math.max(0,hops-1));
+  const context=(exposure+reach)/2;
+  const crit=Math.max(CRIT_F[asset.crit]||0.75,CRIT_F[bizCrit||0]||0);
+  const score=Math.round(100*vuln*context*crit);
+  return {score,band:bandOf(score),vuln,exposure,reach,context,crit,kev:vs.filter(v=>v.kev).length};
+}
+// Every asset of an IS with its score, highest first, and the fixes in order: each vulnerability
+// scored like an asset that would carry it alone (its own severity and likelihood, in the context
+// and criticality of its asset), so the most dangerous ones come first wherever they are.
+// bizCrit: {assetId: highest criticality of the business services it would hit}
+function riskPriorities(site,bizCrit){
+  const B=bizCrit||{},assets=[],fixes=[];
+  site.assets.forEach(a=>{
+    const r=riskScore(a,site.expo[a.id],B[a.id]);
+    if(r.score>0)assets.push(Object.assign({id:a.id},r));
+    (a.vulns||[]).forEach((v,i)=>{const score=Math.round(100*vulnRisk(v)*r.context*r.crit);
+      if(score>0)fixes.push({asset:a.id,index:i,vuln:v,score,assetScore:r.score,likelihood:likelihoodOf(v),severity:severityOf(v)});});
+  });
+  assets.sort((x,y)=>y.score-x.score||byName(x.id,y.id));
+  fixes.sort((x,y)=>y.score-x.score||(y.vuln.kev?1:0)-(x.vuln.kev?1:0)||y.likelihood-x.likelihood||y.assetScore-x.assetScore||byName(x.asset,y.asset));
+  return {assets,fixes};
+}
+
+root.StrataAnalysis={riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph};
 })(typeof globalThis!=='undefined'?globalThis:this);

@@ -22,8 +22,15 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 - The asset sheet says which business services an asset would hit, and through which chain of flows. The asset form ticks the services an asset runs.
 - The demo has business services on every IS.
 - Asset form: a new asset gets the first free address of its VLAN range as IP, and picking another VLAN moves it to that VLAN's first free address. An IP outside the range of the VLAN picked is pointed out, with the free address to use instead. An IP typed by hand is never overwritten.
+- **Risk priorities** (Analysis): one score per asset, from 0 to 100, and the remediation list in the order to follow.
+  - Each vulnerability counts for its severity (CVSS) times its likelihood of exploitation: certain when it is on the CISA list of known exploited vulnerabilities (KEV), otherwise from its EPSS, otherwise 30%.
+  - That is weighed by the exposure of its asset and its reachability from the Internet, and by the criticality of the asset or of the business services it would hit.
+  - The asset sheet shows the score and, with "Why?", every factor.
+  - The list exports as CSV.
+- Vulnerabilities take an EPSS (0 to 1, or a percentage) and a "known exploited (CISA KEV)" mark, in the asset form and in imported JSON. The Cyberwatch connector reads them when Cyberwatch gives them. The demo CVEs carry approximate EPSS values and their real KEV status.
 ### Fixed
 - Editing an IS (name, zones, contacts) dropped the Internet services recorded on that IS.
+- Saving an asset from the form dropped the source of its vulnerabilities (the mark the Cyberwatch connector uses to refresh its own).
 
 ## [0.5.5] - 2026-10-25
 ### Security

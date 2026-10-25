@@ -16,7 +16,10 @@ const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim
 const sevColor=k=>css(SEV[k].css);
 const expColor=k=>css(EXP[k].css);
 const sevFromCvss=s=>s>=9?'crit':s>=7?'high':s>=4?'med':s>0?'low':'none';
-const F=(id,title,cvss,sev)=>({id,title,cvss:cvss==null?null:cvss,sev:sev||sevFromCvss(cvss)});
+// Demo only: EPSS (approximate, rounded) and presence on the CISA KEV list of the CVEs the demo uses
+const DEMO_EPSS={'CVE-2024-21762':0.93,'CVE-2024-21887':0.97,'CVE-2023-46805':0.96,'CVE-2020-1472':0.94,'CVE-2021-44228':0.97,'CVE-2021-34527':0.94,'CVE-2023-20198':0.93,'CVE-2021-21972':0.97,'CVE-2019-0708':0.97,'CVE-2023-23397':0.92,'CVE-2021-4034':0.86,'CVE-2022-26134':0.97,'CVE-2022-0847':0.62,'CVE-2024-3400':0.96,'CVE-2021-41773':0.97,'CVE-2021-21974':0.91,'CVE-2023-44487':0.82,'CVE-2024-6387':0.33,'CVE-2023-48795':0.6,'CVE-2023-51764':0.04};
+const DEMO_KEV=new Set(['CVE-2024-21762','CVE-2024-21887','CVE-2023-46805','CVE-2020-1472','CVE-2021-44228','CVE-2021-34527','CVE-2023-20198','CVE-2021-21972','CVE-2019-0708','CVE-2023-23397','CVE-2021-4034','CVE-2022-26134','CVE-2022-0847','CVE-2024-3400','CVE-2021-41773','CVE-2021-21974','CVE-2023-44487']);
+const F=(id,title,cvss,sev)=>Object.assign({id,title,cvss:cvss==null?null:cvss,sev:sev||sevFromCvss(cvss)},DEMO_EPSS[id]!=null?{epss:DEMO_EPSS[id],kev:DEMO_KEV.has(id)}:{});
 const TYPE_LABEL={server:'Server',dc:'Domain controller',db:'Database',hypervisor:'Hypervisor / storage',firewall:'Firewall',gateway:'VPN gateway',router:'Router / L3 core',switch:'Switch / load balancer',workstation:'Workstation',printer:'Printer',phone:'IP phone',ap:'Wi-Fi access point',camera:'IP camera',plc:'PLC',iot:'IoT device'};
 // Interconnection equipment: flows can be routed through these
 const INTERCO=new Set(['firewall','router','switch','gateway']);
@@ -31,6 +34,9 @@ const ROLE_LEGACY={'Responsable technique':'Technical owner','Astreinte':'On-cal
 const roleEn=r=>ROLE_LEGACY[r]||r||'';
 const CRIT_LBL=['','Low','Medium','High'];
 const CRIT_CSS=['','--low','--med','--crit'];
+const RISK_LBL={crit:'Critical',high:'High',med:'Medium',low:'Low',none:'None'};
+const riskTag=r=>r?`<span class="tag" style="color:var(${SEV[r.band].css})"><i style="background:var(${SEV[r.band].css})"></i>${r.score} · ${RISK_LBL[r.band]}</span>`:tag('none');
+const vulnChips=v=>`${v.kev?'<span class="kev" title="On the CISA list of known exploited vulnerabilities">KEV</span>':''}${v.epss!=null?`<span class="epss" title="EPSS: probability of exploitation in the next 30 days">EPSS ${Math.round(v.epss*100)}%</span>`:''}`;
 const critTag=c=>`<span class="tag" style="color:var(${CRIT_CSS[c]||'--none'})"><i style="background:var(${CRIT_CSS[c]||'--none'})"></i>${CRIT_LBL[c]||'—'}</span>`;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -496,6 +502,8 @@ function autoVia(s,net,f){
 }
 function bfs(flows,from){const starts=[].concat(from),d={},q=starts.slice();starts.forEach(x=>d[x]=0);while(q.length){const n=q.shift();flows.forEach(f=>{if(f.src===n&&d[f.dst]===undefined){d[f.dst]=d[n]+1;q.push(f.dst);}});}return d;}
 const maxExp=(a,b)=>EXP[a].rank>=EXP[b].rank?a:b;
+// EPSS: a probability from 0 to 1; a percentage (above 1) is read as such
+const epssOf=v=>{if(v==null||v==='')return null;const n=parseFloat(String(v).replace(',','.').replace('%',''));return isFinite(n)&&n>=0?(n>1?Math.min(1,n/100):n):null;};
 function compile(){
   const list=Object.entries(raw.si).map(([id,d])=>({id,d})).sort((a,b)=>(a.d.order||0)-(b.d.order||0)||String(a.d.name).localeCompare(String(b.d.name)));
   SITES=list.map(({id,d},si)=>{
@@ -509,7 +517,7 @@ function compile(){
     s.vlans.slice().sort((a,b)=>a.num-b.num).forEach((v,i)=>v.ci=i%10);
     s.vlanById={};s.vlans.forEach(v=>s.vlanById[v.id]=v);
     s.assets=Object.entries(raw.assets).filter(([,a])=>a.site===id&&s.vlanById[a.vlan]).map(([aid,a])=>{
-      const o=clone(a);o.id=aid;o.vulns=(o.vulns||[]).map(v=>({id:v.id||'',title:v.title||'',cvss:v.cvss==null||v.cvss===''?null:+v.cvss,sev:v.sev||sevFromCvss(+v.cvss)}));
+      const o=clone(a);o.id=aid;o.vulns=(o.vulns||[]).map(v=>({id:v.id||'',title:v.title||'',cvss:v.cvss==null||v.cvss===''?null:+v.cvss,sev:v.sev||sevFromCvss(+v.cvss),epss:epssOf(v.epss),kev:v.kev===true||v.kev==='true'||v.kev===1,src:v.src||''}));
       o.contacts=(o.contacts||[]).map(c=>Object.assign({},c,{role:roleEn(c.role)}));o.crit=+o.crit||2;
       o.apps=(Array.isArray(o.apps)?o.apps:[]).filter(x=>x&&x.name).map(x=>({name:String(x.name),version:String(x.version||''),ports:parsePorts(x.ports)}));o.type=TYPE_LABEL[o.type]?o.type:'server';
       o.sev=o.vulns.reduce((m,v)=>SEV[v.sev]&&SEV[v.sev].rank>SEV[m].rank?v.sev:m,'none');return o;})
@@ -547,6 +555,9 @@ function compile(){
     });
     s.assets.forEach(a=>a.ports.sort((x,y)=>EXP[y.level].rank-EXP[x.level].rank||x.port.localeCompare(y.port,'en',{numeric:true})));
     s.expo=bfs(s.flows,['internet',...s.services.map(x=>x.id)]);
+    // Risk: one score per asset and the fixes in order, once exposure and reachability are known
+    const bizCrit={};Object.entries(s.impact.byAsset).forEach(([id,l])=>bizCrit[id]=Math.max(...l.map(x=>x.crit)));
+    s.risk=SA.riskPriorities(s,bizCrit);s.riskById={};s.risk.assets.forEach(r=>s.riskById[r.id]=r);
     s.usedSvc=new Set(s.flows.flatMap(f=>[f.src,f.dst]).filter(id=>id!=='internet'&&isNet(id)));
     const cnt=k=>s.assets.filter(a=>a.exp===k).length;
     s.stats={vlans:s.vlans.length,assets:s.assets.length,crit:s.assets.reduce((n,a)=>n+a.vulns.filter(v=>v.sev==='crit').length,0),
@@ -625,6 +636,7 @@ function renderVlanList(){
   $('#assetList').innerHTML=ASSETS.map(a=>`<option value="${esc(a.name)}">${esc(a.ip||'')}</option>`).join('');
   $('#pathCount').textContent=SITE.stats.reach;
   $('#portsCount').textContent=SITE.stats.ports;
+  $('#riskCount').textContent=SITE.risk.assets.length?SITE.risk.assets[0].score:'';
 }
 function renderLegend(){
   const sev=['crit','high','med','low'].map(k=>`<span><i class="pin" style="background:var(${SEV[k].css})"></i>${SEV[k].label}</span>`).join('')+`<span class="wide">Pin: worst vulnerability. Flag: critical.</span>`;
@@ -647,6 +659,7 @@ function syncUI(){
   document.querySelectorAll('#siteList .site').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.site===state.ovSelId)));
   document.body.classList.toggle('readonly',!Store.canWrite);
   $('#portsBtn').setAttribute('aria-pressed',String(state.panel==='ports'));
+  $('#riskBtn').setAttribute('aria-pressed',String(state.panel==='risk'));
   renderLegend();renderDirNote();
 }
 function renderEmpty(){
@@ -1124,14 +1137,16 @@ function showAsset(a){
     <dt>Business criticality</dt><dd>${CRIT_LBL[a.crit]||'—'}</dd>
     <dt>Exposure</dt><dd>${xtag(a.exp)}</dd>
     <dt>From Internet</dt><dd>${hops===undefined?'Not reachable':`Reachable in ${plural(hops,'hop')}`}</dd>
+    <dt>Risk score</dt><dd>${riskTag(SITE.riskById[a.id])}${SITE.riskById[a.id]?` <button class="linkbtn" data-risk-why="${esc(a.id)}">Why?</button>`:''}</dd>
   </dl>
+  <div id="riskWhy" hidden></div>
   <h3 class="cap">Business services impacted · ${impactOf(a).length}</h3>${impactHtml(a)}
   <h3 class="cap">Inside · ${plural((a.apps||[]).length,'application')}</h3>${insideHtml(a)}
   <h3 class="cap">Incident contacts</h3>${contacts}
   ${a.notes?`<h3 class="cap">Notes</h3><p style="margin:0;white-space:pre-wrap">${esc(a.notes)}</p>`:''}
   <h3 class="cap">Exposed ports · ${a.ports.length}</h3>${portsHtml(a)}
   <h3 class="cap">Vulnerabilities · ${a.vulns.length}</h3>
-  ${a.vulns.length?`<ul class="list">${a.vulns.map(x=>`<li class="vuln"><b>${esc(x.id||'—')}</b><span class="score" style="color:var(${SEV[x.sev].css})">${x.cvss!=null&&!isNaN(x.cvss)?'CVSS '+(+x.cvss).toFixed(1):tag(x.sev)}</span><span class="t">${esc(x.title)}</span></li>`).join('')}</ul>`:'<p class="empty">No vulnerability in the last scan.</p>'}
+  ${a.vulns.length?`<ul class="list">${a.vulns.map(x=>`<li class="vuln"><b>${esc(x.id||'—')}</b><span class="score" style="color:var(${SEV[x.sev].css})">${x.cvss!=null&&!isNaN(x.cvss)?'CVSS '+(+x.cvss).toFixed(1):tag(x.sev)}</span><span class="t">${esc(x.title)}${x.kev||x.epss!=null?`<span class="vchips">${vulnChips(x)}</span>`:''}</span></li>`).join('')}</ul>`:'<p class="empty">No vulnerability in the last scan.</p>'}
   ${showIn?`<h3 class="cap">Inbound flows · ${inn.length}</h3>${inn.length?`<ul class="list">${inn.map(f=>flowRow(f,'in')).join('')}</ul>`:'<p class="empty">No inbound flow.</p>'}`:''}
   ${showOut?`<h3 class="cap">Outbound flows · ${out.length}</h3>${out.length?`<ul class="list">${out.map(f=>flowRow(f,'out')).join('')}</ul>`:'<p class="empty">No outbound flow.</p>'}`:''}
   ${thru.length?`<h3 class="cap">Flows crossing this ${INTERCO.has(a.type)?'equipment':'asset'} · ${thru.length}</h3>${state.color!=='flow'&&thru.length>1?`<p class="fhint">Hover a flow to pick it out, or <button class="linkbtn" data-col-flow>give each flow its own colour</button>.</p>`:''}<ul class="list">${thru.slice().sort((x,y)=>(SITE.lanes[a.id].idx[x.id])-(SITE.lanes[a.id].idx[y.id])).map(f=>`<li class="flow${f.risk?' risk':''}" data-hl-flow="${esc(f.id)}"><button class="peer" data-show-flow="${esc(f.id)}"><i class="fsw" style="background:var(${flowColorVar(f)})"></i>${esc(nameOf(f.src))} → ${esc(nameOf(f.dst))}</button><span class="meta">${esc(f.port)}</span><span class="meta">${f.vol} MB/h</span><span></span></li>`).join('')}</ul>`:''}
@@ -1174,6 +1189,35 @@ function businessForm(b,preset){
   },{del:b?{label:'Delete the business service',run:async()=>{const sd=clone(SITE.raw);sd.business=(sd.business||[]).filter(x=>x.id!==b.id);if(state.biz===b.id)state.biz=null;await Store.putSite(SITE.id,sd);toast('Business service deleted.');closeDet();}}:null});
 }
 function setBizHighlight(id){state.biz=id;if(id)state.selId=null;if(id&&state.lens!=='physical')setLens('physical');refresh();}
+// How the score of an asset is made, factor by factor
+function riskWhyHtml(a){
+  const r=SITE.riskById[a.id];if(!r)return '';
+  const pct=x=>Math.round(x*100)+'%';
+  return `<dl class="kv riskwhy"><dt>Vulnerabilities</dt><dd>${pct(r.vuln)} chance one is exploited${r.kev?` · ${plural(r.kev,'known exploited (KEV)')}`:''}</dd>
+  <dt>Exposure</dt><dd>${xtag(a.exp)} → ${pct(r.exposure)}</dd><dt>Reachability</dt><dd>${EXPO[a.id]===undefined?'not reachable from the Internet':`${plural(EXPO[a.id],'hop')} from the Internet`} → ${pct(r.reach)}</dd>
+  <dt>Criticality</dt><dd>${pct(r.crit)}${impactOf(a).length?` (asset or business services it would hit)`:''}</dd>
+  <dt>Score</dt><dd>100 × ${pct(r.vuln)} × ${pct(r.context)} context × ${pct(r.crit)} = <b>${r.score}</b></dd></dl>`;
+}
+function showRisk(){
+  const R=SITE.risk,top=R.fixes.slice(0,40),kev=R.fixes.filter(x=>x.vuln.kev).length,hi=R.assets.filter(x=>x.score>=40).length;
+  openDet(`<div class="d-head"><div><span class="cap">Analysis · IS ${esc(SITE.name)}</span><h2>Risk priorities</h2><p>What to fix first, from CVSS, EPSS, known exploitation, exposure, reachability and criticality</p></div><button class="close" data-close aria-label="Close the analysis">×</button></div>
+  <div class="d-body">
+  <p class="summary"><b style="color:var(--crit)">${hi}</b> ${hi===1?'asset':'assets'} at high or critical risk · <b>${kev}</b> known exploited ${kev===1?'vulnerability':'vulnerabilities'} (CISA KEV) to fix.</p>
+  <div class="actions"><button class="btn small" data-csv-risk>Remediation list (CSV)</button></div>
+  <h3 class="cap">Fix in this order · ${R.fixes.length}</h3>
+  ${top.length?`<ol class="list fixes">${top.map((x,i)=>{const a=byId[x.asset];return `<li class="fix"><span class="rk">${i+1}</span><button data-goto="${esc(a.id)}"><b>${esc(x.vuln.id||'—')}</b> on ${esc(a.name)}<small>${esc(x.vuln.title)}</small><span class="vchips">${vulnChips(x.vuln)}${x.vuln.cvss!=null?`<span class="cv">CVSS ${(+x.vuln.cvss).toFixed(1)}</span>`:''}${xtag(a.exp)}</span></button><span class="fscore" style="color:var(${SEV[SA_band(x.score)].css})">${x.score}</span></li>`;}).join('')}</ol>${R.fixes.length>top.length?`<p class="fhint">${R.fixes.length-top.length} more in the CSV.</p>`:''}`:'<p class="empty">No vulnerability recorded on this IS.</p>'}
+  <h3 class="cap">Assets by risk · ${R.assets.length}</h3>
+  ${R.assets.length?`<ul class="list">${R.assets.slice(0,30).map(r=>{const a=byId[r.id];return `<li class="reach"><button data-goto="${esc(a.id)}">${esc(a.name)}<small>${esc(a.role||TYPE_LABEL[a.type])} · VLAN ${esc(vnum(a))}</small><span class="rbar"><i style="width:${r.score}%;background:var(${SEV[r.band].css})"></i></span></button>${riskTag(r)}</li>`;}).join('')}</ul>`:'<p class="empty">No asset at risk.</p>'}
+  <p class="fhint">Each vulnerability counts for its severity (CVSS) times its likelihood of exploitation: certain when it is on the CISA list of known exploited vulnerabilities, otherwise from its EPSS, otherwise 30%. That is weighed by the exposure and the reachability of its asset from the Internet, and by the criticality of the asset or of the business services it would hit. Open an asset and click “Why?” for the detail.</p>
+  </div>`,'risk');
+}
+const SA_band=n=>n>=70?'crit':n>=40?'high':n>=20?'med':n>0?'low':'none';
+function exportRisk(){
+  const rows=[['Rank','Vulnerability','Title','Asset','IP','VLAN','Exposure','From Internet (hops)','Asset criticality','CVSS','EPSS','CISA KEV','Fix priority (0-100)','Asset risk score (0-100)']];
+  SITE.risk.fixes.forEach((x,i)=>{const a=byId[x.asset];rows.push([i+1,x.vuln.id,x.vuln.title,a.name,a.ip||'',vnum(a),EXP[a.exp].label,EXPO[a.id]===undefined?'':EXPO[a.id],CRIT_LBL[a.crit]||'',x.vuln.cvss==null?'':x.vuln.cvss,x.vuln.epss==null?'':x.vuln.epss,x.vuln.kev?'yes':'no',x.score,x.assetScore]);});
+  if(rows.length===1){toast('No vulnerability recorded on this IS.',true);return;}
+  saveFile(`remediation_${fileStem(SITE.name)}_${today()}.csv`,'text/csv;charset=utf-8',csv(rows));
+}
 function showPorts(){
   const groups=['internet','inter','intra'].map(k=>({k,list:ASSETS.filter(a=>a.exp===k).sort((a,b)=>SEV[b.sev].rank-SEV[a.sev].rank)}));
   openDet(`<div class="d-head"><div><span class="cap">Analysis · IS ${esc(SITE.name)}</span><h2>Exposed ports</h2><p>Ports that receive at least one inbound flow</p></div><button class="close" data-close aria-label="Close the analysis">×</button></div>
@@ -1228,6 +1272,9 @@ const REP={
     <input data-k="cvss" aria-label="CVSS score" placeholder="CVSS (0 to 10)" type="number" min="0" max="10" step="0.1" value="${v.cvss==null?'':esc(v.cvss)}">
     <input class="full" data-k="title" aria-label="Title" placeholder="Title" value="${esc(v.title)}">
     <select class="full" data-k="sev" aria-label="Severity"><option value="">Severity from CVSS</option>${['crit','high','med','low'].map(k=>`<option value="${k}"${v.sev===k&&v.cvss==null?' selected':''}>${SEV[k].label}</option>`).join('')}</select>
+    <input data-k="epss" aria-label="EPSS" placeholder="EPSS (0 to 1, or %)" inputmode="decimal" value="${v.epss==null?'':esc(v.epss)}">
+    <label class="chk plain"><input type="checkbox" data-k="kev"${v.kev?' checked':''}>Known exploited (CISA KEV)</label>
+    <input type="hidden" data-k="src" value="${esc(v.src||'')}">
     </div><div class="rep-foot"><button type="button" class="rm" data-rm>Remove</button></div></div>`,
   app:(x={})=>`<div class="rep" data-rep="app"><div class="rep-grid">
     <input data-k="name" aria-label="Application" placeholder="Application (e.g. Apache Tomcat)" value="${esc(x.name)}">
@@ -1235,7 +1282,7 @@ const REP={
     <input class="full" data-k="ports" aria-label="Listening ports" placeholder="Listening ports, e.g. tcp/8080, tcp/443" value="${esc(Array.isArray(x.ports)?x.ports.join(', '):x.ports)}">
     </div><div class="rep-foot"><button type="button" class="rm" data-rm>Remove</button></div></div>`
 };
-function readRep(form,kind){return [...form.querySelectorAll(`[data-rep="${kind}"]`)].map(r=>{const o={};r.querySelectorAll('[data-k]').forEach(i=>o[i.dataset.k]=i.value.trim());return o;});}
+function readRep(form,kind){return [...form.querySelectorAll(`[data-rep="${kind}"]`)].map(r=>{const o={};r.querySelectorAll('[data-k]').forEach(i=>o[i.dataset.k]=i.type==='checkbox'?i.checked:i.value.trim());return o;});}
 function openForm(title,sub,body,save,{del,cancel}={}){
   onSave=save;onCancel=cancel||null;
   openDet(`<div class="d-head"><div><span class="cap">${esc(sub)}</span><h2>${esc(title)}</h2></div><button class="close" data-cancel aria-label="Cancel">×</button></div>
@@ -1346,7 +1393,10 @@ function assetForm(a,presetVlan,opts={}){
       const cv=v.cvss===''?null:parseFloat(v.cvss.replace(',','.'));
       if(cv!=null&&!(cv>=0&&cv<=10))return formErr('The CVSS score must be between 0 and 10.');
       if(cv==null&&!v.sev)return formErr(`Give a CVSS score or a severity for “${v.title||v.id}”.`);
-      vulns.push({id:v.id||'Config.',title:v.title||v.id,cvss:cv,sev:cv!=null?sevFromCvss(cv):v.sev});}
+      const ep=epssOf(v.epss);if(v.epss&&ep==null)return formErr(`Give the EPSS of “${v.title||v.id}” as a number from 0 to 1, or a percentage.`);
+      const nv={id:v.id||'Config.',title:v.title||v.id,cvss:cv,sev:cv!=null?sevFromCvss(cv):v.sev};
+      if(ep!=null)nv.epss=ep;if(v.kev)nv.kev=true;if(v.src)nv.src=v.src;
+      vulns.push(nv);}
     const id=a?a.id:uid('a-');
     const doc={site:SITE.id,name,type:$('#fType').value,vlan:$('#fVlan').value,ip,os:$('#fOs').value.trim(),role:$('#fRole').value.trim(),crit:+$('#fCrit').value,vulns,
       contacts:readRep(det,'contact').filter(c=>c.name||c.phone||c.email),notes:$('#fNotes').value.trim()};
@@ -1501,6 +1551,8 @@ det.addEventListener('click',async e=>{
   if(q('[data-new-flow-from]')){flowForm(null,{src:q('[data-new-flow-from]').dataset.newFlowFrom});return;}
   if(q('[data-new-flow-to]')){flowForm(null,{dst:q('[data-new-flow-to]').dataset.newFlowTo});return;}
   if(q('[data-edit-flow]')){flowForm(FLOWS.find(f=>f.id===q('[data-edit-flow]').dataset.editFlow));return;}
+  if(q('[data-risk-why]')){const w=$('#riskWhy');if(w.hidden){w.innerHTML=riskWhyHtml(byId[q('[data-risk-why]').dataset.riskWhy]);w.hidden=false;}else w.hidden=true;return;}
+  if(q('[data-csv-risk]')){exportRisk();return;}
   if(q('[data-biz]')){const b=SITE&&SITE.bizById[q('[data-biz]').dataset.biz];if(b)showBusiness(b);return;}
   if(q('[data-biz-hl]')){const id=q('[data-biz-hl]').dataset.bizHl;setBizHighlight(state.biz===id?null:id);showBusiness(SITE.bizById[id]);return;}
   if(q('[data-edit-biz]')){businessForm(SITE.bizById[q('[data-edit-biz]').dataset.editBiz]);return;}
@@ -1517,7 +1569,7 @@ det.addEventListener('click',async e=>{
   if(q('[data-svc]')){const id=q('[data-svc]').dataset.svc,x=SVC[id]||(state.view==='overview'?globalServices().find(y=>y.id===id):null);if(x)showService(x);return;}
   if(q('[data-edit-svc]')){const id=q('[data-edit-svc]').dataset.editSvc;serviceForm(allServices().find(y=>y.id===id));return;}
   if(q('[data-new-svc]')){serviceForm(null,q('[data-new-svc]').dataset.newSvc);return;}
-  if(q('[data-close]')){if(state.view==='overview'){selectSite(null);return;}if(state.path)setPath(false);if(state.panel==='ports'){closeDet();return;}select(null);}
+  if(q('[data-close]')){if(state.view==='overview'){selectSite(null);return;}if(state.path)setPath(false);if(state.panel==='ports'||state.panel==='risk'){closeDet();return;}select(null);}
 });
 
 /* ================= Global actions ================= */
@@ -2779,6 +2831,7 @@ function onData(){
       if(state.panel==='asset'){const a=selAsset();if(a)showAsset(a);else closeDet();}
       else if(state.panel==='path')showPath();else if(state.panel==='ports')showPorts();
       else if(state.panel==='flow'){const f=FLOWS.find(x=>x.id===state.flowId);if(f)showFlow(f);else closeDet();}
+      else if(state.panel==='risk')showRisk();
       else if(state.panel==='business'){const b=SITE.bizById[state.bizPanel];if(b)showBusiness(b);else closeDet();}
     }
   }else{
@@ -2937,6 +2990,11 @@ $('#portsBtn').addEventListener('click',()=>{
   if(state.path){state.path=false;$('#pathBtn').setAttribute('aria-pressed','false');}
   state.selId=null;if(!state.ports){state.ports=true;$('#optPorts').checked=true;}
   showPorts();refresh();closeCtlMobile(true);
+});
+$('#riskBtn').addEventListener('click',()=>{
+  if(state.panel==='risk'){closeDet();return;}
+  if(state.path){state.path=false;$('#pathBtn').setAttribute('aria-pressed','false');}
+  state.selId=null;showRisk();refresh();closeCtlMobile(true);
 });
 $('#resetBtn').addEventListener('click',resetView);
 $('#search').addEventListener('keydown',e=>{

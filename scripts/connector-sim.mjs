@@ -89,7 +89,7 @@ const srv = http.createServer((req, res) => {
     if (p === '/cw/api/v3/ping') return j(res, 200, { uuid: 'abcd1234-ffff' });
     if (p === '/cw/api/v3/vulnerabilities/servers') { const page = +u.searchParams.get('page') || 1, per = +u.searchParams.get('per_page') || 100; return j(res, 200, CW.slice((page - 1) * per, page * per).map(s => ({ id: s.id, hostname: s.hostname, addresses: s.addresses, cve_announcements_count: s.cves.length }))); }
     const m = /^\/cw\/api\/v3\/vulnerabilities\/servers\/(\d+)$/.exec(p);
-    if (m) { const s = CW.find(x => x.id === +m[1]); return s ? j(res, 200, { id: s.id, hostname: s.hostname, os: { name: 'Ubuntu 22.04' }, cve_announcements: s.cves.map(([c, sc, l, ign]) => ({ cve_code: c, score: sc, level: l, ignored: !!ign, active: true, content: `Description of ${c}` })) }) : j(res, 404, {}); }
+    if (m) { const s = CW.find(x => x.id === +m[1]); return s ? j(res, 200, { id: s.id, hostname: s.hostname, os: { name: 'Ubuntu 22.04' }, cve_announcements: s.cves.map(([c, sc, l, ign]) => ({ cve_code: c, score: sc, level: l, ignored: !!ign, active: true, content: `Description of ${c}`, epss: Math.round(sc * 9) / 100, cisa_kev: sc >= 9.8 })) }) : j(res, 404, {}); }
     return j(res, 404, {});
   }
   // GLPI
