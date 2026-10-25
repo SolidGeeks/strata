@@ -6,6 +6,7 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 ### Added
 - Flows through interconnection equipment are readable: every flow that crosses a firewall, router, switch or gateway gets its own lane there, in the 3D model and in the 2D diagram, instead of all threads meeting at one point.
 - Colour by › **Per flow**: each flow gets its own colour, and flows that cross the same equipment never share one (up to 10).
+- Architecture plan: a **Colour: per flow** switch draws one line per flow instead of one per hop, each with its own colour, so a flow can be followed through the firewalls and routers it crosses. The plan opens in that mode when the model is coloured per flow.
 - Hovering a flow in an asset sheet picks it out on the model and the diagram. The sheet lists the flows crossing a device in lane order, with their colour.
 - Unit tests of the graph analysis (`tests/analysis.test.mjs`), run by `npm test`.
 
