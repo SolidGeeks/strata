@@ -503,7 +503,7 @@ function autoVia(s,net,f){
 function bfs(flows,from){const starts=[].concat(from),d={},q=starts.slice();starts.forEach(x=>d[x]=0);while(q.length){const n=q.shift();flows.forEach(f=>{if(f.src===n&&d[f.dst]===undefined){d[f.dst]=d[n]+1;q.push(f.dst);}});}return d;}
 const maxExp=(a,b)=>EXP[a].rank>=EXP[b].rank?a:b;
 // EPSS: a probability from 0 to 1; a percentage (above 1) is read as such
-const epssOf=v=>{if(v==null||v==='')return null;const n=parseFloat(String(v).replace(',','.').replace('%',''));return isFinite(n)&&n>=0?(n>1?Math.min(1,n/100):n):null;};
+const epssOf=v=>{if(v==null||v==='')return null;const n=parseFloat(String(v).trim().replace(/,/g,'.'));return isFinite(n)&&n>=0?(n>1?Math.min(1,n/100):n):null;};
 function compile(){
   const list=Object.entries(raw.si).map(([id,d])=>({id,d})).sort((a,b)=>(a.d.order||0)-(b.d.order||0)||String(a.d.name).localeCompare(String(b.d.name)));
   SITES=list.map(({id,d},si)=>{
