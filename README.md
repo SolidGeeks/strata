@@ -8,6 +8,19 @@ Strata is a self-hosted 3D map of your information systems (IS): zones, VLANs, l
 
 **Website and documentation:** the `docs/` folder holds the GitHub Pages site, with the scroll-driven presentation film. To publish it: *Settings › Pages › Build and deployment › Deploy from a branch*, branch `main`, folder `/docs`. The film's source code is in `media/reel/`.
 
+## Roadmap
+
+Strata is on its way to **1.0.0**: from then on, the API, the export format, the `.env` settings, the Docker image and `scripts/users.mjs` only break in a new major version.
+
+| Milestone | What it brings |
+|---|---|
+| [0.6.0](https://github.com/SolidGeeks/strata/milestone/1) | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface |
+| [0.7.0](https://github.com/SolidGeeks/strata/milestone/2) | A modern three.js, or a documented decision to stay on 0.128 |
+| [0.8.0](https://github.com/SolidGeeks/strata/milestone/3) | The last breaking changes: IS Map compatibility, pre-releases, an API reference |
+| [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
+
+Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
+
 ## Night mode (v0.5.2)
 
 *Display › Theme*: **Auto** follows the system's light or dark setting (the default), **Day** and **Night** force one. Keyboard shortcut: **N** switches between day and night. The choice is remembered in the browser. The 3D view, the 2D diagram and the panels follow the theme; exported architecture plans (PNG/SVG) stay on a light background, for documentation.
