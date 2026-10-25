@@ -21,3 +21,27 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
+
+  # Builds the Docker image as the Release workflow does (without publishing it), starts it, and checks that it
+  # serves the app with its vendored three.js: a dependency or action update that breaks the image fails here.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          push: false
+          load: true
+          tags: strata:ci
+      - name: Start the image and check what it serves
+        run: |
+          docker run -d --name strata -p 8080:8080 strata:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/healthz && break; sleep 1; done
+          for f in / /vendor/three.min.js /vendor/OrbitControls.js; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080$f")
+            echo "$f -> $code"; test "$code" = 200
+          done
+      - if: failure()
+        run: docker logs strata

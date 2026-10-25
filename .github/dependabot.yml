@@ -1,4 +1,5 @@
-# Monthly updates, grouped into one pull request per ecosystem.
+# Monthly. Minor and patch updates come grouped in one pull request per ecosystem: merge it when CI is green.
+# Each major update comes in its own pull request: read its release notes, and check that CI runs what it changes.
 # Actions are pinned to commit SHAs: Dependabot bumps the SHA and the version comment together.
 version: 2
 updates:
@@ -8,7 +9,7 @@ updates:
       interval: monthly
     groups:
       actions:
-        patterns: ["*"]
+        update-types: ["minor", "patch"]
     commit-message:
       prefix: ci
   - package-ecosystem: npm
@@ -17,6 +18,10 @@ updates:
       interval: monthly
     groups:
       npm:
-        patterns: ["*"]
+        update-types: ["minor", "patch"]
     commit-message:
       prefix: deps
+    ignore:
+      # three.js stays on 0.128: Strata loads examples/js/controls/OrbitControls.js and build/three.min.js,
+      # which later releases removed. Moving on means porting the app to ES modules, not bumping a version.
+      - dependency-name: three

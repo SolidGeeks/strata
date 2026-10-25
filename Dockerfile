@@ -1,8 +1,9 @@
 # ---- Stage 1: fetch three.js and the fonts, copy them into public/vendor ----
 FROM node:22-alpine AS vendor
 WORKDIR /build
-COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY package.json package-lock.json ./
+# npm ci installs exactly what package-lock.json pins, so a given commit always builds the same image
+RUN npm ci --omit=dev --no-audit --no-fund
 COPY scripts ./scripts
 COPY public ./public
 RUN node scripts/vendor.mjs
@@ -14,7 +15,7 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     PUBLIC_DIR=/app/public
 WORKDIR /app
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY server ./server
 COPY scripts/users.mjs scripts/connector-sim.mjs ./scripts/
 COPY --from=vendor /build/public ./public
