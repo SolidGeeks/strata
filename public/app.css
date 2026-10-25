@@ -13,6 +13,7 @@ img{max-width:100%}
   --crit:#c4313d; --high:#cc6a22; --med:#b38d14; --low:#3a8763; --none:#89939a;
   --x-net:#8a3fbf; --x-inter:#2a7fa6; --x-intra:#7c8790;
   --c0:#d2a198; --c1:#9db9a3; --c2:#d5b671; --c3:#97acc3; --c4:#aea8c9; --c5:#b8c39e; --c6:#c6a9b9; --c7:#a9c4c0; --c8:#d8b49a; --c9:#b3b8a6;
+  --f0:#2f63c8; --f1:#d97a0f; --f2:#13917f; --f3:#8549c9; --f4:#4a8f1f; --f5:#c93f8f; --f6:#a88200; --f7:#1688b8; --f8:#8c5a36; --f9:#55657d;
   --sun:1.05; --sky:0.7;
   --f-display:"Archivo Narrow","Arial Narrow",system-ui,sans-serif;
   --f-body:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -26,6 +27,7 @@ img{max-width:100%}
   --crit:#ef5a66; --high:#ef9049; --med:#dfbb43; --low:#5bbd91; --none:#9aa3aa;
   --x-net:#bb8de8; --x-inter:#6cb8d8; --x-intra:#9aa6ae;
   --c0:#a3746b; --c1:#6c8a74; --c2:#a68a49; --c3:#687d97; --c4:#827c9d; --c5:#7f886a; --c6:#8e7585; --c7:#6f8e8a; --c8:#a38369; --c9:#7e8475;
+  --f0:#7aa4f2; --f1:#f3a54c; --f2:#4cc9b4; --f3:#b48af0; --f4:#86c95a; --f5:#ef7fbf; --f6:#e0c24f; --f7:#5cc3ec; --f8:#cf9a72; --f9:#a5b2c6;
   --sun:0.8; --sky:0.42;
 }}
 :root[data-theme="dark"]{
@@ -36,6 +38,7 @@ img{max-width:100%}
   --crit:#ef5a66; --high:#ef9049; --med:#dfbb43; --low:#5bbd91; --none:#9aa3aa;
   --x-net:#bb8de8; --x-inter:#6cb8d8; --x-intra:#9aa6ae;
   --c0:#a3746b; --c1:#6c8a74; --c2:#a68a49; --c3:#687d97; --c4:#827c9d; --c5:#7f886a; --c6:#8e7585; --c7:#6f8e8a; --c8:#a38369; --c9:#7e8475;
+  --f0:#7aa4f2; --f1:#f3a54c; --f2:#4cc9b4; --f3:#b48af0; --f4:#86c95a; --f5:#ef7fbf; --f6:#e0c24f; --f7:#5cc3ec; --f8:#cf9a72; --f9:#a5b2c6;
   --sun:0.8; --sky:0.42;
 }
 html,body{height:100%;overflow:hidden}
@@ -392,3 +395,7 @@ details.adv>*+*{margin-top:12px}
 .frm fieldset[data-multi]{display:flex;flex-direction:column;gap:6px}
 .frm textarea.mono{font-family:var(--f-mono,monospace);font-size:12px;min-height:80px}
 .chk.small{font-size:12px;margin-top:-4px}
+/* flow colour swatch in the sheet lists, and an inline text button */
+.fsw{display:inline-block;width:10px;height:4px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.linkbtn{background:none;border:0;padding:0;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer}
+.flow[data-hl-flow]:hover{outline:1px solid var(--line)}

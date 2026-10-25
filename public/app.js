@@ -20,6 +20,9 @@ const F=(id,title,cvss,sev)=>({id,title,cvss:cvss==null?null:cvss,sev:sev||sevFr
 const TYPE_LABEL={server:'Server',dc:'Domain controller',db:'Database',hypervisor:'Hypervisor / storage',firewall:'Firewall',gateway:'VPN gateway',router:'Router / L3 core',switch:'Switch / load balancer',workstation:'Workstation',printer:'Printer',phone:'IP phone',ap:'Wi-Fi access point',camera:'IP camera',plc:'PLC',iot:'IoT device'};
 // Interconnection equipment: flows can be routed through these
 const INTERCO=new Set(['firewall','router','switch','gateway']);
+const SA=StrataAnalysis;
+// Colours of the "Per flow" mode: --f0 to --f9 in app.css
+const FLOW_PAL=10;
 // Internet endpoints: the Internet as a whole, or a named service (ESET updates, Ubuntu mirrors…) as "svc:<id>"
 const isNet=id=>id==='internet'||String(id).startsWith('svc:');
 const SVC_CATS=['Antivirus / EDR','OS updates','SaaS','DNS / NTP','Vendor cloud','Vendor support','Partner','Other'];
@@ -508,6 +511,7 @@ function compile(){
       f.via=(manual?f.via:autoVia(s,net,f)).filter((id,i,arr)=>s.byId[id]&&id!==f.src&&id!==f.dst&&arr.indexOf(id)===i);
       f.hops=[f.src,...f.via,f.dst];
     });
+    s.lanes=SA.lanes(s.flows);s.fcol=SA.flowColours(s.flows,FLOW_PAL);
     // Exposed ports: grouped inbound flows per destination port
     s.assets.forEach(a=>{a.ports=[];a.exp='none';});
     s.flows.forEach(f=>{
@@ -538,7 +542,7 @@ const nameOf=id=>id==='internet'?'Internet':SVC[id]?SVC[id].name:(byId[id]&&!byI
 const siteServices=()=>SITE?SITE.services.filter(x=>x.scope==='site'||SITE.usedSvc.has(x.id)):[];
 const vnum=a=>{const v=vlanById[a.vlan];return v?v.num:'?';};
 
-const state={view:'overview',siteId:null,ovSelId:null,selId:null,mode:'zones',hidden:new Set(),minSev:0,minExp:0,dir:'all',color:'risk',flows:true,riskOnly:false,labels:true,ports:false,rotate:false,gap:8,path:false,panel:null,posts:'off',compact:true,arrange:false,flat:false,tool:'move'};
+const state={hoverFlow:null,view:'overview',siteId:null,ovSelId:null,selId:null,mode:'zones',hidden:new Set(),minSev:0,minExp:0,dir:'all',color:'risk',flows:true,riskOnly:false,labels:true,ports:false,rotate:false,gap:8,path:false,panel:null,posts:'off',compact:true,arrange:false,flat:false,tool:'move'};
 const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
 // saved theme applied before the first frame, so the page does not flash
 try{const t=localStorage.getItem('strata-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}
@@ -598,10 +602,12 @@ function renderVlanList(){
 }
 function renderLegend(){
   const sev=['crit','high','med','low'].map(k=>`<span><i class="pin" style="background:var(${SEV[k].css})"></i>${SEV[k].label}</span>`).join('')+`<span class="wide">Pin: worst vulnerability. Flag: critical.</span>`;
-  const flows=state.view==='site'&&state.color==='exp'
+  const flows=state.view==='site'&&state.color==='flow'
+    ?`<span class="wide"><i class="ln" style="background:var(--f0)"></i><i class="ln" style="background:var(--f1)"></i><i class="ln" style="background:var(--f2)"></i><i class="ln" style="background:var(--f3)"></i> One colour per flow: flows crossing the same equipment never share one (up to ${FLOW_PAL}). Risky flows are dashed in the 2D diagram.</span>`
+    :state.view==='site'&&state.color==='exp'
     ?['internet','inter','intra'].map(k=>`<span><i class="ln" style="background:var(${EXP[k].css})"></i>${EXP[k].label}</span>`).join('')+`<span class="wide">Flow colour: where the traffic crosses (Internet, between VLANs, inside a VLAN).</span>`
     :`<span><i class="ln" style="background:var(--thread)"></i>Observed flow</span><span><i class="ln" style="background:var(--crit)"></i>Risky flow</span>`;
-  $('#legend').innerHTML=sev+flows+`<span class="wide">Thread thickness: volume (MB/h). Beads and cones: direction of travel, from the source. A thread bends through each firewall, router or switch it crosses.</span>`;
+  $('#legend').innerHTML=sev+flows+`<span class="wide">Thread thickness: volume (MB/h). Beads and cones: direction of travel, from the source. A thread bends through each firewall, router or switch it crosses, in its own lane.</span>`;
 }
 function renderDirNote(){
   const sel=selAsset(),n=$('#dirNote');
@@ -921,14 +927,19 @@ function buildScene(){
     const lb=tagLabel(x.name,css('--x-net'),0.5);lb.position.y=1.15;g.add(lb);scene.add(g);byId[x.id]={id:x.id,name:x.name,group:g,h:0,isInternet:true,isSvc:true};return g;});
 }
 function anchor(id){const a=byId[id],p=new THREE.Vector3();a.group.getWorldPosition(p);if(!a.isInternet)p.y+=a.h*0.55;else if(!a.isSvc)p.y-=0.6;return p;}
-function flowColorVar(f){if(DIFF&&DIFF.F[f.id])return DIFF_COL[DIFF.F[f.id]];return state.color==='exp'?EXP[f.level].css:(f.risk?'--crit':'--thread');}
+function flowColorVar(f){if(DIFF&&DIFF.F[f.id])return DIFF_COL[DIFF.F[f.id]];return state.color==='exp'?EXP[f.level].css:state.color==='flow'?'--f'+(SITE.fcol[f.id]||0):(f.risk?'--crit':'--thread');}
 // A flow is drawn hop by hop: source -> each interconnection device -> destination,
 // with an arrowhead at the end of every hop so the direction and the origin read at a glance
 const coneGeo=new THREE.ConeGeometry(0.2,0.55,10).rotateX(Math.PI/2),pickMat=new THREE.MeshBasicMaterial({colorWrite:false,depthWrite:false});
-function flowCurve(hops){
-  const path=new THREE.CurvePath(),pts=hops.map(anchor),segs=[];
+// Lane of a flow on a piece of equipment it crosses: -0.5 to 0.5 across the device, 0 when alone
+function laneOf(f,id){const L=SITE.lanes[id];return L&&L.n>1&&L.idx[f.id]!==undefined?{k:L.idx[f.id],n:L.n,t:L.idx[f.id]/(L.n-1)-0.5}:null;}
+function flowCurve(f){
+  const path=new THREE.CurvePath(),segs=[],last=f.hops.length-1;
+  // Flows sharing a device are spread across its top, and each lane arches a little higher than the previous one
+  const lift=f.hops.map((id,i)=>{const l=i>0&&i<last?laneOf(f,id):null;return l?Math.min(0.16*l.k,2.4*(l.t+0.5)):0;});
+  const pts=f.hops.map((id,i)=>{const p=anchor(id),l=i>0&&i<last?laneOf(f,id):null;if(l)p.x+=l.t*Math.min(0.3*l.n,footW(byId[id])+0.6);return p;});
   for(let i=0;i<pts.length-1;i++){
-    const a=pts[i],b=pts[i+1],mid=a.clone().add(b).multiplyScalar(0.5);mid.y=Math.max(a.y,b.y)+1.2+a.distanceTo(b)*0.09;
+    const a=pts[i],b=pts[i+1],mid=a.clone().add(b).multiplyScalar(0.5);mid.y=Math.max(a.y,b.y)+1.2+a.distanceTo(b)*0.09+Math.max(lift[i],lift[i+1]);
     const c=new THREE.QuadraticBezierCurve3(a,mid,b);path.add(c);segs.push(c);
   }
   return {path,segs};
@@ -938,7 +949,7 @@ function buildFlows(){
   ANIM=ANIM.filter(o=>!o.owner);
   FLOWS.forEach(f=>{
     if(f.tube){scene.remove(f.tube);f.tube.geometry.dispose();f.parts.forEach(p=>scene.remove(p));(f.extras||[]).forEach(x=>{scene.remove(x);if(x.geometry!==coneGeo)x.geometry.dispose();});pickables=pickables.filter(o=>o!==f.pick);}
-    const {path,segs}=flowCurve(f.hops);
+    const {path,segs}=flowCurve(f);
     const o=thread(path,f.vol,flowColorVar(f),segs.length);o.owner=f;
     const extras=segs.map(c=>{const m=new THREE.Mesh(coneGeo,o.mat);const t=Math.max(0.5,1-1.1/Math.max(1,c.getLength()));m.position.copy(c.getPoint(t));m.lookAt(c.getPoint(t).add(c.getTangent(t)));
       const k=0.75+Math.log10(1+f.vol)*0.18;m.scale.set(k,k,k);m.castShadow=true;scene.add(m);return m;});
@@ -967,7 +978,7 @@ function layout(){
 function center(){return state.view==='overview'?new THREE.Vector3(0,TABLE_Y+3,0):new THREE.Vector3(0,Math.max(0,nLevels-1)*state.gap/2,0);}
 // Opacity of every asset and flow under the current filters and selection (3D model and 2D diagram)
 function computeVis(){
-  const sel=selAsset(),nb=sel?neighborsOf(sel.id):null,fsel=state.panel==='flow'?FLOWS.find(x=>x.id===state.flowId):null;
+  const sel=selAsset(),nb=sel?neighborsOf(sel.id):null,fsel=(state.hoverFlow&&FLOWS.find(x=>x.id===state.hoverFlow))||(state.panel==='flow'?FLOWS.find(x=>x.id===state.flowId):null);
   const dirPeers=sel&&state.dir!=='all'?new Set(FLOWS.filter(f=>dirOk(f,sel)).flatMap(f=>f.hops)):null;
   const aOp={},fv={};
   ASSETS.forEach(a=>{let op=1;
@@ -1030,7 +1041,7 @@ function contactsHtml(list){
 const viaHtml=f=>f.via.length?`<span class="via">via ${f.via.map(id=>`<button data-goto="${esc(id)}">${esc(nameOf(id))}</button>`).join(' → ')}${f.viaAuto?' <i>(suggested)</i>':''}</span>`:'';
 function flowRow(f,dir){
   const peer=dir==='out'?f.dst:f.src;
-  return `<li class="flow${f.risk?' risk':''}"><button class="peer" data-goto="${esc(peer)}">${dir==='out'?'→':'←'} ${esc(nameOf(peer))}</button><span class="meta">${esc(f.port)}</span><span class="meta">${f.vol} MB/h</span><button class="ibtn" data-show-flow="${esc(f.id)}" aria-label="Show this flow">Path</button>${viaHtml(f)}${f.note?`<span class="note">${esc(f.note)}</span>`:''}</li>`;
+  return `<li class="flow${f.risk?' risk':''}" data-hl-flow="${esc(f.id)}"><button class="peer" data-goto="${esc(peer)}"><i class="fsw" style="background:var(${flowColorVar(f)})"></i>${dir==='out'?'→':'←'} ${esc(nameOf(peer))}</button><span class="meta">${esc(f.port)}</span><span class="meta">${f.vol} MB/h</span><button class="ibtn" data-show-flow="${esc(f.id)}" aria-label="Show this flow">Path</button>${viaHtml(f)}${f.note?`<span class="note">${esc(f.note)}</span>`:''}</li>`;
 }
 // Which application listens on a port
 const appOn=(a,port)=>(a.apps||[]).find(x=>x.ports.includes(port));
@@ -1085,7 +1096,7 @@ function showAsset(a){
   ${a.vulns.length?`<ul class="list">${a.vulns.map(x=>`<li class="vuln"><b>${esc(x.id||'—')}</b><span class="score" style="color:var(${SEV[x.sev].css})">${x.cvss!=null&&!isNaN(x.cvss)?'CVSS '+(+x.cvss).toFixed(1):tag(x.sev)}</span><span class="t">${esc(x.title)}</span></li>`).join('')}</ul>`:'<p class="empty">No vulnerability in the last scan.</p>'}
   ${showIn?`<h3 class="cap">Inbound flows · ${inn.length}</h3>${inn.length?`<ul class="list">${inn.map(f=>flowRow(f,'in')).join('')}</ul>`:'<p class="empty">No inbound flow.</p>'}`:''}
   ${showOut?`<h3 class="cap">Outbound flows · ${out.length}</h3>${out.length?`<ul class="list">${out.map(f=>flowRow(f,'out')).join('')}</ul>`:'<p class="empty">No outbound flow.</p>'}`:''}
-  ${thru.length?`<h3 class="cap">Flows crossing this ${INTERCO.has(a.type)?'equipment':'asset'} · ${thru.length}</h3><ul class="list">${thru.map(f=>`<li class="flow${f.risk?' risk':''}"><button class="peer" data-show-flow="${esc(f.id)}">${esc(nameOf(f.src))} → ${esc(nameOf(f.dst))}</button><span class="meta">${esc(f.port)}</span><span class="meta">${f.vol} MB/h</span><span></span></li>`).join('')}</ul>`:''}
+  ${thru.length?`<h3 class="cap">Flows crossing this ${INTERCO.has(a.type)?'equipment':'asset'} · ${thru.length}</h3>${state.color!=='flow'&&thru.length>1?`<p class="fhint">Hover a flow to pick it out, or <button class="linkbtn" data-col-flow>give each flow its own colour</button>.</p>`:''}<ul class="list">${thru.slice().sort((x,y)=>(SITE.lanes[a.id].idx[x.id])-(SITE.lanes[a.id].idx[y.id])).map(f=>`<li class="flow${f.risk?' risk':''}" data-hl-flow="${esc(f.id)}"><button class="peer" data-show-flow="${esc(f.id)}"><i class="fsw" style="background:var(${flowColorVar(f)})"></i>${esc(nameOf(f.src))} → ${esc(nameOf(f.dst))}</button><span class="meta">${esc(f.port)}</span><span class="meta">${f.vol} MB/h</span><span></span></li>`).join('')}</ul>`:''}
   ${state.dir!=='all'?`<p class="dirnote">Showing ${state.dir==='in'?'inbound':'outbound'} flows only. Change it under Flows › Direction.</p>`:''}
   </div>`,'asset');
 }
@@ -1385,6 +1396,7 @@ det.addEventListener('click',async e=>{
   if(q('[data-new-flow-from]')){flowForm(null,{src:q('[data-new-flow-from]').dataset.newFlowFrom});return;}
   if(q('[data-new-flow-to]')){flowForm(null,{dst:q('[data-new-flow-to]').dataset.newFlowTo});return;}
   if(q('[data-edit-flow]')){flowForm(FLOWS.find(f=>f.id===q('[data-edit-flow]').dataset.editFlow));return;}
+  if(q('[data-col-flow]')){setColour('flow');if(selAsset())showAsset(selAsset());return;}
   if(q('[data-show-flow]')){const f=FLOWS.find(x=>x.id===q('[data-show-flow]').dataset.showFlow);if(f)showFlow(f);return;}
   if(q('[data-close-flow]')){state.flowId=null;const a=selAsset();if(a)showAsset(a);else closeDet();refresh();return;}
   if(q('[data-plan-asset]')){openPlan(byId[q('[data-plan-asset]').dataset.planAsset]);return;}
@@ -1772,7 +1784,10 @@ function flatSvgMarkup(G,V,forExport){
   const clipTo=(c,t,pad)=>{const dx=t.x-c.x,dy=t.y-c.y;if(!dx&&!dy)return {x:c.x,y:c.y};const sx=dx?(c.w/2+pad)/Math.abs(dx):Infinity,sy=dy?(c.h/2+pad)/Math.abs(dy):Infinity,s=Math.min(sx,sy,1);return {x:c.x+dx*s,y:c.y+dy*s};};
   const flowEls=[];
   FLOWS.forEach((f,fi)=>{const fv=V.fv[f.id];if(!fv.vis)return;
-    const pts=f.hops.map(pos);if(pts.some(p=>!p))return;
+    const last=f.hops.length-1,pts=f.hops.map((id,i)=>{const p=pos(id),l=p&&i>0&&i<last?laneOf(f,id):null;if(!l)return p;
+      // a lane on the card of the device crossed: shifted centre, narrower box so the thread still stops at the card edge
+      const dx=l.t*Math.min(0.42*(l.n-1),p.w-0.6);return Object.assign({},p,{x:p.x+dx,w:p.w-2*Math.abs(dx)});});
+    if(pts.some(p=>!p))return;
     const col=C(flowColorVar(f)),w=(0.05+Math.log10(1+f.vol)*0.032)*(DIFF&&DIFF.F[f.id]?2.2:1),mk='m'+col.replace(/[^0-9a-z]/gi,'');marks.add(col);
     const side=(((fi*2654435761)>>>0)%2?1:-1),dash=f.risk?' stroke-dasharray="0.32 0.2"':'';let segs='',hit='';
     for(let i=0;i<pts.length-1;i++){
@@ -2594,7 +2609,14 @@ $('#sevSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(
 $('#expSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.minExp=+b.dataset.exp;segPress('#expSeg',b);refresh();});
 $('#dirSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.dir=b.dataset.dir;segPress('#dirSeg',b);refresh();
   if(state.panel==='asset'&&selAsset())showAsset(selAsset());});
-$('#colSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.dataset.col===state.color)return;state.color=b.dataset.col;segPress('#colSeg',b);buildFlows();refresh();renderLegend();});
+function setColour(c){if(c===state.color)return;state.color=c;segPress('#colSeg',document.querySelector(`#colSeg [data-col="${c}"]`));buildFlows();refresh();renderLegend();
+  // the swatches of the open sheet follow, without rebuilding it (it keeps its scroll)
+  det.querySelectorAll('[data-hl-flow]').forEach(li=>{const f=FLOWS.find(x=>x.id===li.dataset.hlFlow),sw=li.querySelector('.fsw');if(f&&sw)sw.style.background=`var(${flowColorVar(f)})`;});}
+$('#colSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setColour(b.dataset.col);});
+// Hovering a flow in the sheet picks it out on the model and the diagram
+function hoverFlow(id){if(state.hoverFlow===id)return;state.hoverFlow=id;if(state.view==='site')refresh();}
+det.addEventListener('pointerover',e=>{const li=e.target.closest('[data-hl-flow]');hoverFlow(li?li.dataset.hlFlow:null);});
+det.addEventListener('pointerleave',()=>hoverFlow(null));
 $('#modeSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.dataset.mode===state.mode)return;
   state.mode=b.dataset.mode;segPress('#modeSeg',b);buildScene();layout();refresh();resetView();renderVlanList();syncUI();});
 $('#optFlows').addEventListener('change',e=>{state.flows=e.target.checked;rerender();});

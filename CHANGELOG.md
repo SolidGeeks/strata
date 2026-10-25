@@ -2,6 +2,13 @@
 
 All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+### Added
+- Flows through interconnection equipment are readable: every flow that crosses a firewall, router, switch or gateway gets its own lane there, in the 3D model and in the 2D diagram, instead of all threads meeting at one point.
+- Colour by › **Per flow**: each flow gets its own colour, and flows that cross the same equipment never share one (up to 10).
+- Hovering a flow in an asset sheet picks it out on the model and the diagram. The sheet lists the flows crossing a device in lane order, with their colour.
+- Unit tests of the graph analysis (`tests/analysis.test.mjs`), run by `npm test`.
+
 ## [0.5.5] - 2026-10-25
 ### Security
 - **Object prototype pollution through ids and account names** ([GHSA-56cq-r5jm-vpqg](https://github.com/SolidGeeks/strata/security/advisories/GHSA-56cq-r5jm-vpqg)). `__proto__` was accepted as a proposal, map document or account name, and the server looked these names up in plain objects. A contributor could change properties shared by every object of the server process by commenting on the proposal `__proto__`; an approver could hide map documents; an admin could create an admin account that no list showed, and that signed in under names such as `toString` until the next restart. `__proto__`, `constructor` and `prototype` are now refused as ids and account names, and every lookup ignores inherited properties. Upgrade to 0.5.5: no data migration is needed.
