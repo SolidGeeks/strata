@@ -1,4 +1,4 @@
-# Strata — v0.8
+# Strata — v0.9
 
 [![Release](https://img.shields.io/github/v/release/SolidGeeks/strata)](https://github.com/SolidGeeks/strata/releases) [![License AGPL-3.0](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/license-agpl.svg)](LICENSE) [![Signed releases](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/signed-releases.svg)](#2-quick-start-with-docker) [![Tests](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml)
 
@@ -14,10 +14,19 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 |---|---|
 | [0.7.0](https://github.com/SolidGeeks/strata/milestone/1) ✅ | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface. Released on 2026-10-26 |
 | [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) ✅ | Connector modules and a module store, three.js 0.186. Released on 2026-10-26 |
-| [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) | The last breaking changes: single sign-on, pre-releases, an API reference, the old product name removed |
+| [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) ✅ | The last breaking changes: single sign-on, pre-releases, an API reference, the old product name removed. Released on 2026-10-26 |
 | [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
 
 Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
+
+## New in v0.9: single sign-on, API tokens, an API reference
+
+- **Single sign-on** with OpenID Connect (Entra ID, Keycloak, Authentik, Google Workspace, Okta…) or a trusted authenticating proxy, next to the local accounts; roles come from the provider's groups, and `LOCAL_LOGIN` keeps local accounts for everyone, for admins only (break-glass) or for no one. See [section 4](#4-single-sign-on-and-api-tokens).
+- **API tokens** for scripts: a name, a role and an expiry, created by an admin in *Account › API tokens*, sent as `Authorization: Bearer stk_…`.
+- **[API reference](https://solidgeeks.github.io/strata/api.html)**: every route with its role, request and answer, the export format, the module API, and the [compatibility policy](#compatibility) that applies from 1.0 on.
+- **[Module guide](MODULES.md)**: using modules, and writing one step by step.
+- **Releases**: *Actions › Release › Run workflow* publishes the version in `package.json` after a maintainer's approval; release candidates (`1.0.0-rc.N`) are never `latest`.
+- **Strata is the only name**: what was left of *IS Map 3D* is gone. Read *Upgrading* in the [CHANGELOG](CHANGELOG.md) before upgrading: scripts must send `X-Requested-With: strata`, and `DATA_VOLUME` is gone.
 
 ## New in v0.8: connector modules, the module store, three.js 0.186
 
@@ -176,7 +185,7 @@ Or use the prebuilt image published with each release (tag `vX.Y.Z`, see the `Re
 Every published image is **signed**: an attestation proves it was built by this repository's `Release` workflow, from the code of the tag. To check it before deploying (you need the [GitHub CLI](https://cli.github.com/)):
 
 ```bash
-gh attestation verify oci://ghcr.io/solidgeeks/strata:0.8.0 --owner SolidGeeks
+gh attestation verify oci://ghcr.io/solidgeeks/strata:0.9.0 --owner SolidGeeks
 ```
 
 The command must print `Verification succeeded!`. If it fails, do not use the image, and report it (see [SECURITY.md](SECURITY.md)). Images older than 0.5.4 are not signed.
@@ -546,7 +555,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 
 ---
 
-## 13. Limits of v0.8
+## 13. Limits of v0.9
 
 - Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
 - Sessions of single sign-on are kept in memory: restarting Strata signs SSO users out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 8 by default), or at once with *End all single sign-on sessions*. LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).

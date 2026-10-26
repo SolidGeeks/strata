@@ -2,7 +2,7 @@
 
 All notable changes to Strata. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.9.0] - 2026-10-26
 ### Added
 - **API reference** ([`docs/api.html`](docs/api.html), on the site under *API*): every route with its role, request and answer, authentication, errors, the event stream, the export format, the module API.
 - **Module guide** ([`MODULES.md`](MODULES.md)), in two parts. *Using modules*: install from the store, set up, run, read the result, update, remove, provide your own, run from a script. *Writing a module*: a first module step by step (a JSON import tried on a local Strata), good practice, testing, a checklist before publishing in the store. The documentation's *Modules and the module store* follows the same steps.
@@ -181,6 +181,7 @@ All notable changes to Strata. Versions follow [Semantic Versioning](https://sem
 ## [0.1.0]
 - First release: 3D map of IS, zones, VLANs, assets, flows, exposure, vulnerabilities and incident contacts.
 
+[0.9.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.9.0
 [0.8.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.8.0
 [0.7.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.7.0
 [0.6.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.6.0
