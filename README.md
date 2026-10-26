@@ -511,4 +511,6 @@ The tests start a real server on a temporary data folder, create one account per
 
 The `CI` workflow runs them on Node 20 and 22 on every push to `main` and every pull request. A change that touches the API must come with a test.
 
+`npm run test:e2e` walks through the interface in Chromium with Playwright (`tests/e2e.mjs`): an admin loads the demo and sees the 3D model and the 2D diagram, a contributor proposes a change, an approver sees it highlighted and approves it. Any JavaScript error in a page fails it. The first time, install the browser with `npx playwright install chromium`. The `CI` workflow runs it too (`e2e` job). A change to the interface must keep it green.
+
 Contributions follow the [Solid standard](https://github.com/SolidGeeks/.github/blob/main/CONTRIBUTING.md): sign off every commit with `git commit -s` (DCO), no CLA. To report a vulnerability, see [SECURITY.md](SECURITY.md).
