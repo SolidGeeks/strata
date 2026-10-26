@@ -39,7 +39,8 @@ const riskTag=r=>r?`<span class="tag" style="color:var(${SEV[r.band].css})"><i s
 const vulnChips=v=>`${v.kev?'<span class="kev" title="On the CISA list of known exploited vulnerabilities">KEV</span>':''}${v.epss!=null?`<span class="epss" title="EPSS: probability of exploitation in the next 30 days">EPSS ${Math.round(v.epss*100)}%</span>`:''}`;
 const critTag=c=>`<span class="tag" style="color:var(${CRIT_CSS[c]||'--none'})"><i style="background:var(${CRIT_CSS[c]||'--none'})"></i>${CRIT_LBL[c]||'—'}</span>`;
 const $=s=>document.querySelector(s);
-const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// HTML escaping, one character at a time (a form code scanners recognise as escaping)
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 const uid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const clone=o=>JSON.parse(JSON.stringify(o));
 const pad=n=>String(n).padStart(2,'0');
