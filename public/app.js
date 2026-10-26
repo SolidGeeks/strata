@@ -1331,7 +1331,7 @@ function showSite(s){
   const top=s.assets.filter(a=>a.sev==='crit'||a.sev==='high').sort((a,b)=>SEV[b.sev].rank-SEV[a.sev].rank||EXP[b.exp].rank-EXP[a.exp].rank||b.crit-a.crit).slice(0,5);
   openDet(`<div class="d-head"><div><span class="cap">${esc(s.kind||'Information system')}</span><h2>IS ${esc(s.name)}</h2><p>${plural(s.stats.vlans,'VLAN')} · ${plural(s.stats.assets,'asset')}</p></div><button class="close" data-close aria-label="Close the summary">×</button></div>
   <div class="d-body">
-  <div class="actions"><button class="btn small primary" data-open="${esc(s.id)}">Open the model</button><button class="btn small edit-only" data-edit-site="${esc(s.id)}">Edit</button><button class="btn small" data-export-site="${esc(s.id)}">Export this IS (JSON)</button></div>
+  <div class="actions"><button class="btn small primary" data-open="${esc(s.id)}">Open the model</button><button class="btn small edit-only" data-edit-site="${esc(s.id)}">Edit</button><button class="btn small" data-export-site="${esc(s.id)}">Export this IS (JSON)</button><button class="btn small" data-arch-site="${esc(s.id)}">Architecture file</button></div>
   <dl class="kv">
     <dt>Zones</dt><dd>${s.zones.map(z=>esc(z.name)).join(' · ')}</dd>
     <dt>Exposure</dt><dd><b style="color:var(--x-net)">${s.stats.xNet}</b> internet-facing · <b style="color:var(--x-inter)">${s.stats.xInter}</b> inter-VLAN · ${s.stats.xIntra} intra-VLAN</dd>
@@ -1346,6 +1346,210 @@ function showSite(s){
   ${links.length?`<ul class="list">${links.map(w=>{const peer=siteById[w.a===s.id?w.b:w.a];return `<li class="flow${w.risk?' risk':''}"><button class="peer" data-site="${esc(peer.id)}">↔ ${esc(peer.name)}</button><span class="meta">${esc(w.tech)}</span><span class="meta">${esc(w.vol)} MB/h</span><button class="ibtn edit-only" data-edit-wan="${esc(w.id)}" aria-label="Edit this link">Edit</button>${w.note?`<span class="note">${esc(w.note)}</span>`:''}</li>`;}).join('')}</ul>`:'<p class="empty">No link to another IS.</p>'}
   </div>`,'site');
 }
+
+/* ================= Architecture file ================= */
+// One document per IS, in the order audits and security accreditation files follow: document
+// control and sign-off, summary, scope, architecture, inventory, flows and filtering, exposure,
+// vulnerabilities and attack paths, plans of the exposed and critical assets, contacts, history,
+// method. Built from the map as it is shown; a standalone HTML file, printable to PDF.
+const ARCH_CSS=`
+:root{--ink:#1d2321;--muted:#5e6964;--line:#d5dbd7;--soft:#f2f5f3;--accent:#1f5f8b;--crit:#b3261e;--high:#c25e00;--med:#8a6d00;--low:#2f6f3e;--net:#7a2fa0;--inter:#1f5f8b}
+*{box-sizing:border-box}
+.af{font-family:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:#fff;font-size:10.5pt;line-height:1.45;max-width:210mm;margin:0 auto;padding:18mm 16mm}
+.af h1,.af h2,.af h3{font-family:"Archivo Narrow","Archivo",system-ui,sans-serif;line-height:1.2;text-wrap:balance;margin:0}
+.af h2{font-size:17pt;margin:26pt 0 8pt;padding-top:8pt;border-top:2px solid var(--ink);break-before:page}
+.af h3{font-size:12.5pt;margin:16pt 0 6pt}
+.af p{margin:0 0 7pt;max-width:68ch}
+.af .mono,.af code,.af td.m{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-size:9pt}
+.af .muted{color:var(--muted)}
+.af table{width:100%;border-collapse:collapse;margin:4pt 0 10pt;font-size:9pt;font-variant-numeric:tabular-nums}
+.af th{text-align:left;font-weight:600;background:var(--soft);border-bottom:1px solid var(--ink);padding:4pt 5pt;vertical-align:bottom}
+.af td{border-bottom:1px solid var(--line);padding:3.5pt 5pt;vertical-align:top;overflow-wrap:anywhere}
+.af thead{display:table-header-group}.af tr{break-inside:avoid}
+.af .num{text-align:right}
+.af .cover{min-height:150mm;display:flex;flex-direction:column;gap:14pt;break-after:page}
+.af .cover .kind{font-size:10pt;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.af .cover h1{font-size:34pt}
+.af .cover .is{font-size:22pt;font-weight:600}
+.af .mark{border:2px solid var(--crit);color:var(--crit);padding:6pt 9pt;font-weight:600;font-size:9.5pt;max-width:120mm}
+.af .meta{display:grid;grid-template-columns:42mm 1fr;gap:3pt 10pt;font-size:10pt;margin-top:auto}
+.af .meta dt{color:var(--muted)}.af .meta dd{margin:0}
+.af .sign td{height:16mm}
+.af .toc{columns:2;column-gap:12mm;padding:0;list-style:none;font-size:10pt}
+.af .toc li{margin:0 0 3pt}.af .toc a{color:var(--ink);text-decoration:none}
+.af .figs{display:grid;grid-template-columns:repeat(4,1fr);gap:6pt;margin:6pt 0 12pt}
+.af .fig{border:1px solid var(--line);padding:6pt 8pt}
+.af .fig b{display:block;font-size:17pt;font-family:"Archivo Narrow","Archivo",sans-serif}
+.af .fig span{font-size:8.5pt;color:var(--muted)}
+.af .t{display:inline-block;font-size:8pt;font-weight:600;padding:0 4pt;border:1px solid currentColor;border-radius:2px;white-space:nowrap}
+.af .crit{color:var(--crit)}.af .high{color:var(--high)}.af .med{color:var(--med)}.af .low{color:var(--low)}.af .none{color:var(--muted)}
+.af .x-internet{color:var(--net)}.af .x-inter{color:var(--inter)}.af .x-intra,.af .x-none{color:var(--muted)}
+.af .kev{background:var(--crit);color:#fff;border-color:var(--crit)}
+.af figure{margin:6pt 0 12pt;break-inside:avoid}
+.af figure svg{width:100%;height:auto;display:block;border:1px solid var(--line)}
+.af figcaption{font-size:8.5pt;color:var(--muted);margin-top:3pt}
+.af .path{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:8.5pt}
+.af .path i{font-style:normal;color:var(--crit)}
+.af .note{border-left:3px solid var(--line);padding:2pt 0 2pt 8pt;color:var(--muted);font-size:9pt}
+@page{size:A4;margin:14mm 12mm}
+@media print{.af{padding:0;max-width:none}.af h2{margin-top:0}.af .cover{min-height:250mm}}
+.af .ip{white-space:nowrap}
+@media (max-width:640px){.af{padding:18px 16px}.af .figs{grid-template-columns:repeat(2,1fr)}.af .toc{columns:1}.af .meta{grid-template-columns:1fr}.af .scroll{overflow-x:auto}}
+`;
+const afSev=k=>`<span class="t ${k}">${SEV[k].label}</span>`;
+const afExp=k=>`<span class="t x-${k}">${EXP[k].label}</span>`;
+const afTable=(head,rows,cls='')=>rows.length?`<div class="scroll"><table${cls?` class="${cls}"`:''}><thead><tr>${head.map(h=>`<th${/^(#|Rule|CVSS|EPSS|Score|MB\/h|Assets|Flows|Steps|Paths|Hops|Likelihood)/.test(h)?' class="num"':''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td${typeof c==='number'?' class="num"':''}>${typeof c==='number'?c:c==null?'':c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:'<p class="muted">None.</p>';
+// The SVG of a drawing, sized to the page width
+const afFit=svg=>svg.replace(/<svg([^>]*?)\swidth="[^"]*"\sheight="[^"]*"/,'<svg$1');
+// The 2D diagram of the whole IS, every plate and flow shown, coloured by exposure, on a light page
+function afDiagram(){
+  const r=document.documentElement,theme=r.dataset.theme,keep={hidden:state.hidden,color:state.color,ports:state.ports};
+  r.dataset.theme='light';Object.assign(state,{hidden:new Set(),color:'exp',ports:false});
+  try{
+    const G=flatGeometry(),V={sel:null,aOp:{},fv:{}};
+    ASSETS.forEach(a=>V.aOp[a.id]=1);FLOWS.forEach(f=>V.fv[f.id]={vis:true,op:f.risk?0.95:0.8});
+    return afFit(flatSvgMarkup(G,V,true));
+  }finally{Object.assign(state,keep);if(theme)r.dataset.theme=theme;else delete r.dataset.theme;}
+}
+async function afHistory(){
+  if(!Store.features.history)return null;
+  try{const j=await Store.api('GET','api/history?limit=500');return (j.entries||[]).filter(h=>h.site===SITE.id).slice(0,60);}catch(e){return null;}
+}
+async function buildArchFile(){
+  const s=SITE,now=new Date(),date=now.toISOString().slice(0,10),ver=($('#appVer')||{}).textContent||'';
+  const crit=a=>`<span class="t ${['none','low','med','crit'][a.crit]||'none'}">${CRIT_LBL[a.crit]||'—'}</span>`;
+  const vl=a=>{const v=vlanById[a.vlan];return v?`${esc(v.num)} · ${esc(v.name)}`:'';};
+  const vulns=ASSETS.flatMap(a=>a.vulns.map(v=>({a,v}))).sort((x,y)=>SEV[y.v.sev].rank-SEV[x.v.sev].rank||(y.v.kev?1:0)-(x.v.kev?1:0)||(+y.v.cvss||0)-(+x.v.cvss||0));
+  const kev=vulns.filter(x=>x.v.kev).length,P=SA.attackPaths(s,SA.outside(s),s.critIds),cut=SA.chokePoints(s,P.byTarget).filter(c=>c.every.length);
+  const inReach=s.critIds.filter(id=>s.atkOut.has(id)).sort((x,y)=>s.atkOut.get(y).p-s.atkOut.get(x).p);
+  const fws=ASSETS.filter(a=>a.type==='firewall'),inter=ASSETS.filter(a=>INTERCO.has(a.type));
+  const unfiltered=FLOWS.filter(f=>f.level!=='intra'&&!f.via.some(id=>byId[id].type==='firewall'));
+  const plans=ASSETS.filter(a=>!INTERCO.has(a.type)&&(a.exp==='internet'||s.critIds.includes(a.id))).sort((x,y)=>EXP[y.exp].rank-EXP[x.exp].rank||y.crit-x.crit||x.name.localeCompare(y.name)).slice(0,12);
+  const hist=await afHistory();
+  const pathHtml=x=>x.path.map((id,i)=>{const f=i?FLOWS.find(y=>y.id===x.flows[i-1]):null;return esc(nameOf(id))+(f?` <span class="muted">${esc(f.port)}</span>`:'');}).join(' <i>→</i> ');
+  const S=[['summary','Summary'],
+    ['scope','Scope and context'],['arch','Architecture'],['inv','Asset inventory'],['flows','Flows and filtering'],['expo','Exposure'],
+    ['vuln','Vulnerabilities and risk'],['attack','Attack paths'],['plans','Plans of the exposed and critical assets'],['contacts','Incident contacts'],['hist','Change history'],['method','Method and limits']];
+  let n=0;const H=(id)=>{n++;return `<h2 id="${id}">${n}. ${esc(S.find(x=>x[0]===id)[1])}</h2>`;};
+  const body=`<div class="af">
+<section class="cover">
+  <span class="kind">${esc(s.kind||'Information system')}</span>
+  <h1>Architecture file</h1>
+  <div class="is">IS ${esc(s.name)}</div>
+  <p class="mark">Restricted. This document describes the weak spots of the information system: share it on a need-to-know basis, and keep it with the accreditation file.</p>
+  <dl class="meta">
+    <dt>Date</dt><dd>${esc(date)}</dd>
+    <dt>Map version</dt><dd>${Store.mode==='api'?`v${esc(Store.rev)}`:'Copy kept in a browser (no version number)'}${Store.view==='preview'&&Store.preview?` · shown as of version ${esc(Store.preview.rev)}`:Store.view==='draft'?' · including a draft not yet approved':''}</dd>
+    <dt>Generated by</dt><dd>Strata ${esc(ver)}${Store.user?`, for ${esc(Store.user)}`:''}</dd>
+    <dt>Status</dt><dd>Generated from the map. To be reviewed and signed by the IS owner.</dd>
+  </dl>
+</section>
+<h3>Document control</h3>
+${afTable(['Version','Date','Author','Change'],[[Store.mode==='api'?`v${esc(Store.rev)}`:'—',esc(date),esc(Store.user||'—'),'Generated from the Strata map']])}
+<h3>Approval</h3>
+${afTable(['Role','Name','Date','Signature'],[['IS owner','','',''],['Security officer (CISO)','','',''],['Accreditation authority','','','']],'sign')}
+<h3>Contents</h3>
+<ol class="toc">${S.map(([id,t])=>`<li><a href="#${id}">${esc(t)}</a></li>`).join('')}</ol>
+${H('summary')}
+<div class="figs">
+  <div class="fig"><b>${s.stats.assets}</b><span>assets in ${plural(s.stats.vlans,'VLAN')}</span></div>
+  <div class="fig"><b class="x-internet">${s.stats.xNet}</b><span>internet-facing assets</span></div>
+  <div class="fig"><b class="crit">${s.stats.crit}</b><span>critical vulnerabilities${kev?`, ${kev} known exploited`:''}</span></div>
+  <div class="fig"><b class="crit">${inReach.length}/${s.critIds.length}</b><span>critical assets reachable from the Internet</span></div>
+</div>
+<p>The IS counts ${plural(s.stats.assets,'asset')} in ${plural(s.zones.length,'zone')} and ${plural(s.stats.vlans,'VLAN')}, linked by ${plural(FLOWS.length,'recorded flow')}${s.stats.risk?`, ${s.stats.risk} of them marked risky`:''}. ${plural(s.stats.reach,'asset')} can be reached from the Internet along these flows. ${s.business.length?`It runs ${plural(s.business.length,'business service')}.`:''}</p>
+<h3>Fix first</h3>
+${afTable(['#','Vulnerability','Asset','Exposure','Score'],s.risk.fixes.slice(0,8).map((x,i)=>[i+1,`<b>${esc(x.vuln.id||'—')}</b> ${esc(x.vuln.title)}${x.vuln.kev?' <span class="t kev">KEV</span>':''}`,esc(byId[x.asset].name),afExp(byId[x.asset].exp),x.score]))}
+${inReach.length?`<h3>Critical assets reachable from the Internet</h3>${afTable(['Asset','Most likely path','Likelihood'],inReach.slice(0,8).map(id=>[esc(byId[id].name),`<span class="path">${pathHtml(s.atkOut.get(id))}</span>`,`${Math.round(s.atkOut.get(id).p*100)}%`]))}`:''}
+
+${H('scope')}
+<p>${esc(s.kind||'Information system')} ${esc(s.name)}: ${s.zones.map(z=>esc(z.name)).join(', ')}.</p>
+<h3>Business services</h3>
+${afTable(['Service','Criticality','Owner','Runs on','Assets involved'],s.business.map(b=>[`<b>${esc(b.name)}</b>${b.notes?`<br><span class="muted">${esc(b.notes)}</span>`:''}`,`<span class="t ${['none','low','med','crit'][b.crit]}">${CRIT_LBL[b.crit]}</span>`,esc(b.owner||'—'),b.assets.map(id=>esc(byId[id].name)).join(', '),Object.keys(s.impact.byBusiness[b.id].assets).length]))}
+<h3>Links to other information systems</h3>
+${afTable(['With','Technology','MB/h','Note'],WAN.filter(w=>w.a===s.id||w.b===s.id).map(w=>[esc(siteById[w.a===s.id?w.b:w.a].name),esc(w.tech||''),w.vol,`${w.risk?'<span class="t crit">Risky</span> ':''}${esc(w.note||'')}`]))}
+<h3>Internet services used</h3>
+${afTable(['Service','Category','Hosts','Ports'],siteServices().map(x=>[esc(x.name),esc(x.category),`<span class="mono">${esc(x.hosts.join(', '))}</span>`,`<span class="mono">${esc(x.ports.join(' '))}</span>`]))}
+
+${H('arch')}
+<h3>Network diagram</h3>
+<figure>${afDiagram()}<figcaption>IS ${esc(s.name)}: zones as bands, VLANs as plates, flows coloured by exposure (Internet, between VLANs, inside a VLAN), through the equipment they cross. Dashed: risky flows.</figcaption></figure>
+<h3>Zones and VLANs</h3>
+${afTable(['Zone','VLAN','Name','Range','Assets'],s.zones.slice().reverse().flatMap(z=>z.vlans.map(v=>[esc(z.name),`<span class="mono">${esc(v.num)}</span>`,esc(v.name),`<span class="mono">${esc(v.cidr||'—')}</span>`,ASSETS.filter(a=>a.vlan===v.id).length])))}
+<h3>Interconnection equipment</h3>
+${afTable(['Equipment','Type','IP','VLAN','Flows crossing'],inter.map(a=>[`<b>${esc(a.name)}</b>`,esc(TYPE_LABEL[a.type]),`<span class="mono ip">${esc(a.ip||'')}</span>`,vl(a),FLOWS.filter(f=>f.via.includes(a.id)).length]))}
+<h3>Applications</h3>
+${afTable(['Application','Version','Runs on','Listening ports'],Object.values(ASSETS.flatMap(a=>a.apps.map(x=>({x,a}))).reduce((m,{x,a})=>{const k=x.name.toLowerCase();(m[k]=m[k]||{name:x.name,v:new Set(),on:[],ports:new Set()});if(x.version)m[k].v.add(x.version);m[k].on.push(a.name);x.ports.forEach(p=>m[k].ports.add(p));return m;},{})).sort((x,y)=>x.name.localeCompare(y.name)).map(x=>[`<b>${esc(x.name)}</b>`,esc([...x.v].join(', ')),esc(x.on.join(', ')),`<span class="mono">${esc([...x.ports].join(' '))}</span>`]))}
+
+${H('inv')}
+${afTable(['Asset','Type','IP','VLAN','System','Role','Criticality','Exposure','Worst vuln.','Risk'],s.zones.slice().reverse().flatMap(z=>z.vlans).flatMap(v=>ASSETS.filter(a=>a.vlan===v.id)).map(a=>[`<b>${esc(a.name)}</b>`,esc(TYPE_LABEL[a.type]),`<span class="mono ip">${esc(a.ip||'')}</span>`,vl(a),esc(a.os||''),esc(a.role||''),crit(a),afExp(a.exp),a.sev==='none'?'':afSev(a.sev),s.riskById[a.id]?s.riskById[a.id].score:'']))}
+
+${H('flows')}
+<h3>Flow matrix</h3>
+${afTable(['#','Source','Destination','Port','Path','Exposure','MB/h','Note'],FLOWS.slice().sort((x,y)=>EXP[y.level].rank-EXP[x.level].rank||nameOf(x.src).localeCompare(nameOf(y.src))||nameOf(x.dst).localeCompare(nameOf(y.dst))).map((f,i)=>[i+1,esc(nameOf(f.src)),esc(nameOf(f.dst)),`<span class="mono">${esc(f.port)}</span>`,f.via.length?esc(f.via.map(nameOf).join(' › '))+(f.viaAuto?' <span class="muted">(suggested)</span>':''):'<span class="muted">direct</span>',afExp(f.level),f.vol,`${f.risk?'<span class="t crit">Risky</span> ':''}${esc(f.note||'')}`]))}
+<h3>Filtering: rules each firewall needs</h3>
+<p class="note">One allow rule per flow and per firewall crossed, then the default deny. Addresses and zones are those of the map: map them to the objects of each firewall before comparing with its configuration.</p>
+${fws.length?fws.map(fw=>{const R=fwRules(fw).rules.filter(r=>r.fw===fw.name);return `<h3>${esc(fw.name)} <span class="muted">${esc(fw.ip||'')}</span></h3>${afTable(['Rule','Source','Destination','Service','Action','Comment'],[...R.map(r=>[r.n,`${esc(r.src)}<br><span class="mono muted">${esc(r.srcAddr)} · ${esc(r.srcZone)}</span>`,`${esc(r.dst)}<br><span class="mono muted">${esc(r.dstAddr)} · ${esc(r.dstZone)}</span>`,`<span class="mono">${esc(r.service)}</span>`,'accept',esc(r.comment)]),[R.length+1,'any','any','any','<b>deny</b>','Default rule']])}`;}).join(''):'<p class="muted">No firewall recorded on this IS.</p>'}
+<h3>Flows between VLANs or with the Internet that cross no firewall</h3>
+${afTable(['Source','Destination','Port','Exposure','Path'],unfiltered.map(f=>[esc(nameOf(f.src)),esc(nameOf(f.dst)),`<span class="mono">${esc(f.port)}</span>`,afExp(f.level),f.via.length?esc(f.via.map(nameOf).join(' › ')):'direct']))}
+
+${H('expo')}
+<h3>Exposed ports</h3>
+${afTable(['Asset','VLAN','Port','Exposure','Application','Reached from'],ASSETS.flatMap(a=>a.ports.map(p=>({a,p}))).sort((x,y)=>EXP[y.p.level].rank-EXP[x.p.level].rank||x.a.name.localeCompare(y.a.name)).map(({a,p})=>{const ap=appOn(a,p.port);return [`<b>${esc(a.name)}</b>`,vl(a),`<span class="mono">${esc(p.port)}</span>`,afExp(p.level),ap?esc(`${ap.name} ${ap.version}`.trim()):'',esc(p.from.map(nameOf).join(', '))];}))}
+<h3>Reachable from the Internet</h3>
+${afTable(['Hops','Asset','VLAN','Worst vuln.'],ASSETS.filter(a=>EXPO[a.id]!==undefined).sort((a,b)=>EXPO[a.id]-EXPO[b.id]||a.name.localeCompare(b.name)).map(a=>[EXPO[a.id],`<b>${esc(a.name)}</b>`,vl(a),a.sev==='none'?'':afSev(a.sev)]))}
+<h3>Flows marked risky</h3>
+${afTable(['Source','Destination','Port','Note'],FLOWS.filter(f=>f.risk).map(f=>[esc(nameOf(f.src)),esc(nameOf(f.dst)),`<span class="mono">${esc(f.port)}</span>`,esc(f.note||'')]))}
+
+${H('vuln')}
+<h3>Remediation order</h3>
+${afTable(['#','Vulnerability','Asset','CVSS','EPSS','Exposure','Score'],s.risk.fixes.slice(0,40).map((x,i)=>[i+1,`<b>${esc(x.vuln.id||'—')}</b> ${esc(x.vuln.title)}${x.vuln.kev?' <span class="t kev">KEV</span>':''}`,esc(byId[x.asset].name),x.vuln.cvss==null?'':(+x.vuln.cvss).toFixed(1),x.vuln.epss==null?'':`${(x.vuln.epss*100).toFixed(1)}%`,afExp(byId[x.asset].exp),x.score]))}
+${s.risk.fixes.length>40?`<p class="muted">${s.risk.fixes.length-40} more in the remediation list (CSV), from Analysis › Risk priorities.</p>`:''}
+<h3>Assets by risk score</h3>
+${afTable(['Asset','VLAN','Criticality','Exposure','Score'],s.risk.assets.map(r=>{const a=byId[r.id];return [`<b>${esc(a.name)}</b>`,vl(a),crit(a),afExp(a.exp),`<span class="${r.band}">${r.score}</span>`];}))}
+<h3>All vulnerabilities</h3>
+${afTable(['Reference','Title','Asset','Severity','CVSS','EPSS','Source'],vulns.map(({a,v})=>[`<span class="mono">${esc(v.id||'—')}</span>${v.kev?' <span class="t kev">KEV</span>':''}`,esc(v.title),esc(a.name),afSev(v.sev),v.cvss==null?'':(+v.cvss).toFixed(1),v.epss==null?'':`${(v.epss*100).toFixed(1)}%`,esc(v.src||'entered by hand')]))}
+
+${H('attack')}
+<p>${s.critIds.length?`${inReach.length} of the ${plural(s.critIds.length,'critical asset')} can be reached from the Internet along the allowed flows.`:'No asset is marked critical on this IS (criticality High, of its own or through a business service).'}</p>
+${inReach.length?afTable(['Critical asset','Path','Steps','Likelihood'],inReach.flatMap(id=>{const l=(P.byTarget[id]&&P.byTarget[id].length?P.byTarget[id]:[s.atkOut.get(id)]).slice(0,3);return l.map((x,i)=>[i?'':`<b>${esc(byId[id].name)}</b>`,`<span class="path">${pathHtml(x)}</span>`,x.path.length-1,`${x.p<0.01?'<1':Math.round(x.p*100)}%`]);})):''}
+${cut.length?`<h3>Where to cut</h3><p>Every path to these critical assets goes through:</p>${afTable(['Asset or equipment','Role on the paths','Cuts off'],cut.slice(0,10).map(c=>[`<b>${esc(byId[c.id].name)}</b>`,c.kind==='equipment'?'Crossed: tighten its rules':c.held<c.paths?'Crossed, and taken over on some paths':'Taken over on the way: harden it',esc(c.every.map(id=>byId[id].name).join(', '))]))}`:''}
+${s.critIds.filter(id=>!s.atkOut.has(id)).length?`<p class="muted">Out of reach from the Internet: ${esc(s.critIds.filter(id=>!s.atkOut.has(id)).map(id=>byId[id].name).join(', '))}.</p>`:''}
+
+${H('plans')}
+<p>The direct flows of the internet-facing and critical assets${plans.length===12?' (the first twelve)':''}, with the equipment they cross.</p>
+${plans.map(a=>`<figure>${afFit(buildPlanSvg(a,false,false,{dir:'all',lv:['internet','inter','intra']}).svg)}<figcaption>${esc(a.name)} · ${esc(TYPE_LABEL[a.type])} · ${esc(a.ip||'')} · VLAN ${vl(a)}</figcaption></figure>`).join('')||'<p class="muted">None.</p>'}
+
+${H('contacts')}
+<h3>IS contacts</h3>
+${afTable(['Name','Role','Phone','Email','Availability'],s.contacts.map(c=>[esc(c.name),esc(c.role),`<span class="mono">${esc(c.phone||'')}</span>`,esc(c.email||''),esc(c.dispo||'')]))}
+<h3>Asset contacts</h3>
+${afTable(['Asset','Name','Role','Phone','Email','Availability'],ASSETS.flatMap(a=>a.contacts.filter(c=>c.name||c.phone||c.email).map((c,i)=>[i?'':`<b>${esc(a.name)}</b>`,esc(c.name),esc(c.role),`<span class="mono">${esc(c.phone||'')}</span>`,esc(c.email||''),esc(c.dispo||'')])))}
+
+${H('hist')}
+${hist?afTable(['Version','Date','By','Change'],hist.map(h=>[`<span class="mono">v${esc(h.rev)}</span>`,esc(new Date(h.at).toLocaleString()),esc(h.user||'—'),esc(h.label||`${{si:'IS',assets:'asset',wan:'inter-IS links',services:'Internet services',all:'whole map'}[h.kind]||h.kind} ${h.name?'“'+h.name+'” ':''}${h.op||''}`)])):'<p class="muted">No history: this map is kept in a browser only. On a Strata server, every change is recorded with its author and date, and listed here.</p>'}
+
+${H('method')}
+<p><b>Source.</b> Everything in this file comes from the Strata map of the IS: entered by hand, imported, or read by the connectors (Cyberwatch, GLPI, phpIPAM, Palo Alto) and approved before publication. A flow missing from the map is missing here.</p>
+<p><b>Exposure.</b> An asset is exposed at the widest level of the flows it receives: from the Internet, from another VLAN, or from its own VLAN.</p>
+<p><b>Risk score.</b> 0 to 100 per asset: each vulnerability counts for its severity (CVSS) times its likelihood of exploitation (certain on the CISA list of known exploited vulnerabilities, otherwise from its EPSS, otherwise 30%), weighed by the exposure of the asset, its reachability from the Internet, and its criticality or that of the business services it would hit.</p>
+<p><b>Attack paths.</b> An attacker who holds an asset can open the flows that leave it. Taking the next asset over counts for the highest of its vulnerabilities, 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service; a path for the product of its steps. These likelihoods rank paths; they are not measured probabilities.</p>
+<p><b>Firewall rules.</b> Derived from the flows and the equipment they cross, as a generic table: they are what the architecture needs, to compare with the configuration in place.</p>
+</div>`;
+  return {body,html:`<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Architecture file · IS ${esc(s.name)} · ${esc(date)}</title><style>${ARCH_CSS}</style></head><body style="margin:0;background:#fff">${body}</body></html>`,date};
+}
+let ARCHF=null;
+async function openArchFile(){
+  if(!SITE)return;
+  const host=$('#archView');host.innerHTML='<p class="archwait">Building the architecture file…</p>';$('#archf').hidden=false;document.body.classList.add('has-plan');
+  $('#archTitle').textContent=`IS ${SITE.name}`;
+  try{ARCHF=await buildArchFile();}catch(e){host.innerHTML='';closeArchFile();toast('The architecture file could not be built: '+e.message,true);return;}
+  host.innerHTML='';const root=host.shadowRoot||host.attachShadow({mode:'open'});
+  root.innerHTML=`<style>${ARCH_CSS}:host{display:block}.af{box-shadow:0 1px 6px rgba(0,0,0,.25);margin:0 auto 24px}</style>${ARCHF.body}`;
+  root.querySelectorAll('.toc a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();const t=root.getElementById(a.getAttribute('href').slice(1));if(t)t.scrollIntoView({behavior:reduceMotion?'auto':'smooth'});}));
+  host.scrollTop=0;
+}
+function closeArchFile(){$('#archf').hidden=true;if($('#plan').hidden)document.body.classList.remove('has-plan');const h=$('#archView');if(h.shadowRoot)h.shadowRoot.innerHTML='';ARCHF=null;}
 
 /* ================= Forms ================= */
 let onSave=null,onCancel=null;
@@ -1637,6 +1841,7 @@ det.addEventListener('click',async e=>{
     b.disabled=true;const del=det._del;onSave=null;try{await del.run();}catch(err){b.disabled=false;}return;}
   if(q('[data-open]')){enterSite(siteById[q('[data-open]').dataset.open]);return;}
   if(q('[data-export-site]')){exportSite(siteById[q('[data-export-site]').dataset.exportSite]);return;}
+  if(q('[data-arch-site]')){const s=siteById[q('[data-arch-site]').dataset.archSite];if(s){enterSite(s);openArchFile();}return;}
   if(q('[data-edit-site]')){siteForm(siteById[q('[data-edit-site]').dataset.editSite]);return;}
   if(q('[data-new-wan]')){wanForm(null,q('[data-new-wan]').dataset.newWan);return;}
   if(q('[data-edit-wan]')){wanForm(WAN.find(w=>w.id===q('[data-edit-wan]').dataset.editWan));return;}
@@ -2894,6 +3099,7 @@ function enterSite(s){
   setSite(s);closeDet();flatFitFor=null;showFlatUI();renderVlanList();buildScene();layout();refresh();renderCart();syncUI();setViewNow();renderEmpty();
 }
 function backToOverview(){
+  if(!$('#archf').hidden)closeArchFile();
   if(state.arrange)setArrange(false);
   const id=state.siteId;state.view='overview';state.selId=null;state.siteId=null;
   showFlatUI();buildOverview();renderSiteList();renderCart();setViewNow();
@@ -3089,6 +3295,11 @@ $('#portsBtn').addEventListener('click',()=>{
   state.selId=null;if(!state.ports){state.ports=true;$('#optPorts').checked=true;}
   showPorts();refresh();closeCtlMobile(true);
 });
+$('#archBtn').addEventListener('click',()=>{openArchFile();closeCtlMobile(true);});
+$('#archf').addEventListener('click',e=>{const b=e.target.closest('[data-arch]');if(!b)return;
+  if(b.dataset.arch==='close')closeArchFile();
+  else if(b.dataset.arch==='html'&&ARCHF)saveFile(`architecture-file_${fileStem(SITE.name)}_${ARCHF.date}.html`,'text/html;charset=utf-8',ARCHF.html);});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#archf').hidden)closeArchFile();});
 $('#atkBtn').addEventListener('click',()=>{
   if(state.panel==='attack'){closeDet();return;}
   setAttack('internet');closeCtlMobile(true);

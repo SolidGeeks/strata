@@ -115,6 +115,7 @@
       <button class="btn" id="pathBtn" aria-pressed="false"><span>Reachable from Internet</span><span class="mono" id="pathCount"></span></button>
       <button class="btn" id="riskBtn" aria-pressed="false" title="One score per asset and the fixes in order"><span>Risk priorities</span><span class="mono" id="riskCount"></span></button>
       <button class="btn" id="atkBtn" aria-pressed="false" title="Critical assets reachable from the Internet, every path to them, and the blast radius of any asset"><span>Attack paths</span><span class="mono" id="atkCount"></span></button>
+      <button class="btn" id="archBtn" title="One document for this IS: diagrams, flow matrix, filtering, exposure, vulnerabilities, attack paths, contacts, history"><span>Architecture file</span></button>
       <button class="btn" id="resetBtn" data-only3d><span>Reset view</span></button>
     </div>
   </div>
@@ -187,6 +188,16 @@
     </div>
   </div>
   <div class="plan-view" id="planView"></div>
+</section>
+<section id="archf" hidden aria-label="Architecture file">
+  <div class="plan-bar panel">
+    <div class="plan-t"><span class="cap">Architecture file</span><b id="archTitle"></b></div>
+    <div class="plan-tools">
+      <button class="btn small" data-arch="html"><span>Download (HTML, prints to PDF)</span></button>
+      <button class="close" data-arch="close" aria-label="Close the architecture file">×</button>
+    </div>
+  </div>
+  <div class="arch-view" id="archView"></div>
 </section>
 <div id="tip" class="panel" hidden></div>
 <div id="hint" class="panel"></div>

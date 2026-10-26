@@ -468,3 +468,8 @@ li.atk:hover{outline:1px solid var(--accent)}
 .crit-dot{color:var(--crit);font-size:9px;vertical-align:1px}
 button.chip{cursor:pointer;color:var(--fg)}
 button.chip:hover{border-color:var(--accent);color:var(--accent)}
+/* Architecture file */
+#archf{position:fixed;inset:0;z-index:21;background:var(--bg);display:flex;flex-direction:column;padding:12px;gap:10px;box-sizing:border-box}
+.arch-view{flex:1;overflow:auto;background:#e9ece9;border:1px solid var(--line);border-radius:4px;padding:16px 0}
+.archwait{font-family:var(--f-mono);font-size:12px;color:#5e6964;text-align:center;margin:40px 0}
+@media (max-width:760px){#archf{padding:8px}.arch-view{padding:0}}

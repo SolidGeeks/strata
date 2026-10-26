@@ -27,6 +27,8 @@ Follow it on the [milestones page](https://github.com/SolidGeeks/strata/mileston
 - **Blast radius**: pick an asset (in the panel, or *Blast radius* on its sheet) and see everything an attacker holding it could reach, the most likely way to each asset, and the business services hit.
 - A step counts for the highest of: the vulnerabilities of the asset taken over (as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service; a path for the product of its steps. Both lists export as CSV.
 
+- **Architecture file**: one document per IS (*Analysis › Architecture file*, or the IS summary), in the shape audits and security accreditation expect: cover and sign-off table, summary, scope, network diagram, zones and VLANs, applications, asset inventory, flow matrix, the rules each firewall needs, exposure, vulnerabilities and remediation order, attack paths, plans of the exposed and critical assets, incident contacts, change history and method. *Download* saves it as one HTML file, with no outside resource, that prints to A4 PDF from the browser.
+
 ## New in v0.6: business views and risk priorities
 
 - **Three points of view** on an IS, switched at the top: **Physical** (the 3D model and the 2D diagram), **Application** (one box per application, with the assets it runs on and the flows between applications) and **Business**.
