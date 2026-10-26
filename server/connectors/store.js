@@ -140,9 +140,11 @@ export function createStore({ registryUrl, uploads, installedDir, strataVersion,
     try {
       for (const f of files) {
         const to = path.join(tmp, f.path);
-        if (!to.startsWith(tmp + path.sep)) throw new ConnectorError(`Unsafe path in the package: ${f.path}`);
-        fs.mkdirSync(path.dirname(to), { recursive: true, mode: 0o755 });
-        fs.writeFileSync(to, f.data, { mode: 0o644 });
+        if (!to.startsWith(tmp + path.sep) || f.path.includes('\0')) throw new ConnectorError(`Unsafe path in the package: ${f.path}`);
+        try {
+          fs.mkdirSync(path.dirname(to), { recursive: true, mode: 0o755 });
+          fs.writeFileSync(to, f.data, { mode: 0o644, flag: 'wx' });
+        } catch (e) { throw new ConnectorError(`The package cannot be unpacked (${f.path}: ${e.code || 'error'}).`); }
       }
       const r = readModule(fs.realpathSync(tmp), 'installed', { strataVersion });
       if (!r.ok) throw new ConnectorError(`This module cannot be installed: ${r.error}.`);
@@ -153,7 +155,8 @@ export function createStore({ registryUrl, uploads, installedDir, strataVersion,
       if (connectors.isRunning(m.id)) throw new ConnectorError(`${m.name} is running: try again when it is done.`);
       const dest = path.join(installedDir, m.id), old = path.join(installedDir, `.old-${m.id}-${Date.now()}`);
       if (fs.existsSync(dest)) fs.renameSync(dest, old);
-      fs.renameSync(tmp, dest);
+      try { fs.renameSync(tmp, dest); }
+      catch (e) { if (fs.existsSync(old)) fs.renameSync(old, dest); throw new ConnectorError(`The module could not be put in place (${e.code || e.message}).`); }
       fs.rmSync(old, { recursive: true, force: true });
       connectors.reload();
       log(`Module ${m.id} ${m.version} installed${other ? ` (was ${other.version})` : ''}.`);

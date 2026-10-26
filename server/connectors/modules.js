@@ -37,7 +37,7 @@ export function compareVersions(a, b) {
 function checkField(f, i) {
   const at = `fields[${i}]`;
   if (!f || typeof f !== 'object' || Array.isArray(f)) throw new Error(`${at} is not an object`);
-  if (!str(f.k, 40) || !KEY_RE.test(f.k)) throw new Error(`${at}.k must be a setting name (letters, digits, _)`);
+  if (!str(f.k, 40) || !KEY_RE.test(f.k) || f.k in Object.prototype) throw new Error(`${at}.k must be a setting name (letters, digits, _), not a built-in name like toString`);
   if (COMMON_KEYS.includes(f.k)) throw new Error(`${at}.k: “${f.k}” is a setting every module already has`);
   if (!str(f.label, 200) || !f.label) throw new Error(`${at}.label is missing`);
   const type = f.type ?? 'string';
@@ -137,7 +137,8 @@ export function discover({ providedDir, installedDir, strataVersion }) {
     try { names = fs.readdirSync(root, { withFileTypes: true }).filter(d => (d.isDirectory() || d.isSymbolicLink()) && !d.name.startsWith('.')).map(d => d.name).sort(); }
     catch (e) { if (e.code !== 'ENOENT') problems.push({ origin, folder: root, error: e.message }); continue; }
     for (const name of names) {
-      const dir = fs.realpathSync(path.join(root, name));
+      let dir;
+      try { dir = fs.realpathSync(path.join(root, name)); } catch (e) { problems.push({ origin, folder: name, error: `cannot be read (${e.code || e.message})` }); continue; }
       const r = readModule(dir, origin, { strataVersion });
       if (!r.ok) { problems.push({ origin, folder: name, error: r.error }); continue; }
       if (modules.has(r.module.id)) { problems.push({ origin, folder: name, error: `the id “${r.module.id}” is already taken (${modules.get(r.module.id).origin} module)` }); continue; }

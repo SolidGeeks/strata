@@ -20,5 +20,6 @@ process.once('message', async ({ op, main, cfg, state, file }) => {
     const expected = e?.name === 'ConnectorError' || e instanceof sdk.ConnectorError;
     await send({ ok: false, expected, error: String(e?.message || e).slice(0, 2000), stack: expected ? undefined : String(e?.stack || '').slice(0, 4000) });
   }
-  process.disconnect();
+  // whatever the module left open (a timer, a socket), its work is done
+  process.exit(0);
 });

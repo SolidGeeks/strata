@@ -81,7 +81,7 @@ A setting (`fields[]`):
 
 | Key | Meaning |
 |---|---|
-| `k` | Its name in `cfg` (letters, digits, `_`). `enabled`, `everyHours`, `tlsInsecure`, `tlsCa` and `sites` are reserved: every module already has them. |
+| `k` | Its name in `cfg` (letters, digits, `_`; not a built-in JavaScript name such as `toString`). `enabled`, `everyHours`, `tlsInsecure`, `tlsCa` and `sites` are reserved: every module already has them. |
 | `label`, `help`, `placeholder` | Text of the form. |
 | `type` | `string` (default), `number`, `bool`, `select` and `multi` (with `options: [[value, label], …]`), `site` (an IS of the map), `asset` (an asset of the IS chosen in the `site` setting), `sites` (several IS), `rules` and `text` (several lines). |
 | `default` | Its value until an administrator sets one. |
@@ -127,7 +127,9 @@ connection*. `run(cfg, ctx)` reads and returns `{proposals, summary, report}`:
 
 - `proposals`: one per IS at most, `{siteId, title, description, changes}`. `changes` is
   `{si: {id: document}, assets: {id: document}}` with **whole documents** (the asset as it should be,
-  not a patch; `null` deletes it), and optionally `wan` or `services` (whole lists). While a proposal of
+  not a patch; `null` deletes it). A proposal stays within its IS: Strata keeps the document of that IS
+  and the assets that are, or will be, in it, and leaves out anything else (other IS, the links between
+  IS, the common catalogue of services). While a proposal of
   the module for that IS is still open, the next run refreshes it instead of opening another one. A
   document that only differs by its `ext` link is left out.
 - `summary`: one sentence, shown in the list of runs.
@@ -189,7 +191,8 @@ Each test or run happens in a **separate Node.js process**, started for that run
 - It receives its own settings, and the map only if its manifest asks for it.
 - It is stopped after `CONNECTOR_TIMEOUT_MINUTES` (30 by default; 2 minutes for a test) and limited to
   512 MB of memory.
-- Its answer is checked: proposals for an IS that does not exist are dropped, and malformed ids fail the run.
+- Its answer is checked: proposals for an IS that does not exist are dropped, each proposal is kept
+  within its IS, and a proposal with malformed ids is refused (listed in the run's details).
 
 The network is **not** restricted: a module that reads the map could send it elsewhere. The Node.js
 permission model also guards against mistakes, not against code written to escape it. So the real

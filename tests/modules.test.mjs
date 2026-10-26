@@ -63,6 +63,17 @@ before(async () => {
     }`);
   mod('slow', { id: 'slow', name: 'Slow' }, 'export function test() { return new Promise(() => setInterval(() => {}, 1000)); }');
   mod('crash', { id: 'crash', name: 'Crash' }, 'export function test() { process.exit(3); }');
+  // answers, but leaves a timer running; its proposals reach past its own IS
+  mod('sloppy', { id: 'sloppy', name: 'Sloppy', permissions: { map: true } }, `
+    export function test() { setInterval(() => {}, 1000); return 'answered'; }
+    export function run(cfg, { state }) {
+      setInterval(() => {}, 1000);
+      return { summary: 'done', proposals: [{ siteId: 'lyon', title: 'Sloppy', changes: {
+        si: { lyon: { ...state.si.lyon, name: 'Lyon (sloppy)' }, paris: { name: 'Paris' } },
+        assets: { 'web-01': { ...state.assets['web-01'], os: 'sloppy' }, 'elsewhere': { site: 'paris', name: 'x' }, 'app-erp': { ...state.assets['app-erp'], site: 'paris' } },
+        wan: [{ a: 'lyon', b: 'paris' }], services: [] } }] };
+    }`);
+  fs.symlinkSync(join(tmp, 'nowhere'), join(modulesDir, 'dangling'));
   mod('broken', { id: 'Not An Id', name: 'Broken' }, 'export function test() {}');
   mod('taken', { id: 'glpi', name: 'Fake GLPI' }, 'export function test() {}');
 
@@ -170,6 +181,22 @@ test('a module process cannot read the data files, write, start programs or see 
   assert.deepEqual(seen.settings, ['enabled', 'everyHours', 'tls', 'tlsInsecure']);
 });
 
+test('a module that answers is done at once, and its proposal stays within its IS', async () => {
+  const t0 = Date.now();
+  const t = await api('bob', 'POST', '/api/connectors/sloppy/test', {});
+  assert.equal(t.data.message, 'answered');
+  const r = await api('bob', 'POST', '/api/connectors/sloppy/run', { wait: true });
+  assert.ok(Date.now() - t0 < 2500, 'an open timer held the run');
+  assert.equal(r.data.run.ok, true, r.data.run.error);
+  const p = (await api('bob', 'GET', `/api/proposals/${r.data.run.proposals[0].id}`)).data.proposal;
+  assert.deepEqual(Object.keys(p.changes.si), ['lyon']);
+  assert.deepEqual(Object.keys(p.changes.assets), ['web-01']);
+  assert.equal(p.changes.wan, undefined);
+  assert.equal(p.changes.services, undefined);
+  const problems = (await api('admin', 'GET', '/api/connectors')).data.problems.map(x => x.folder).join(' ');
+  assert.match(problems, /dangling/, 'a broken link is reported, the server still starts');
+});
+
 test('a module that hangs is stopped, one that crashes is reported', async () => {
   const t0 = Date.now();
   const r = await api('bob', 'POST', '/api/connectors/slow/test', {});
@@ -258,6 +285,7 @@ test('package reader and manifest checks', () => {
   assert.throws(() => checkManifest({ ...man, strataModule: 2 }), /strataModule/);
   assert.throws(() => checkManifest({ ...man, main: '../x.mjs' }), /main/);
   assert.throws(() => checkManifest({ ...man, fields: [{ k: 'enabled', label: 'x' }] }), /every module already has/);
+  assert.throws(() => checkManifest({ ...man, fields: [{ k: 'toString', label: 'x' }] }), /built-in name/);
   assert.throws(() => checkManifest({ ...man, permissions: { files: true } }), /permissions/);
   assert.throws(() => checkManifest({ ...man, live: false }), /must import files/);
   assert.throws(() => checkManifest({ ...man, minStrata: '99.0.0' }, { strataVersion: '0.8.0' }), /needs Strata 99/);

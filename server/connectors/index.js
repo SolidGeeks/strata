@@ -26,6 +26,21 @@ function dropLinkOnly(changes, state) {
   }
 }
 
+// A proposal stays within its IS: that IS's document and the assets that are, or would be, in it.
+// Changes to other IS, the links between IS and the common catalogue of services are left out.
+function ownSite(changes, siteId, state) {
+  const out = { si: {}, assets: {} }, isObj = o => !!o && typeof o === 'object' && !Array.isArray(o);
+  if (isObj(changes.si) && Object.hasOwn(changes.si, siteId) && changes.si[siteId] !== null) out.si[siteId] = changes.si[siteId];
+  if (isObj(changes.assets)) for (const [aid, doc] of Object.entries(changes.assets)) {
+    const now = Object.hasOwn(state.assets, aid) ? state.assets[aid] : null;
+    if (now && now.site !== siteId) continue;
+    if (doc !== null && !(isObj(doc) && doc.site === siteId)) continue;
+    if (doc === null && !now) continue;
+    out.assets[aid] = doc;
+  }
+  return out;
+}
+
 // opts: dataDir, providedDir (MODULES_DIR), installedDir (DATA_DIR/modules), strataVersion, timeoutMs,
 // and the server's getState, upsertProposal, log, writeJson, broadcast
 export function createConnectors({ dataDir, providedDir, installedDir, strataVersion, timeoutMs, getState, upsertProposal, log, writeJson, broadcast }) {
@@ -40,7 +55,7 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
   reload();
   const known = id => typeof id === 'string' && MODULES.has(id);
   const mod = id => MODULES.get(id);
-  const running = new Map();
+  const running = new Map(), testing = new Set();
   const save = () => writeJson(FILE, JSON.stringify(store, null, 2)).then(() => { try { fs.chmodSync(FILE, 0o600); } catch { } });
   // the IS filter is common, except for a module that works on one IS it names itself (a "site" setting)
   const fieldsOf = id => { const f = mod(id).fields; return [...f, ...COMMON.filter(c => c.k !== 'sites' || !f.some(x => x.type === 'site'))]; };
@@ -49,7 +64,7 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
   // Settings as a module sees them (defaults filled in, TLS options grouped)
   function effective(id, overrides = {}) {
     const c = cfgOf(id), out = {};
-    for (const f of fieldsOf(id)) out[f.k] = c.settings[f.k] !== undefined && c.settings[f.k] !== '' ? c.settings[f.k] : f.default;
+    for (const f of fieldsOf(id)) { const v = Object.hasOwn(c.settings, f.k) ? c.settings[f.k] : undefined; out[f.k] = v !== undefined && v !== '' ? v : f.default; }
     Object.assign(out, overrides);
     out.tls = { insecure: !!out.tlsInsecure, ca: out.tlsCa && /BEGIN CERTIFICATE/.test(out.tlsCa) ? out.tlsCa : undefined };
     return out;
@@ -59,7 +74,7 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
   const isLive = id => { const m = mod(id); return m.live !== false && isConfigured(id) && m.live.every(k => cfgOf(id).settings[k]); };
   function publicView(id) {
     const c = cfgOf(id), m = mod(id), settings = {};
-    for (const f of fieldsOf(id)) { const v = c.settings[f.k]; settings[f.k] = f.secret ? (v ? MASK : '') : (v === undefined ? (f.default ?? '') : v); }
+    for (const f of fieldsOf(id)) { const v = Object.hasOwn(c.settings, f.k) ? c.settings[f.k] : undefined; settings[f.k] = f.secret ? (v ? MASK : '') : (v === undefined ? (f.default ?? '') : v); }
     return {
       id, name: m.name, what: m.description, badge: m.badge, version: m.version, origin: m.origin, author: m.author, homepage: m.homepage,
       permissions: m.permissions, file: m.file, fields: fieldsOf(id), settings,
@@ -70,7 +85,7 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
     if (!known(id)) throw new ConnectorError('Unknown connector');
     const c = cfgOf(id);
     for (const f of fieldsOf(id)) {
-      if (!(f.k in (body || {}))) continue;
+      if (!body || typeof body !== 'object' || !Object.hasOwn(body, f.k)) continue;
       let v = body[f.k];
       if (f.secret) { if (v === MASK) continue; if (v === '' || v == null) { delete c.settings[f.k]; continue; } }
       if (f.type === 'bool') v = !!v;
@@ -101,7 +116,10 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
   async function test(id) {
     if (!known(id)) throw new ConnectorError('Unknown connector');
     if (!isLive(id)) throw new ConnectorError(mod(id).live === false ? `${mod(id).name} only imports files.` : 'Fill in its settings first.');
-    const r = await runModule(mod(id), 'test', { cfg: effective(id) }, { timeoutMs: Math.min(timeoutMs, 120000), log });
+    testing.add(id);
+    let r;
+    try { r = await runModule(mod(id), 'test', { cfg: effective(id) }, { timeoutMs: Math.min(timeoutMs, 120000), log }); }
+    finally { testing.delete(id); }
     return typeof r === 'string' ? r : r && typeof r.message === 'string' ? r.message : 'Connected.';
   }
   // Starts a run; resolves when it is finished. opts: {by, file: {name, text}, overrides}
@@ -126,18 +144,22 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
         file: opts.file ? { name: fileName, text: String(opts.file.text) } : null,
       }, { timeoutMs, log }) || {};
       if (res.proposals !== undefined && !Array.isArray(res.proposals)) throw new Error('the module answered without a list of proposals');
-      const sites = Array.isArray(cfg.sites) && cfg.sites.length ? new Set(cfg.sites) : null;
+      const sites = Array.isArray(cfg.sites) && cfg.sites.length ? new Set(cfg.sites) : null, rejected = [];
       for (const p of (res.proposals || []).slice(0, 500)) {
         if (!p || typeof p !== 'object' || typeof p.siteId !== 'string' || !Object.hasOwn(state.si, p.siteId)) continue;
         if (sites && !sites.has(p.siteId)) continue;
         if (!p.changes || typeof p.changes !== 'object') continue;
-        dropLinkOnly(p.changes, state);
-        const out = await upsertProposal({ connector: id, connectorName: m.name, by: opts.by, uploadedBy: opts.file ? opts.by : null, siteId: p.siteId, title: String(p.title || `${m.name}: ${state.si[p.siteId].name || p.siteId}`), description: String(p.description || ''), changes: p.changes });
+        const changes = ownSite(p.changes, p.siteId, state);
+        dropLinkOnly(changes, state);
+        let out;
+        try { out = await upsertProposal({ connector: id, connectorName: m.name, by: opts.by, uploadedBy: opts.file ? opts.by : null, siteId: p.siteId, title: String(p.title || `${m.name}: ${state.si[p.siteId].name || p.siteId}`), description: String(p.description || ''), changes }); }
+        catch (e) { log(`Connector ${id}: proposal for ${p.siteId} refused: ${e.message}`); rejected.push(`${state.si[p.siteId].name || p.siteId}: ${e.message}`); continue; }
         if (out) rec.proposals.push({ id: out.id, title: out.title, siteId: p.siteId, refreshed: out.refreshed, unchanged: out.unchanged });
       }
       rec.ok = true;
       rec.summary = typeof res.summary === 'string' ? res.summary.slice(0, 2000) : '';
-      rec.report = res.report && typeof res.report === 'object' ? res.report : null;
+      rec.report = res.report && typeof res.report === 'object' && JSON.stringify(res.report).length <= 64 * 1024 ? res.report : null;
+      if (rejected.length) { rec.report = rec.report || {}; rec.report.warnings = [...(Array.isArray(rec.report.warnings) ? rec.report.warnings : []), ...rejected.map(x => 'Proposal refused: ' + x)].slice(0, 40); }
       if (!rec.proposals.length) rec.summary += (rec.summary ? ' ' : '') + 'The map already matches: no proposal.';
       log(`Connector ${id}: ${rec.summary}`);
     } catch (e) {
@@ -174,7 +196,7 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
     get: id => (known(id) ? publicView(id) : null),
     module: id => (known(id) ? mod(id) : null),
     update, test, run, reload, forget,
-    isRunning: id => running.has(id),
+    isRunning: id => running.has(id) || testing.has(id),
     exists: known,
   };
 }

@@ -12,12 +12,13 @@ import { ConnectorError } from './sdk.js';
 import { CONNECTORS_DIR } from './modules.js';
 
 const HOST = path.join(CONNECTORS_DIR, 'host.js');
-// Node.js 22 calls it --permission; Node.js 20 --experimental-permission, with comma-separated paths
-const STABLE = process.allowedNodeEnvironmentFlags.has('--permission');
+// Node.js 22.13 and later call it --permission, older versions --experimental-permission; one
+// --allow-fs-read per folder either way (comma-separated lists stopped working in Node.js 20.7)
+const FLAG = process.allowedNodeEnvironmentFlags.has('--permission') ? '--permission' : '--experimental-permission';
 const KEEP_ENV = ['TZ', 'LANG', 'LC_ALL', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'];
 
 export function permissionArgs(dirs) {
-  return STABLE ? ['--permission', ...dirs.map(d => `--allow-fs-read=${d}`)] : ['--experimental-permission', `--allow-fs-read=${dirs.join(',')}`];
+  return [FLAG, ...dirs.map(d => `--allow-fs-read=${d}`)];
 }
 
 // op: 'test' | 'run'; payload: {cfg, state, file}; resolves with the module's result
@@ -43,6 +44,8 @@ export function runModule(mod, op, payload, { timeoutMs = 30 * 60000, log = () =
     child.on('message', m => {
       if (m && typeof m.log === 'string') return log(`[${mod.id}] ${m.log}`);
       answer = m;
+      // the answer is in: a timer or a socket the module left open must not hold the run
+      if (m && m.ok) { finish(null, m.result); setTimeout(() => child.kill('SIGKILL'), 1000).unref(); }
     });
     child.on('error', e => finish(new Error(`The ${mod.name} module could not start: ${e.message}`)));
     child.on('exit', code => {
