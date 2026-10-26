@@ -157,7 +157,7 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
   <article class="layer wide" style="--edge:var(--s6)">
     <div class="txt">
       <h3>Fed by the tools you already run</h3>
-      <p>Connectors read your tools on demand or on a schedule. Nothing lands on the map directly: each sync prepares one proposal per site, refreshed in place until someone reviews it. Credentials stay on the server.</p>
+      <p>Connectors read your tools on demand or on a schedule. Nothing lands on the map directly: each sync prepares one proposal per site, refreshed in place until someone reviews it. Credentials stay on the server. Each connector is a module, run in its own restricted process: add more from the module store, or <a href="https://github.com/SolidGeeks/strata/blob/main/MODULES.md">write your own</a>.</p>
     </div>
     <div class="tools">
       <table>
@@ -167,6 +167,9 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
           <tr><th scope="row">GLPI</th><td>computers, network devices, printers, phones, software, technician and group, location</td><td>new and updated assets, applications, incident contacts; the location picks the site</td></tr>
           <tr><th scope="row">phpIPAM</th><td>sections, subnets, VLANs, addresses</td><td>VLANs with their ranges, asset addresses, assets moved to their subnet’s VLAN</td></tr>
           <tr><th scope="row">Palo Alto</th><td>a configuration file, or the XML API of a firewall or Panorama</td><td>flows from every active allow rule, address objects matched to assets, public objects as Internet services</td></tr>
+          <tr><th scope="row">NetBox <small>store</small></th><td>devices, virtual machines, VLANs, prefixes</td><td>VLANs with their ranges, new and completed assets; NetBox sites matched to IS by rules</td></tr>
+          <tr><th scope="row">Nmap <small>store</small></th><td>a scan saved with <code>-oX</code></td><td>hosts with their system and open ports, new hosts typed from their ports</td></tr>
+          <tr><th scope="row">CSV <small>store</small></th><td>a spreadsheet saved as CSV</td><td>new and updated assets of one site</td></tr>
         </tbody>
       </table>
       <figure class="shot"><img src="assets/img/connectors-1200.webp" srcset="assets/img/connectors-1200.webp 1200w, assets/img/connectors.webp 2400w" sizes="(min-width: 1000px) 40vw, 100vw" width="2400" height="1500" alt="The Connectors panel: Cyberwatch and GLPI scheduled, their last runs and the proposals they prepared" loading="lazy"><figcaption>Connectors panel after a sync.</figcaption></figure>
@@ -208,7 +211,7 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
     <a href="https://solidgeeks.github.io/SolidGeeks/"> <img src="https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/footer/solid-geeks-footer.gif" alt="Solid Geeks: open source the world." width="100%"> </a>
   </div>
   <div class="wrap">
-    <p>Strata 0.7.0 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a></p>
+    <p>Strata 0.8.0 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a></p>
     <p>Formerly IS Map 3D. Cyberwatch, GLPI, phpIPAM and Palo Alto Networks are trademarks of their owners; Strata is not affiliated with them.</p>
   </div>
 </footer>

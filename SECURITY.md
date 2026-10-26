@@ -8,7 +8,8 @@ The full process (response within 3 working days, coordinated disclosure, credit
 
 | Version | Supported |
 |---|---|
-| 0.7.x | ✅ |
+| 0.8.x | ✅ |
+| 0.7.x | ❌ |
 | 0.6.x | ❌ |
 | 0.5.x | ❌ |
 | < 0.5 (IS Map 3D) | ❌ |

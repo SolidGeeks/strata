@@ -57,7 +57,7 @@
   </nav>
 
   <article id="content">
-    <h1 class="strata-type"><span class="w">Documentation</span><span class="n">for Strata 0.7.</span></h1>
+    <h1 class="strata-type"><span class="w">Documentation</span><span class="n">for Strata 0.8.</span></h1>
     <p>Strata maps your information systems in 3D: each site is a stack of plates (zones), coloured by VLAN, holding its assets, the flows between them, what they expose, their vulnerabilities and the people to call. It runs on your own server.</p>
 
     <h2 id="install" style="--edge:var(--s7)">Install with Docker</h2>
@@ -68,7 +68,7 @@ cp .env.example .env
 nano .env                         # set EDIT_PASS
 docker compose up -d --build      # builds the image here</code></pre><button class="copy" type="button">Copy</button></div>
     <p>On Windows: <code>copy .env.example .env</code> then <code>notepad .env</code>.</p>
-    <p>Or skip the build: <code>docker compose pull &amp;&amp; docker compose up -d</code> fetches the ready-made image <code>ghcr.io/solidgeeks/strata</code> of the release. Every image is signed; check it before deploying with <code>gh attestation verify oci://ghcr.io/solidgeeks/strata:0.7.0 --owner SolidGeeks</code>, which must print <em>Verification succeeded!</em></p>
+    <p>Or skip the build: <code>docker compose pull &amp;&amp; docker compose up -d</code> fetches the ready-made image <code>ghcr.io/solidgeeks/strata</code> of the release. Every image is signed; check it before deploying with <code>gh attestation verify oci://ghcr.io/solidgeeks/strata:0.8.0 --owner SolidGeeks</code>, which must print <em>Verification succeeded!</em></p>
     <p>Open <code>http://localhost:8080</code> and sign in with <code>EDIT_USER</code> / <code>EDIT_PASS</code>. The map starts empty: <em>Load demo (5 IS)</em> fills it with five sample sites, <em>Delete everything</em> clears it.</p>
     <div class="code"><pre><code>docker compose logs -f strata     # logs
 docker compose restart strata     # restart

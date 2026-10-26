@@ -1,4 +1,4 @@
-# Strata — v0.7
+# Strata — v0.8
 
 [![Release](https://img.shields.io/github/v/release/SolidGeeks/strata)](https://github.com/SolidGeeks/strata/releases) [![License AGPL-3.0](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/license-agpl.svg)](LICENSE) [![Signed releases](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/signed-releases.svg)](#2-quick-start-with-docker) [![Tests](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml)
 
@@ -15,19 +15,20 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 | Milestone | What it brings |
 |---|---|
 | [0.7.0](https://github.com/SolidGeeks/strata/milestone/1) ✅ | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface. Released on 2026-10-26 |
-| [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) | Connector modules and a module store, three.js 0.186 (done, unreleased) |
+| [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) ✅ | Connector modules and a module store, three.js 0.186. Released on 2026-10-26 |
 | [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) | The last breaking changes: IS Map compatibility, pre-releases, an API reference |
 | [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
 
 Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
 
-## Coming in v0.8: connector modules and the module store
+## New in v0.8: connector modules, the module store, three.js 0.186
 
 Connectors are now **modules**: a folder with a manifest (`strata-module.json`: name, settings, what it may reach) and its code. The four connectors that ship with Strata are modules like any other, and anyone can write a new one without touching Strata's code: see **[MODULES.md](MODULES.md)**.
 
 - **Module store** (*Collaboration › Connectors › Module store*, administrators): the modules a registry offers, with what each one reads, installed in one click. The store pins the SHA-256 of each package, so what gets installed is exactly what was reviewed. Three modules to start with: **CSV inventory** (assets of an IS from a spreadsheet), **Nmap scan** (hosts, systems and open ports from `nmap -oX`), both imported by any contributor as a proposal, and **NetBox** (devices, virtual machines, VLANs and prefixes, synced with a read-only token).
 - **Each module runs in its own process**, started for one test or run: it reads its own folder only (not the data files, not the accounts, not the other connectors' settings), cannot write files or start programs, sees none of the server's variables, and is stopped after `CONNECTOR_TIMEOUT_MINUTES`. Whatever it reads still arrives as a proposal an approver reviews.
 - **File imports for any module**: a module says it imports files, which settings can change for one import, and who may do it. The Palo Alto import is now one of them.
+- **three.js 0.186** (from 0.128, 2021) for the 3D view, loaded as JavaScript modules and still served locally: it looks the same, and browsers now need WebGL 2 (Chrome or Edge 80+, Firefox 114+, Safari 15+).
 - **Modules of your own**: a folder in `MODULES_DIR` (a Docker volume, or `services.strata.modules` on NixOS), or a package file when `MODULE_UPLOAD=true`. `scripts/pack-module.mjs` packs a module for the store.
 
 ## New in v0.7: attack paths, architecture files, Nix
@@ -186,7 +187,7 @@ Or use the prebuilt image published with each release (tag `vX.Y.Z`, see the `Re
 Every published image is **signed**: an attestation proves it was built by this repository's `Release` workflow, from the code of the tag. To check it before deploying (you need the [GitHub CLI](https://cli.github.com/)):
 
 ```bash
-gh attestation verify oci://ghcr.io/solidgeeks/strata:0.7.0 --owner SolidGeeks
+gh attestation verify oci://ghcr.io/solidgeeks/strata:0.8.0 --owner SolidGeeks
 ```
 
 The command must print `Verification succeeded!`. If it fails, do not use the image, and report it (see [SECURITY.md](SECURITY.md)). Images older than 0.5.4 are not signed.
@@ -506,7 +507,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 
 ---
 
-## 12. Limits of v0.7
+## 12. Limits of v0.8
 
 - Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
 - Authentication is still Basic Auth (credentials asked by the browser). For SSO (Entra ID, LDAP…), put an authenticating proxy in front and create the same account names.

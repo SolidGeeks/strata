@@ -1,6 +1,6 @@
 {
   "name": "strata",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Strata — self-hosted 3D map of information systems: zones, VLANs, assets, flows, exposure, vulnerabilities and incident contacts.",
   "private": true,
   "license": "AGPL-3.0-or-later",

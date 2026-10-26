@@ -2,7 +2,7 @@
 
 All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.0] - 2026-10-26
 ### Added
 - **Connector modules**: a connector is a folder with a manifest (`strata-module.json`: name, version, settings, file import, the permissions it needs) and its code, `test()` and `run()` returning proposals. The four built-in connectors are now modules too (`server/connectors/builtin`), and new ones need no change to Strata. Guide: `MODULES.md`.
 - **Module store** (*Connectors › Module store*, admin): lists the modules of a registry (`MODULE_REGISTRY`, by default `docs/modules/index.json` of this repository, published on the project site), with what each one reads; installs, updates and removes them in `DATA_DIR/modules`. Each package is checked against the SHA-256 the registry gives. `MODULE_UPLOAD=true` lets admins install a package file; `MODULES_DIR` holds modules provided by the machine's administrator; on NixOS, `services.strata.modules`.
@@ -20,6 +20,11 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 - Each connector test or run happens in a separate Node.js process with the permission model: it reads its module folder and the SDK only, cannot write files or start programs, gets none of the server's environment, its own settings only, and the map only if its manifest asks for it; it is stopped after `CONNECTOR_TIMEOUT_MINUTES` (30) and limited to 512 MB.
 - The Palo Alto configuration import is a generic file import: the same form for every module that imports files. Scripts posting `{"xml", "fileName"}` keep working.
 - `scripts/connector-sim.mjs` listens on 127.0.0.1 only, on `SIM_PORT` (8099 by default), and simulates NetBox too.
+
+### Upgrading
+- No data migration: connector settings and secrets are kept (the built-in connectors keep their ids), and so are scripts calling the connector API.
+- Users need a browser with WebGL 2 (see *Changed*).
+- To keep away from the module store, set `MODULE_REGISTRY=off`.
 
 ## [0.7.0] - 2026-10-26
 ### Added
@@ -146,6 +151,7 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 ## [0.1.0]
 - First release: 3D map of IS, zones, VLANs, assets, flows, exposure, vulnerabilities and incident contacts.
 
+[0.8.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.8.0
 [0.7.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.7.0
 [0.6.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.6.0
 [0.5.5]: https://github.com/SolidGeeks/strata/releases/tag/v0.5.5
