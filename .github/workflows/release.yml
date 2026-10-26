@@ -1,5 +1,6 @@
 # Publishes ghcr.io/solidgeeks/strata:<version> and :latest, with a signed build provenance
-# attestation, and a GitHub release, on every vX.Y.Z tag.
+# attestation, and a GitHub release, on every vX.Y.Z tag: pushed with git, or created by publishing
+# a release from the GitHub web page (Releases › Draft a new release › new tag on main).
 # Verify an image: gh attestation verify oci://ghcr.io/solidgeeks/strata:<version> --owner SolidGeeks
 name: Release
 
@@ -54,7 +55,11 @@ jobs:
           subject-name: ghcr.io/solidgeeks/strata
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+      # The release may already exist: publishing one from the GitHub web page creates its tag,
+      # which runs this workflow
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "Strata $GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: |
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --title "Strata $GITHUB_REF_NAME" --generate-notes --verify-tag
