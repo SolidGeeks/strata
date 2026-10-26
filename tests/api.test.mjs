@@ -91,8 +91,9 @@ test('CSRF: a write without the JSON content type or X-Requested-With is refused
   assert.equal(noHeader.status, 400);
   const wrongHeader = await admin.req('PUT', '/api/si/csrf', '{"name":"x"}', { 'X-Requested-With': 'XMLHttpRequest' });
   assert.equal(wrongHeader.status, 400);
-  const legacy = await admin.req('PUT', '/api/si/csrf-legacy', '{"name":"x"}', { 'X-Requested-With': 'is-map' });
-  assert.equal(legacy.status, 200, 'scripts written for IS Map keep working');
+  // only "strata": the header of the former name (IS Map 3D) is refused since 0.9.0
+  const old = await admin.req('PUT', '/api/si/csrf', '{"name":"x"}', { 'X-Requested-With': 'is-map' });
+  assert.equal(old.status, 400);
   assert.equal((await admin.get('/api/si/csrf')).status, 404, 'nothing was written');
 });
 

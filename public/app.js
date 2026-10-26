@@ -334,7 +334,7 @@ function buildDemo(){
    'api'   : served by the Strata server (shared data, live updates over SSE)
    'local' : page opened on its own; data kept in this browser only */
 let raw={si:{},assets:{},wan:[],services:[]};
-const LS_KEY='is-map-v1'; // kept from the IS Map days, so maps saved in the browser are still found
+const LS_KEY='strata-v1';
 // The live map, then what is shown: the live map, a draft applied over it, a proposal under review,
 // or an older version (read-only)
 let liveRaw=raw;
@@ -2802,7 +2802,7 @@ function proposalForm(){
     ${opts.length?fSel('fSite','IS concerned',opts,state.siteId||opts[0][0]):''}
     <fieldset><legend>Start from</legend>
       <label class="chk plain"><input type="radio" name="fFrom" value="editor" checked> The current map: I will make the changes in the editor (2D diagram, sheets)</label>
-      <label class="chk plain"><input type="radio" name="fFrom" value="file"> A file: a Strata (or IS Map) JSON export (whole map or one IS) edited elsewhere</label>
+      <label class="chk plain"><input type="radio" name="fFrom" value="file"> A file: a Strata JSON export (whole map or one IS) edited elsewhere</label>
       <input type="file" id="fFile" accept="application/json,.json" hidden></fieldset>`,
   async()=>{
     const title=$('#fTitle').value.trim();if(!title)return formErr('Give the proposal a title.','fTitle');

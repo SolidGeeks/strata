@@ -4,8 +4,6 @@
 
 Strata is a self-hosted 3D map of your information systems (IS): zones, VLANs, low-poly assets, inbound and outbound flows, port exposure (Internet, inter-VLAN, intra-VLAN), vulnerabilities and incident contacts. Website and documentation: **https://solidgeeks.github.io/strata/**
 
-*Formerly IS Map 3D.*
-
 **Website and documentation:** the `docs/` folder holds the GitHub Pages site, with the scroll-driven presentation film. To publish it: *Settings › Pages › Build and deployment › Deploy from a branch*, branch `main`, folder `/docs`. The film's source code is in `media/reel/`.
 
 ## Roadmap
@@ -16,7 +14,7 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 |---|---|
 | [0.7.0](https://github.com/SolidGeeks/strata/milestone/1) ✅ | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface. Released on 2026-10-26 |
 | [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) ✅ | Connector modules and a module store, three.js 0.186. Released on 2026-10-26 |
-| [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) | The last breaking changes: IS Map compatibility, pre-releases, an API reference |
+| [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) | The last breaking changes: single sign-on, pre-releases, an API reference, the old product name removed |
 | [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
 
 Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
@@ -55,15 +53,6 @@ Connectors are now **modules**: a folder with a manifest (`strata-module.json`: 
 ## Night mode (v0.5.2)
 
 *Display › Theme*: **Auto** follows the system's light or dark setting (the default), **Day** and **Night** force one. Keyboard shortcut: **N** switches between day and night. The choice is remembered in the browser. The 3D view, the 2D diagram and the panels follow the theme; exported architecture plans (PNG/SVG) stay on a light background, for documentation.
-
-## New name (v0.5.1)
-
-IS Map 3D is now called **Strata**, for the layers of plates that stack zones and VLANs. Nothing changes in the data: IS Map exports and backups import as they are, scripts that still send `X-Requested-With: is-map` keep working, and the map saved in the browser is found again.
-
-**Upgrading an existing IS Map install:**
-
-- **Docker:** the service is now called `strata` and the data volume `strata-data`. To keep your data, add the old volume's name to `.env` (`docker volume ls`, usually `is-map_ismap-data`): `DATA_VOLUME=is-map_ismap-data`. Then run `docker compose down --remove-orphans && docker compose up -d --build`. Commands become `docker compose logs -f strata`, `docker compose exec strata …`.
-- **systemd:** the new unit is `deploy/strata.service` (folders `/opt/strata`, `/var/lib/strata`, `/etc/strata.env`). You can also keep your old `is-map.service` unit and its paths: only the names change.
 
 ## New in v0.5: connectors
 
@@ -112,7 +101,7 @@ To try it without plugging in your tools: load the demo, run `node scripts/conne
   - The approver opens the proposal from *Proposals*: the map shows with the changes applied and highlighted (green: added, orange: changed, dotted red: flow removed), with the detailed list of changes. They comment, then *Approve and publish* (the proposal becomes a version in the history) or *Reject* (the author can rework it).
   - Four-eyes rule: you cannot approve your own proposal (unless `ALLOW_SELF_APPROVAL=true`).
   - If the map changed in the meantime on the same items, the approver is warned and chooses whether to publish anyway.
-  - **From a file:** *New proposal › A file* accepts a Strata (or IS Map) JSON export (the whole map, or a single IS exported with *Export this IS (JSON)* from the IS sheet). The differences with the map become the content of the proposal.
+  - **From a file:** *New proposal › A file* accepts a Strata JSON export (the whole map, or a single IS exported with *Export this IS (JSON)* from the IS sheet). The differences with the map become the content of the proposal.
 - **Internet services:** instead of a single "Internet" cloud, you describe the services allowed (ESET update servers, Ubuntu repositories, Windows Update, NTP, SaaS…) with their FQDNs/IPs and ports. They are **shared by every IS** (common catalogue, overview) or **specific to one IS** (*+ This IS* button). Flows can have a service as their source or destination: they appear next to the cloud in 3D, at the top of the 2D diagram, in architecture plans, and the firewall rules export uses their FQDNs as the destination address.
 
 ## New in v0.3
@@ -234,7 +223,6 @@ By default, the port only listens on the machine itself (`127.0.0.1:8080`). To o
 | `MODULES_DIR` | — | A folder of connector modules you provide yourself, one sub-folder each ([MODULES.md](MODULES.md)). |
 | `CONNECTOR_TIMEOUT_MINUTES` | `30` | Longest a connector run may take before it is stopped (2 minutes at most for a test). |
 | `SOURCE_URL` | `https://github.com/SolidGeeks/strata` | The app's *Source code* link (AGPL): point it at your fork if you modify the code. |
-| `DATA_VOLUME` | `strata-data` | Name of the Docker data volume (to take over an IS Map install, see above). |
 
 After changing `.env`, apply it with `docker compose up -d`.
 
@@ -408,13 +396,13 @@ The format is the same: IS, zones, VLANs, assets, contacts, flows and links betw
 docker compose up -d --build
 ```
 
-The data lives in the Docker volume and is not touched by the rebuild.
+The data lives in the Docker volume and is not touched by the rebuild. Before upgrading, read the *Upgrading* notes of the [CHANGELOG](CHANGELOG.md) for every version you skip.
 
 ---
 
 ## 9. API (for automation)
 
-Every route needs the same credentials as the interface, with the rights of the account's role (direct writes need `approver`). Writes require the headers `Content-Type: application/json` and `X-Requested-With: strata` (`is-map` is still accepted). A script can group several writes into a single history entry with the headers `X-Batch: <id>` and `X-Batch-Label: <URL-encoded label>`. To have a tool propose instead of write, give it a `contributor` account and use `POST /api/proposals` with `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (a document set to `null` = deletion).
+Every route needs the same credentials as the interface, with the rights of the account's role (direct writes need `approver`). Writes require the headers `Content-Type: application/json` and `X-Requested-With: strata`. A script can group several writes into a single history entry with the headers `X-Batch: <id>` and `X-Batch-Label: <URL-encoded label>`. To have a tool propose instead of write, give it a `contributor` account and use `POST /api/proposals` with `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (a document set to `null` = deletion).
 
 | Method and route | What it does |
 |---|---|

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Strata — self-hosted server (formerly IS Map 3D).
+// Strata — self-hosted server.
 // Zero dependencies: Node.js >= 20. Serves the web app and a small JSON API, stores the map in one JSON
 // file, keeps a version history (rollback), named accounts with roles, and proposals that an approver
 // reviews before they reach the map. Live updates go out over Server-Sent Events.
@@ -433,7 +433,7 @@ async function serveStatic(req, res, urlPath) {
 /* ---------------- API ---------------- */
 async function api(req, res, parts, url, auth) {
   const method = req.method, write = method !== 'GET' && method !== 'HEAD';
-  if (write && (!(req.headers['content-type'] || '').startsWith('application/json') || !['strata', 'is-map'].includes(req.headers['x-requested-with'])))
+  if (write && (!(req.headers['content-type'] || '').startsWith('application/json') || req.headers['x-requested-with'] !== 'strata'))
     return fail(res, 400, 'Missing JSON content type or X-Requested-With header'); // blocks cross-site form posts
   const [r1, id, r3] = parts;
   const ok = rev => send(res, 200, { ok: true, rev: rev ?? state.rev });

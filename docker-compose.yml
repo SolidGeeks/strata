@@ -32,9 +32,7 @@ services:
       - caddy-config:/config
 
 volumes:
-  # Coming from IS Map (0.5.0 or older)? Put DATA_VOLUME=is-map_ismap-data in .env to keep your data
-  # (check the exact name with: docker volume ls).
   strata-data:
-    name: ${DATA_VOLUME:-strata-data}
+    name: strata-data
   caddy-data:
   caddy-config:

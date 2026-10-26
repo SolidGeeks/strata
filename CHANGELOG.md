@@ -1,6 +1,19 @@
 # Changelog
 
-All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Versioning](https://semver.org/).
+All notable changes to Strata. Versions follow [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+### Removed
+- **Everything left from the IS Map 3D name**: Strata is the only name.
+  - `X-Requested-With: is-map` is refused: scripts must send `X-Requested-With: strata`.
+  - The map kept in the browser (the app opened without its server) is saved under `strata-v1`: a map saved by an older version is not found again.
+  - `DATA_VOLUME` is gone: the Docker data volume is always `strata-data`.
+
+### Upgrading
+- Scripts that send `X-Requested-With: is-map`: send `strata` instead.
+- A map kept in the browser only: before upgrading, open it with the version you have and *Export JSON*, then import the file.
+- `DATA_VOLUME` in your `.env`: move the data into `strata-data` before upgrading, then remove the line:
+  `docker compose down && docker volume create strata-data && docker run --rm -v <old volume>:/from -v strata-data:/to alpine cp -a /from/. /to/` (the old volume name is the value of `DATA_VOLUME`; `docker volume ls` lists them). Keep the old volume until the new install is checked.
 
 ## [0.8.0] - 2026-10-26
 ### Added
