@@ -15,8 +15,13 @@ function copy(src, dest) {
 }
 
 fs.rmSync(OUT, { recursive: true, force: true });
-copy(path.join(NM, 'three/build/three.min.js'), path.join(OUT, 'three.min.js'));
-copy(path.join(NM, 'three/examples/js/controls/OrbitControls.js'), path.join(OUT, 'OrbitControls.js'));
+// three.js as ES modules: the app imports three.module.js (which imports three.core.js) and the orbit
+// controls, whose bare "three" import is pointed at the copy next to it (no import map, no bundler)
+copy(path.join(NM, 'three/build/three.module.js'), path.join(OUT, 'three.module.js'));
+copy(path.join(NM, 'three/build/three.core.js'), path.join(OUT, 'three.core.js'));
+const orbit = fs.readFileSync(path.join(NM, 'three/examples/jsm/controls/OrbitControls.js'), 'utf8');
+if (!/from 'three';/.test(orbit)) throw new Error('OrbitControls.js no longer imports from "three": check scripts/vendor.mjs');
+fs.writeFileSync(path.join(OUT, 'OrbitControls.js'), orbit.replace(/from 'three';/g, "from './three.module.js';"));
 copy(path.join(NM, 'three/LICENSE'), path.join(OUT, 'LICENSE-three.txt'));
 
 const fonts = {

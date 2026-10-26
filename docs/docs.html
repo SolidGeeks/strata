@@ -347,6 +347,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
       <thead><tr><th scope="col">Symptom</th><th scope="col">What to check</th></tr></thead>
       <tbody>
         <tr><td>Blank page, no 3D</td><td><code>public/vendor/</code> is missing: rebuild with <code>docker compose up -d --build</code> (with npm registry access) or run <code>npm run setup</code>.</td></tr>
+        <tr><td>Nothing in 3D, the rest works</td><td>The browser lacks WebGL 2 or JavaScript modules: use Chrome or Edge 80+, Firefox 114+ or Safari 15+, with hardware acceleration on.</td></tr>
         <tr><td>“This browser only” badge</td><td>The page cannot reach the API: it was opened as a local file, or the proxy blocks <code>/api/</code>.</td></tr>
         <tr><td>Others see changes only after reloading</td><td>The proxy buffers <code>/api/events</code>: see <a href="#https">your own reverse proxy</a>.</td></tr>
         <tr><td>“You have read-only access”</td><td>You are signed in as a viewer, or <code>READ_ONLY=true</code>.</td></tr>

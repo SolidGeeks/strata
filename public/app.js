@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-(function(){
+(async function(){
 'use strict';
-// The 3D libraries are copied into public/vendor by "npm run setup" or the Docker build
-if(typeof THREE==='undefined'||!THREE.OrbitControls){
+// three.js and its orbit controls, ES modules copied into public/vendor by "npm run setup" or the Docker build
+let THREE,OrbitControls;
+try{THREE=await import('./vendor/three.module.js');({OrbitControls}=await import('./vendor/OrbitControls.js'));}
+catch(e){
+  console.error(e);
   document.body.innerHTML='<main style="max-width:560px;margin:15vh auto;padding:0 16px;font:15px/1.5 system-ui,sans-serif"><h1 style="font-size:22px">Strata cannot start</h1><p>The 3D library is missing from <code>public/vendor</code>. Run <code>npm run setup</code>, or rebuild the container with <code>docker compose up -d --build</code>, while the machine can reach the npm registry.</p></main>';
   return;
 }
@@ -692,11 +695,13 @@ $('#sevSeg').innerHTML=SEV_KEYS.map((k,i)=>`<button data-sev="${i}" aria-pressed
 /* ================= Three.js ================= */
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;
+// Colours as three.js 0.128 rendered them: the palette's values go to the screen unconverted
+THREE.ColorManagement.enabled=false;renderer.outputColorSpace=THREE.LinearSRGBColorSpace;
 $('#scene').appendChild(renderer.domElement);
 const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(42,1,0.1,700);
-const controls=new THREE.OrbitControls(camera,renderer.domElement);
+const controls=new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;controls.dampingFactor=0.08;controls.maxPolarAngle=Math.PI*0.47;controls.minDistance=8;controls.maxDistance=260;controls.autoRotateSpeed=0.45;
 // Left button orbits; the middle button (or the right one) moves the view across the screen, left, right,
 // up and down, so the model need not stay centred on one point. The wheel zooms; on a touch screen,
@@ -769,8 +774,9 @@ function buildBase(spanX,spanZ){
   while(scene.children.length)scene.remove(scene.children[0]);
   pickables=[];ANIM=[];
   const BG=css('--bg');scene.background=new THREE.Color(BG);scene.fog=new THREE.Fog(BG,Math.max(90,spanX*1.3),Math.max(200,spanX*3));
-  scene.add(new THREE.HemisphereLight(0xffffff,0x8a8f8c,parseFloat(css('--sky'))||0.6));
-  sun=new THREE.DirectionalLight(0xffffff,parseFloat(css('--sun'))||1);
+  // three.js now uses physical light units: ×π gives the brightness the theme values were tuned for
+  scene.add(new THREE.HemisphereLight(0xffffff,0x8a8f8c,(parseFloat(css('--sky'))||0.6)*Math.PI));
+  sun=new THREE.DirectionalLight(0xffffff,(parseFloat(css('--sun'))||1)*Math.PI);
   sun.position.set(-26,80,34);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
   const sb=Math.max(42,Math.max(spanX,spanZ)/2+12);
   Object.assign(sun.shadow.camera,{left:-sb,right:sb,top:sb,bottom:-sb,near:1,far:280});sun.shadow.bias=-0.0006;sun.shadow.normalBias=0.02;
@@ -3436,9 +3442,9 @@ new MutationObserver(rebuildTheme).observe(document.documentElement,{attributes:
 /* ================= Loop ================= */
 function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();}
 addEventListener('resize',resize);
-const clock=new THREE.Clock();
-function tick(){
-  const dt=Math.min(clock.getDelta(),0.05);
+const timer=new THREE.Timer();
+function tick(t){
+  timer.update(t);const dt=Math.min(timer.getDelta(),0.05);
   if(fly){const k=Math.min(1,(performance.now()-fly.t0)/fly.dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
     controls.target.lerpVectors(fly.fromT,fly.toT,e);camera.position.lerpVectors(fly.fromC,fly.toC,e);if(k>=1)fly=null;}
   if(!reduceMotion)ANIM.forEach(o=>{if(!o.tube.visible)return;o.parts.forEach(p=>{if(!p.visible)return;p.userData.t=(p.userData.t+dt*o.speed)%1;p.position.copy(o.curve.getPoint(p.userData.t));});});

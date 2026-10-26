@@ -21,7 +21,3 @@ updates:
         update-types: ["minor", "patch"]
     commit-message:
       prefix: deps
-    ignore:
-      # three.js stays on 0.128: Strata loads examples/js/controls/OrbitControls.js and build/three.min.js,
-      # which later releases removed. Moving on means porting the app to ES modules, not bumping a version.
-      - dependency-name: three

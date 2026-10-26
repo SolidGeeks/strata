@@ -15,7 +15,7 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 | Milestone | What it brings |
 |---|---|
 | [0.7.0](https://github.com/SolidGeeks/strata/milestone/1) ✅ | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface. Released on 2026-10-26 |
-| [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) | Connector modules and a module store (done, unreleased); a modern three.js, or a documented decision to stay on 0.128 |
+| [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) | Connector modules and a module store, three.js 0.186 (done, unreleased) |
 | [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) | The last breaking changes: IS Map compatibility, pre-releases, an API reference |
 | [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
 
@@ -164,9 +164,9 @@ One of these two options:
 - **Node.js 20 or later** (`node --version`);
 - or **Nix** with flakes, or **NixOS** (section 5, *Nix and NixOS*).
 
-The machine needs access to the npm registry **once**, during the build, to download three.js 0.128 and the fonts. After that, the app runs without Internet access.
+The machine needs access to the npm registry **once**, during the build, to download three.js and the fonts. After that, the app runs without Internet access.
 
-Users need a recent browser with WebGL (recent Chrome, Edge, Firefox or Safari).
+Users need a browser with WebGL 2 and JavaScript modules: Chrome or Edge 80 and later, Firefox 114 and later, Safari 15 and later (three.js has needed WebGL 2 since 2024).
 
 ---
 
@@ -316,7 +316,7 @@ What the Dockerfile does, step by step, for packagers and other platforms:
 
 | Step | Command | Needs |
 |---|---|---|
-| Install the dependencies | `npm ci` | Node.js 20 or later, npm, the npm registry (`package-lock.json` pins every package: three.js 0.128 and the Archivo and IBM Plex Mono fonts) |
+| Install the dependencies | `npm ci` | Node.js 20 or later, npm, the npm registry (`package-lock.json` pins every package: three.js 0.186 and the Archivo and IBM Plex Mono fonts) |
 | Copy them into the app | `npm run vendor` (`scripts/vendor.mjs`) | writes `public/vendor/` |
 | Test | `npm test` | starts the server on `127.0.0.1` |
 | Run | `node server/server.js` | Node.js only: no npm package at run time, nothing downloaded, no write outside `DATA_DIR` |

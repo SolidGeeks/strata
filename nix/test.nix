@@ -46,7 +46,7 @@ pkgs.testers.runNixOSTest {
     for path, user in [("/", ""), ("/api/state", "-u admin:wrong-pass")]:
         status = machine.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {user} http://127.0.0.1:8080{path}")
         assert status == "401", f"{path} {user or 'without a password'} got {status}"
-    for path in ["/", "/vendor/three.min.js", "/api/state"]:
+    for path in ["/", "/vendor/three.module.js", "/vendor/three.core.js", "/vendor/OrbitControls.js", "/api/state"]:
         machine.succeed(f"curl -fsS -o /dev/null -u admin:test-pass-1234 http://127.0.0.1:8080{path}")
 
     # The data lives in the state directory, owned by the service user

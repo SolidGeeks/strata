@@ -16,6 +16,7 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 - Tests for the modules: the built-in ones against the simulator, what a module process can reach, time limit, store install, checksum, upload, removal; the NixOS VM test runs a provided module under the hardened service.
 
 ### Changed
+- **three.js 0.186** (from 0.128, April 2021): the 3D view loads three.js and its orbit controls as JavaScript modules, still served from `public/vendor` (no CDN, works offline). Colours and lighting are set to look as before, in day and night modes. Browsers need WebGL 2: Chrome or Edge 80+, Firefox 114+, Safari 15+. The vendored files are larger (2.1 MB, unminified: three.js no longer ships a minified build). Dependabot now updates three.js like the other dependencies.
 - Each connector test or run happens in a separate Node.js process with the permission model: it reads its module folder and the SDK only, cannot write files or start programs, gets none of the server's environment, its own settings only, and the map only if its manifest asks for it; it is stopped after `CONNECTOR_TIMEOUT_MINUTES` (30) and limited to 512 MB.
 - The Palo Alto configuration import is a generic file import: the same form for every module that imports files. Scripts posting `{"xml", "fileName"}` keep working.
 - `scripts/connector-sim.mjs` listens on 127.0.0.1 only, on `SIM_PORT` (8099 by default), and simulates NetBox too.

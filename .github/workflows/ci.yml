@@ -53,7 +53,7 @@ jobs:
         run: |
           docker run -d --name strata -p 8080:8080 strata:ci
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/healthz && break; sleep 1; done
-          for f in / /vendor/three.min.js /vendor/OrbitControls.js; do
+          for f in / /vendor/three.module.js /vendor/three.core.js /vendor/OrbitControls.js; do
             code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080$f")
             echo "$f -> $code"; test "$code" = 200
           done
