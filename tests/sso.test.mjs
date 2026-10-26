@@ -39,10 +39,13 @@ before(async () => {
     if (u.pathname === '/.well-known/openid-configuration') return json(200, { issuer: idp, authorization_endpoint: `${idp}/authorize`, token_endpoint: `${idp}/token`, jwks_uri: `${idp}/jwks`, end_session_endpoint: `${idp}/logout` });
     if (u.pathname === '/jwks') return json(200, { keys: [jwk] });
     if (u.pathname === '/authorize') {
-      // signs the person in at once and sends them back with a code
+      // signs the person in at once and sends them back with a code, to the one redirect URI registered
+      // for Strata, as a real provider does
+      const callback = `${base}/auth/oidc/callback`;
+      if (u.searchParams.get('redirect_uri') !== callback || u.searchParams.get('client_id') !== 'strata') return json(400, { error: 'invalid_request' });
       const code = crypto.randomBytes(8).toString('hex');
-      codes.set(code, { nonce: u.searchParams.get('nonce'), challenge: u.searchParams.get('code_challenge'), redirect: u.searchParams.get('redirect_uri'), client: u.searchParams.get('client_id') });
-      res.writeHead(302, { Location: `${u.searchParams.get('redirect_uri')}?code=${code}&state=${u.searchParams.get('state')}` });
+      codes.set(code, { nonce: u.searchParams.get('nonce'), challenge: u.searchParams.get('code_challenge'), redirect: callback });
+      res.writeHead(302, { Location: `${callback}?code=${code}&state=${encodeURIComponent(u.searchParams.get('state') || '')}` });
       return res.end();
     }
     if (u.pathname === '/token' && req.method === 'POST') {
