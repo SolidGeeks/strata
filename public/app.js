@@ -1353,7 +1353,7 @@ function showSite(s){
 // vulnerabilities and attack paths, plans of the exposed and critical assets, contacts, history,
 // method. Built from the map as it is shown; a standalone HTML file, printable to PDF.
 const ARCH_CSS=`
-:root{--ink:#1d2321;--muted:#5e6964;--line:#d5dbd7;--soft:#f2f5f3;--accent:#1f5f8b;--crit:#b3261e;--high:#c25e00;--med:#8a6d00;--low:#2f6f3e;--net:#7a2fa0;--inter:#1f5f8b}
+:root{--ink:#1d2321;--muted:#3d4744;--line:#d5dbd7;--soft:#f2f5f3;--accent:#1f5f8b;--crit:#b3261e;--high:#c25e00;--med:#8a6d00;--low:#2f6f3e;--net:#7a2fa0;--inter:#1f5f8b}
 *{box-sizing:border-box}
 .af{font-family:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:#fff;font-size:10.5pt;line-height:1.45;max-width:210mm;margin:0 auto;padding:18mm 16mm}
 .af h1,.af h2,.af h3{font-family:"Archivo Narrow","Archivo",system-ui,sans-serif;line-height:1.2;text-wrap:balance;margin:0}
@@ -1394,7 +1394,7 @@ const ARCH_CSS=`
 @page{size:A4;margin:14mm 12mm}
 @media print{.af{padding:0;max-width:none}.af h2{margin-top:0}.af .cover{min-height:250mm}}
 .af .ip{white-space:nowrap}
-@media (max-width:640px){.af{padding:18px 16px}.af .figs{grid-template-columns:repeat(2,1fr)}.af .toc{columns:1}.af .meta{grid-template-columns:1fr}.af .scroll{overflow-x:auto}}
+@media (max-width:640px){.af{padding:18px 16px;font-size:15px}.af table{font-size:12.5px}.af .mono,.af code,.af td.m,.af .path{font-size:12px}.af figcaption,.af .note,.af .fig span{font-size:12.5px}.af .t{font-size:11px}.af .figs{grid-template-columns:repeat(2,1fr)}.af .toc{columns:1}.af .meta{grid-template-columns:1fr}.af .scroll{overflow-x:auto}}
 `;
 const afSev=k=>`<span class="t ${k}">${SEV[k].label}</span>`;
 const afExp=k=>`<span class="t x-${k}">${EXP[k].label}</span>`;

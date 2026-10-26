@@ -8,7 +8,7 @@ img{max-width:100%}
 :root{
   color-scheme: light;
   --bg:#d8dbd6; --panel:#f7f7f3; --panel-2:#ecece6; --line:#c2c6c0; --shadow:rgba(28,34,38,.14);
-  --fg:#1b2125; --muted:#5b646a; --accent:#2b5884;
+  --fg:#1b2125; --muted:#454e53; --accent:#2b5884;
   --table:#cdd0cb; --mat:#5e7d6c; --matline:#86a291; --card:#f0eee8; --detail:#3a4148; --thread:#4b5a68;
   --crit:#c4313d; --high:#cc6a22; --med:#b38d14; --low:#3a8763; --none:#89939a;
   --x-net:#8a3fbf; --x-inter:#2a7fa6; --x-intra:#7c8790;
@@ -471,5 +471,5 @@ button.chip:hover{border-color:var(--accent);color:var(--accent)}
 /* Architecture file */
 #archf{position:fixed;inset:0;z-index:21;background:var(--bg);display:flex;flex-direction:column;padding:12px;gap:10px;box-sizing:border-box}
 .arch-view{flex:1;overflow:auto;background:#e9ece9;border:1px solid var(--line);border-radius:4px;padding:16px 0}
-.archwait{font-family:var(--f-mono);font-size:12px;color:#5e6964;text-align:center;margin:40px 0}
+.archwait{font-family:var(--f-mono);font-size:12px;color:#3d4744;text-align:center;margin:40px 0}
 @media (max-width:760px){#archf{padding:8px}.arch-view{padding:0}}
