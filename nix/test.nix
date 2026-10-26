@@ -47,8 +47,9 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test \"$(stat -c %U /var/lib/strata/users.json)\" = strata")
 
     # The account command line, run as the service user, writes accounts the server accepts
+    # (it reloads the accounts file every 5 seconds)
     machine.succeed("runuser -u strata -- env DATA_DIR=/var/lib/strata NEW_PASSWORD=alice-pass-123 ${users} set alice viewer")
-    machine.succeed("curl -fsS -o /dev/null -u alice:alice-pass-123 http://127.0.0.1:8080/api/state")
+    machine.wait_until_succeeds("curl -fsS -o /dev/null -u alice:alice-pass-123 http://127.0.0.1:8080/api/state", timeout=30)
 
     # Not reachable from outside: the module listens on 127.0.0.1 and leaves the firewall closed
     machine.fail("curl -fsS --max-time 3 http://$(hostname -I | cut -d' ' -f1):8080/healthz")
