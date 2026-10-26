@@ -36,8 +36,9 @@ export function ssoConfig(env, secret) {
     defaultRole: ROLES.includes(env.SSO_DEFAULT_ROLE) ? env.SSO_DEFAULT_ROLE : '',
     headerUser: (env.SSO_HEADER_USER || '').toLowerCase(),
     headerGroups: (env.SSO_HEADER_GROUPS || '').toLowerCase(),
+    headerTrust: list(env.SSO_HEADER_TRUST).map(a => a.toLowerCase()),
     publicUrl: String(env.PUBLIC_URL || '').replace(/\/+$/, ''),
-    sessionMs: Math.max(0.1, parseFloat(env.SESSION_HOURS || '12') || 12) * 3600000,
+    sessionMs: Math.max(0.1, parseFloat(env.SESSION_HOURS || '8') || 8) * 3600000,
     localLogin: ['all', 'admins', 'off'].includes(local) ? local : 'all',
   };
 }
@@ -70,13 +71,20 @@ export function verifyJwt(token, jwks) {
   throw new Error(candidates.length ? 'the ID token signature is wrong' : 'no key of the provider matches the ID token');
 }
 
-export function createSso({ config, dataDir, log, writeJson, trustedPeer, userRe }) {
+// opts: config (ssoConfig), dataDir, log, writeJson, userRe; peerAddress(req): the TCP peer's address;
+// localUser(name): the local account of that name, if any
+export function createSso({ config, dataDir, log, writeJson, peerAddress, localUser, userRe }) {
   const C = config;
   const oidc = !!(C.issuer && C.clientId);
   const header = !!C.headerUser;
   if (oidc && !/^https?:\/\//.test(C.publicUrl)) throw new Error('SSO_ISSUER is set: also set PUBLIC_URL, the address users open Strata at (https://strata.example.org)');
+  // the headers are believed from these exact addresses only: a range would let anything in it claim any user
+  if (header && !C.headerTrust.length) throw new Error('SSO_HEADER_USER is set: also set SSO_HEADER_TRUST, the address of the sign-in proxy (127.0.0.1 when it runs on this machine)');
+  for (const a of C.headerTrust) if (!/^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-f:]+$/.test(a) || a.includes('/')) throw new Error(`SSO_HEADER_TRUST: “${a}” is not an address (one address per proxy, no range)`);
   if (C.localLogin !== 'all' && !oidc && !header) throw new Error(`LOCAL_LOGIN=${C.localLogin} needs single sign-on (SSO_ISSUER or SSO_HEADER_USER): nobody could sign in`);
   const secure = C.publicUrl.startsWith('https://');
+  // __Host- cookies cannot be set by another (sub)domain; they need Secure, so over HTTPS only
+  const SESSION = secure ? '__Host-strata_session' : 'strata_session', STATE = secure ? '__Host-strata_oidc' : 'strata_oidc';
   const redirectUri = `${C.publicUrl}/auth/oidc/callback`;
 
   /* ---- roles ---- */
@@ -96,7 +104,7 @@ export function createSso({ config, dataDir, log, writeJson, trustedPeer, userRe
     return '';
   }
   function fromSession(req) {
-    const id = readCookie(req, 'strata_session');
+    const id = readCookie(req, SESSION);
     const s = id && sessions.get(id);
     if (!s || s.exp < Date.now()) { if (s) sessions.delete(id); return null; }
     return { user: s.user, role: s.role, via: 'sso', sessionId: id };
@@ -104,17 +112,20 @@ export function createSso({ config, dataDir, log, writeJson, trustedPeer, userRe
 
   /* ---- trusted proxy headers ---- */
   function fromHeaders(req) {
-    if (!header || !trustedPeer(req)) return null;
-    const user = String(req.headers[C.headerUser] || '').trim();
+    if (!header || !C.headerTrust.includes(peerAddress(req))) return null;
+    const raw = req.headers[C.headerUser];
+    if (Array.isArray(raw)) return { denied: 'The sign-in proxy sent the user header twice.' };
+    const user = String(raw || '').trim();
     if (!user) return null;
-    if (!userRe.test(user)) return { denied: `The proxy gave a user name Strata does not accept: ${user.slice(0, 64)}` };
+    if (!userRe.test(user)) return { denied: 'The sign-in proxy gave a user name Strata does not accept.' };
+    if (localUser(user)) return { denied: `“${user}” is also a local account: rename one of them.` };
     const groups = C.headerGroups ? String(req.headers[C.headerGroups] || '').split(/[,;|]/).map(s => s.trim()).filter(Boolean) : [];
     const role = roleOf(groups);
     return role ? { user, role, via: 'header' } : { denied: `${user} is in no group that gives access to Strata.` };
   }
 
   /* ---- OpenID Connect ---- */
-  let disco = null, jwks = null;
+  let disco = null, jwks = null, discoFail = 0;
   async function getJson(url, what) {
     const res = await request(url, { timeoutMs: 15000, maxBytes: 1024 * 1024 });
     if (res.status !== 200) throw new Error(`${what}: ${new URL(url).host} answered HTTP ${res.status}`);
@@ -122,7 +133,10 @@ export function createSso({ config, dataDir, log, writeJson, trustedPeer, userRe
   }
   async function discovery() {
     if (disco && Date.now() - disco.at < 3600000) return disco.doc;
-    const doc = await getJson(`${C.issuer}/.well-known/openid-configuration`, 'OpenID discovery');
+    if (Date.now() - discoFail < 30000) throw new Error('the provider could not be reached a moment ago: try again in 30 seconds');
+    let doc;
+    try { doc = await getJson(`${C.issuer}/.well-known/openid-configuration`, 'OpenID discovery'); }
+    catch (e) { discoFail = Date.now(); throw e; }
     if (String(doc.issuer || '').replace(/\/+$/, '') !== C.issuer) throw new Error(`the provider calls itself ${doc.issuer}, not ${C.issuer} (SSO_ISSUER)`);
     for (const k of ['authorization_endpoint', 'token_endpoint', 'jwks_uri']) if (!/^https?:\/\//.test(doc[k] || '')) throw new Error(`the provider gives no ${k}`);
     disco = { at: Date.now(), doc };
@@ -149,14 +163,22 @@ export function createSso({ config, dataDir, log, writeJson, trustedPeer, userRe
     const state = rand(24), nonce = rand(24), verifier = rand(48);
     const u = new URL(d.authorization_endpoint);
     for (const [k, v] of Object.entries({ response_type: 'code', client_id: C.clientId, redirect_uri: redirectUri, scope: C.scopes, state, nonce, code_challenge: b64url(sha256(verifier)), code_challenge_method: 'S256' })) u.searchParams.set(k, v);
-    return { location: u.href, setCookie: cookie('strata_oidc', seal({ state, nonce, verifier, exp: Date.now() + 600000 }), 600) };
+    return { location: u.href, setCookie: cookie(STATE, seal({ state, nonce, verifier, exp: Date.now() + 600000 }), 600) };
   }
   // The provider sends the person back with ?code&state: returns {user, role} or throws a message to show
-  async function callback(req, url) {
+  // each started sign-in finishes once; and a client address finishes at most 30 an hour, so nobody
+  // can make Strata hammer the provider's token endpoint
+  const used = new Map(), perAddr = new Map();
+  setInterval(() => { const now = Date.now(); for (const [k, t] of used) if (t < now) used.delete(k); perAddr.clear(); }, 3600000).unref();
+  async function callback(req, url, addr) {
     const state = url.searchParams.get('state') || '', code = url.searchParams.get('code') || '';
-    if (url.searchParams.get('error')) throw new Error(`The provider refused the sign-in: ${String(url.searchParams.get('error_description') || url.searchParams.get('error')).slice(0, 200)}`);
-    const p = unseal(readCookie(req, 'strata_oidc'));
-    if (!p || p.exp < Date.now() || !state || p.state !== state) throw new Error('This sign-in link has expired or was not started from this browser: sign in again.');
+    if (url.searchParams.get('error')) throw new Error('The identity provider did not sign you in. Try again, or ask an administrator.');
+    const p = unseal(readCookie(req, STATE));
+    if (!p || p.exp < Date.now() || !state || p.state !== state || used.has(state)) throw new Error('This sign-in link has expired or was not started from this browser: sign in again.');
+    const n = (perAddr.get(addr) || 0) + 1;
+    perAddr.set(addr, n);
+    if (n > 30) throw new Error('Too many sign-ins from this address: try again in an hour.');
+    used.set(state, p.exp);
     const d = await discovery();
     const form = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, code_verifier: p.verifier });
     const headers = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
@@ -175,8 +197,12 @@ export function createSso({ config, dataDir, log, writeJson, trustedPeer, userRe
     if (!(c.exp > now - 60)) throw new Error('The ID token has expired: check the clock of this server.');
     if (c.iat && c.iat > now + 120) throw new Error('The ID token is dated in the future: check the clock of this server.');
     if (c.nonce !== p.nonce) throw new Error('The ID token does not answer this sign-in.');
+    // the name, from the claim chosen; an e-mail address only once the provider has verified it
+    const fromEmail = !c[C.userClaim] && c.email || C.userClaim === 'email';
     const user = String(c[C.userClaim] || c.email || c.sub || '');
-    if (!userRe.test(user)) throw new Error(`Strata does not accept the user name the provider gives (${C.userClaim}): ${user.slice(0, 64)}`);
+    if (fromEmail && c.email_verified !== true) throw new Error('The provider gives an e-mail address it has not verified: Strata cannot use it as a name.');
+    if (!userRe.test(user)) throw new Error(`Strata does not accept the user name the provider gives (${C.userClaim}).`);
+    if (localUser(user)) throw new Error(`“${user}” is also a local account here: an administrator has to rename one of them.`);
     const g = c[C.groupsClaim];
     const groups = Array.isArray(g) ? g : typeof g === 'string' ? g.split(/[\s,]+/).filter(Boolean) : [];
     const role = roleOf(groups);
@@ -184,7 +210,7 @@ export function createSso({ config, dataDir, log, writeJson, trustedPeer, userRe
     const sid = rand(32);
     sessions.set(sid, { user, role, exp: Date.now() + C.sessionMs, idToken: tok.id_token });
     log(`SSO sign-in: ${JSON.stringify(user)} as ${role}`);
-    return { user, role, setCookie: [cookie('strata_session', sid, Math.round(C.sessionMs / 1000)), cookie('strata_oidc', '', 0)] };
+    return { user, role, setCookie: [cookie(SESSION, sid, Math.round(C.sessionMs / 1000)), cookie(STATE, '', 0)] };
   }
   async function logout(sessionId) {
     const s = sessions.get(sessionId);
@@ -196,8 +222,10 @@ export function createSso({ config, dataDir, log, writeJson, trustedPeer, userRe
         if (d.end_session_endpoint) { const u = new URL(d.end_session_endpoint); u.searchParams.set('id_token_hint', s.idToken); u.searchParams.set('post_logout_redirect_uri', location); location = u.href; }
       } catch { }
     }
-    return { location, setCookie: cookie('strata_session', '', 0) };
+    return { location, setCookie: cookie(SESSION, '', 0) };
   }
+  // An administrator ends every single sign-on session (after a group change, or someone leaving)
+  function endSessions(by) { const n = sessions.size; sessions.clear(); log(`${n} single sign-on session(s) ended by ${JSON.stringify(by)}`); return n; }
 
   /* ---- API tokens (DATA_DIR/tokens.json, mode 600) ---- */
   const FILE = path.join(dataDir, 'tokens.json');
@@ -243,7 +271,7 @@ export function createSso({ config, dataDir, log, writeJson, trustedPeer, userRe
     oidc, header, name: C.name, localLogin: C.localLogin, publicUrl: C.publicUrl,
     // anyone could sign in some way other than a local account
     enabled: () => oidc || header || Object.keys(tokens).length > 0,
-    fromSession, fromHeaders, fromToken, start, callback, logout,
+    fromSession, fromHeaders, fromToken, start, callback, logout, endSessions, sessionCount: () => sessions.size,
     listTokens: () => Object.entries(tokens).map(([id, t]) => publicToken(id, t)).sort((a, b) => a.name.localeCompare(b.name)),
     createToken, deleteToken,
   };
@@ -251,7 +279,8 @@ export function createSso({ config, dataDir, log, writeJson, trustedPeer, userRe
 
 /* ---------------- Sign-in page ---------------- */
 const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-export function loginPage({ ssoName, oidc, local, message, out }) {
+// base: PUBLIC_URL, or '' (links from the root)
+export function loginPage({ ssoName, oidc, local, message, out, base = '' }) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Strata</title>
 <style>:root{color-scheme:light dark;--bg:#f4f3ef;--fg:#1c1d1f;--muted:#55595f;--line:#d8d6cf;--accent:#1c1d1f;--accent-fg:#f4f3ef;--bad:#b42318}
 @media (prefers-color-scheme:dark){:root{--bg:#16181b;--fg:#ecebe6;--muted:#a9adb3;--line:#33363b;--accent:#ecebe6;--accent-fg:#16181b;--bad:#ff8a7a}}
@@ -263,7 +292,7 @@ a.primary{background:var(--accent);color:var(--accent-fg)}a.second{border:1px so
 .msg{color:var(--bad);border-left:3px solid var(--bad);padding:6px 10px;margin:0 0 16px}.ok{color:var(--muted)}</style></head>
 <body><main><h1>Strata</h1><p>Map of the information systems</p>
 ${message ? `<p class="msg" role="alert">${escHtml(message)}</p>` : out ? '<p class="ok">You are signed out.</p>' : ''}
-${oidc ? `<a class="btn primary" href="oidc/start">Sign in with ${escHtml(ssoName)}</a>` : ''}
-${local ? `<a class="btn ${oidc ? 'second' : 'primary'}" href="../?local">Sign in with a local account</a>` : ''}
+${oidc ? `<a class="btn primary" href="${escHtml(base)}/auth/oidc/start">Sign in with ${escHtml(ssoName)}</a>` : ''}
+${local ? `<a class="btn ${oidc ? 'second' : 'primary'}" href="${escHtml(base)}/?local">Sign in with a local account</a>` : ''}
 </main></body></html>`;
 }

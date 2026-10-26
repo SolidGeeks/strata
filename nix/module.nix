@@ -93,7 +93,7 @@ in
         LOGIN_LOCK_MINUTES, TRUST_PROXY (set it to "loopback" behind a reverse proxy on this
         host), PUBLIC_URL, SSO_ISSUER, SSO_CLIENT_ID, SSO_NAME, SSO_ROLE_ADMIN, SSO_ROLE_APPROVER,
         SSO_ROLE_CONTRIBUTOR, SSO_ROLE_VIEWER, SSO_DEFAULT_ROLE, SSO_USER_CLAIM, SSO_GROUPS_CLAIM,
-        SSO_HEADER_USER, SSO_HEADER_GROUPS, LOCAL_LOGIN, SESSION_HOURS, CONNECTORS, CONNECTOR_TIMEOUT_MINUTES, MODULE_REGISTRY, MODULE_UPLOAD, SOURCE_URL. The module sets DATA_DIR to
+        SSO_HEADER_USER, SSO_HEADER_GROUPS, SSO_HEADER_TRUST, LOCAL_LOGIN, SESSION_HOURS, CONNECTORS, CONNECTOR_TIMEOUT_MINUTES, MODULE_REGISTRY, MODULE_UPLOAD, SOURCE_URL. The module sets DATA_DIR to
         /var/lib/strata. These values end up in the Nix store: put passwords in
         {option}`services.strata.secretFiles` or {option}`services.strata.environmentFile`.
       '';

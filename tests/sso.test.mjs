@@ -66,7 +66,7 @@ before(async () => {
   };
   await start({ ...env, PORT: String(port), DATA_DIR: join(tmp, 'a') });
   // a second server behind a "proxy" that signs people in with headers; TRUST_PROXY is loopback
-  await start({ HOST: '127.0.0.1', EDIT_USER: 'admin', EDIT_PASS: 'admin-pass-123', CONNECTORS: 'false', MODULE_REGISTRY: 'off', PORT: String(hdrPort), DATA_DIR: join(tmp, 'b'), TRUST_PROXY: 'loopback', SSO_HEADER_USER: 'Remote-User', SSO_HEADER_GROUPS: 'Remote-Groups', SSO_ROLE_CONTRIBUTOR: 'it' });
+  await start({ HOST: '127.0.0.1', EDIT_USER: 'admin', EDIT_PASS: 'admin-pass-123', CONNECTORS: 'false', MODULE_REGISTRY: 'off', PORT: String(hdrPort), DATA_DIR: join(tmp, 'b'), SSO_HEADER_TRUST: '127.0.0.1', SSO_HEADER_USER: 'Remote-User', SSO_HEADER_GROUPS: 'Remote-Groups', SSO_ROLE_CONTRIBUTOR: 'it' });
 });
 after(async () => {
   for (const p of procs) if (p.exitCode === null) await new Promise(res => { p.once('exit', res); p.kill(); });
@@ -108,7 +108,7 @@ test('a page without a session goes to the sign-in page; the API answers 401 wit
   assert.equal(a.status, 401);
   assert.equal(a.headers.get('www-authenticate'), null);
   // "Sign in with a local account": the password prompt is asked at the root, so the browser then sends it everywhere
-  assert.match(login, /href="\.\.\/\?local"/);
+  assert.ok(login.includes(`href="${base}/?local"`) && login.includes(`href="${base}/auth/oidc/start"`));
   const l = await fetch(`${base}/?local`, { redirect: 'manual' });
   assert.equal(l.status, 401);
   assert.match(l.headers.get('www-authenticate'), /^Basic/);
@@ -169,9 +169,45 @@ test('verifyJwt refuses "none" and unknown algorithms', () => {
 test('LOCAL_LOGIN=admins: the local admin keeps a way in, other local accounts do not', async () => {
   assert.equal((await api('/api/users/bob', null, { method: 'PUT', headers: basic('admin', 'admin-pass-123'), body: JSON.stringify({ role: 'approver', password: 'bob-pass-12345' }) })).status, 200);
   assert.equal((await api('/api/me', null, { headers: basic('admin', 'admin-pass-123') })).status, 200);
-  const b = await api('/api/me', null, { headers: basic('bob', 'bob-pass-12345') });
-  assert.equal(b.status, 403);
-  assert.match((await b.json()).error, /LOCAL_LOGIN=admins/);
+  // refused like a wrong password: the answer says nothing of bob's password
+  assert.equal((await api('/api/me', null, { headers: basic('bob', 'bob-pass-12345') })).status, 401);
+  assert.equal((await api('/api/me', null, { headers: basic('bob', 'wrong-password') })).status, 401);
+});
+
+test('a provider name that is also a local account, or an unverified e-mail, is refused', async () => {
+  const refused = async (claims, re) => { next = { claims }; const s = await signIn(); assert.notEqual(s.status, 302); assert.match(s.text, re); };
+  await refused({ preferred_username: 'admin' }, /also a local account/);
+  await refused({ preferred_username: undefined, email: 'zoe@example.org', email_verified: false }, /not verified/);
+  next = { claims: { preferred_username: undefined, email: 'zoe@example.org', email_verified: true } };
+  assert.equal((await signIn()).status, 302);
+  next = {};
+});
+
+test('a sign-in finishes once; an admin can end every session', async () => {
+  next = {};
+  // the same callback, replayed with its cookie, is refused
+  const jar = {};
+  let r = await fetch(`${base}/auth/oidc/start`, { redirect: 'manual' });
+  for (const c of r.headers.getSetCookie()) { const [kv] = c.split(';'); const i = kv.indexOf('='); jar[kv.slice(0, i)] = kv.slice(i + 1); }
+  const cookie = Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
+  r = await fetch(r.headers.get('location'), { redirect: 'manual' });
+  const back = r.headers.get('location');
+  assert.equal((await fetch(back, { redirect: 'manual', headers: { Cookie: cookie } })).status, 302);
+  const again = await fetch(back, { redirect: 'manual', headers: { Cookie: cookie } });
+  assert.equal(again.status, 400);
+  const s = await signIn();
+  assert.equal((await api('/api/me', s.cookie)).status, 200);
+  const end = await (await api('/api/sessions', null, { method: 'DELETE', headers: basic('admin', 'admin-pass-123'), body: '{}' })).json();
+  assert.ok(end.ended >= 1);
+  assert.equal((await api('/api/me', s.cookie)).status, 401);
+});
+
+test('headers need SSO_HEADER_TRUST with exact addresses', async () => {
+  const run = env => new Promise(res => { const p = spawn(process.execPath, [join(root, 'server/server.js')], { env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DATA_DIR: join(tmp, 'c'), CONNECTORS: 'false', ...env }, stdio: ['ignore', 'ignore', 'pipe'] }); let err = ''; p.stderr.on('data', d => { err += d; }); p.on('exit', c => res({ code: c, err })); setTimeout(() => p.kill(), 5000); });
+  let r = await run({ SSO_HEADER_USER: 'Remote-User' });
+  assert.equal(r.code, 1); assert.match(r.err, /SSO_HEADER_TRUST/);
+  r = await run({ SSO_HEADER_USER: 'Remote-User', SSO_HEADER_TRUST: '10.0.0.0/8' });
+  assert.equal(r.code, 1); assert.match(r.err, /no range/);
 });
 
 test('API tokens: created by an admin, shown once, used as Bearer, revoked', async () => {
@@ -205,6 +241,7 @@ test('trusted proxy headers: believed from a trusted proxy only, groups give the
   assert.equal(me.via, 'header');
   const none = await h({ 'Remote-User': 'eve', 'Remote-Groups': 'staff' });
   assert.equal(none.status, 403);
+  assert.equal((await h({ 'Remote-User': 'admin', 'Remote-Groups': 'it' })).status, 403, 'a local account name');
   // the other server trusts no proxy: the same headers are ignored there
   const r = await fetch(`${base}/api/me`, { headers: { 'Remote-User': 'dave', 'Remote-Groups': 'soc' } });
   assert.equal(r.status, 401);

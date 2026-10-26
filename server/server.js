@@ -339,10 +339,17 @@ function authenticate(req) {
   const other = sso.fromSession(req) || sso.fromToken(req) || sso.fromHeaders(req);
   if (other) return other.denied ? other : { ...other, role: CONFIG.readOnly ? 'viewer' : other.role };
   if (!authEnabled() && !sso.enabled()) return { user: '', role: CONFIG.readOnly ? 'viewer' : 'admin', open: true, via: 'open' };
-  const local = authenticateLocal(req);
-  if (!local || local.retryAfter || sso.localLogin === 'all') return local;
-  if (sso.localLogin === 'off') return { denied: 'Local accounts are turned off on this server (LOCAL_LOGIN=off): sign in with single sign-on.' };
-  return local.role === 'admin' ? local : { denied: 'Only administrators sign in with a local account on this server (LOCAL_LOGIN=admins): use single sign-on.' };
+  // LOCAL_LOGIN=off: no local sign-in at all; admins: only the accounts whose stored role is admin. The
+  // others are not even checked, so the answer (401) says nothing of their password
+  if (sso.localLogin === 'off') return null;
+  if (sso.localLogin === 'admins' && own(users, basicName(req))?.role !== 'admin') return null;
+  return authenticateLocal(req);
+}
+function basicName(req) {
+  const h = req.headers.authorization || '';
+  if (!h.startsWith('Basic ')) return '';
+  const raw = Buffer.from(h.slice(6), 'base64').toString('utf8'), i = raw.indexOf(':');
+  return i < 1 ? '' : raw.slice(0, i);
 }
 function authenticateLocal(req) {
   const h = req.headers.authorization || '';
@@ -449,7 +456,7 @@ async function api(req, res, parts, url, auth) {
   const ok = rev => send(res, 200, { ok: true, rev: rev ?? state.rev });
 
   if (r1 === 'me' && !id && method === 'GET') return send(res, 200, {
-    user: auth.user, role: auth.role, auth: !auth.open, via: auth.via, signOut: auth.via === 'sso', readOnly: CONFIG.readOnly, allowSelfApproval: CONFIG.allowSelfApproval,
+    user: auth.user, role: auth.role, auth: !auth.open, via: auth.via, signOut: auth.via === 'sso', sso: sso.oidc || sso.header, readOnly: CONFIG.readOnly, allowSelfApproval: CONFIG.allowSelfApproval,
     canWrite: can(auth, 'approver'), canPropose: can(auth, 'contributor'), canReview: can(auth, 'approver'), canAdmin: can(auth, 'admin'), connectors: !!connectors, sourceUrl: CONFIG.sourceUrl,
   });
   if (r1 === 'me' && id === 'password' && method === 'PUT') {
@@ -680,8 +687,10 @@ async function api(req, res, parts, url, auth) {
   }
 
   /* ---- API tokens (admin) ---- */
+  if (r1 === 'sessions' && !id && method === 'DELETE') { need(auth, 'admin'); return send(res, 200, { ok: true, ended: sso.endSessions(auth.user || 'admin') }); }
   if (r1 === 'tokens') {
     need(auth, 'admin');
+    if (auth.open) throw httpError(400, 'Create an admin account first: with no account, a token would lock everyone else out.');
     if (!id && method === 'GET') return send(res, 200, { tokens: sso.listTokens() });
     if (!id && method === 'POST') {
       const b = await readBody(req, 4096) || {};
@@ -718,15 +727,15 @@ async function api(req, res, parts, url, auth) {
 const localSignIn = () => sso.localLogin !== 'off' && authEnabled();
 const html = (res, status, body, headers = {}) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', ...headers });
 async function authRoute(req, res, url) {
-  const p = url.pathname, page = (status, message, extra) => html(res, status, loginPage({ ssoName: sso.name, oidc: sso.oidc, local: localSignIn(), message, out: url.searchParams.has('out') }), extra);
+  const p = url.pathname, page = (status, message, extra) => html(res, status, loginPage({ ssoName: sso.name, oidc: sso.oidc, local: localSignIn(), message, out: url.searchParams.has('out'), base: sso.publicUrl }), extra);
   if (p === '/auth/login' && req.method === 'GET') return page(200);
   if (p === '/auth/oidc/start' && req.method === 'GET' && sso.oidc) {
     try { const s = await sso.start(); return send(res, 302, '', { Location: s.location, 'Set-Cookie': s.setCookie }); }
     catch (e) { log('SSO:', e.message); return page(502, `The identity provider cannot be reached: ${e.message}`); }
   }
   if (p === '/auth/oidc/callback' && req.method === 'GET' && sso.oidc) {
-    try { const s = await sso.callback(req, url); return send(res, 302, '', { Location: `${sso.publicUrl}/`, 'Set-Cookie': s.setCookie }); }
-    catch (e) { log('SSO sign-in refused:', e.message); return page(e.denied ? 403 : 400, e.message); }
+    try { const s = await sso.callback(req, url, clientAddress(req)); return send(res, 302, '', { Location: `${sso.publicUrl}/`, 'Set-Cookie': s.setCookie }); }
+    catch (e) { log('SSO sign-in refused:', JSON.stringify(e.message)); return page(e.denied ? 403 : 400, e.message); }
   }
   if (p === '/auth/logout' && req.method === 'POST') {
     if (req.headers['x-requested-with'] !== 'strata') return fail(res, 400, 'Missing X-Requested-With header');
@@ -746,7 +755,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/healthz') return send(res, 200, 'ok');
     if (url.pathname.startsWith('/auth/')) return await authRoute(req, res, url);
     const auth = authenticate(req);
-    if (auth && auth.denied) return send(res, 403, url.pathname.startsWith('/api/') ? { error: auth.denied } : loginPage({ ssoName: sso.name, oidc: sso.oidc, local: localSignIn(), message: auth.denied }), url.pathname.startsWith('/api/') ? {} : { 'Content-Type': 'text/html; charset=utf-8' });
+    if (auth && auth.denied) return send(res, 403, url.pathname.startsWith('/api/') ? { error: auth.denied } : loginPage({ ssoName: sso.name, oidc: sso.oidc, local: localSignIn(), message: auth.denied, base: sso.publicUrl }), url.pathname.startsWith('/api/') ? {} : { 'Content-Type': 'text/html; charset=utf-8' });
     if (auth && auth.retryAfter) {
       const s = Math.ceil(auth.retryAfter / 1000);
       res.writeHead(429, { ...SEC_HEADERS, 'Retry-After': String(s), 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -757,7 +766,7 @@ const server = http.createServer(async (req, res) => {
       // …except "/?local": the browser's password prompt for a local account, asked at the root so that
       // the browser then sends the password with every request of the app
       if (sso.oidc && url.pathname === '/' && url.searchParams.has('local') && localSignIn())
-        return send(res, 401, loginPage({ ssoName: sso.name, oidc: sso.oidc, local: true, message: 'Local sign-in cancelled or refused.' }), { 'Content-Type': 'text/html; charset=utf-8', 'WWW-Authenticate': 'Basic realm="Strata", charset="UTF-8"' });
+        return send(res, 401, loginPage({ ssoName: sso.name, oidc: sso.oidc, local: true, message: 'Local sign-in cancelled or refused.', base: sso.publicUrl }), { 'Content-Type': 'text/html; charset=utf-8', 'WWW-Authenticate': 'Basic realm="Strata", charset="UTF-8"' });
       if (sso.oidc && !url.pathname.startsWith('/api/') && (req.method === 'GET' || req.method === 'HEAD')) return send(res, 302, '', { Location: `${sso.publicUrl}/auth/login` });
       res.writeHead(401, { ...SEC_HEADERS, ...(sso.oidc || !localSignIn() ? {} : { 'WWW-Authenticate': 'Basic realm="Strata", charset="UTF-8"' }), 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('Authentication required');
@@ -775,7 +784,7 @@ const sso = (() => {
   try {
     return createSso({
       config: ssoConfig(env, secret), dataDir: CONFIG.dataDir, log, writeJson, userRe: USER_RE,
-      trustedPeer: req => CONFIG.trustProxy.length > 0 && trustedProxy(normAddr(req.socket.remoteAddress)),
+      peerAddress: req => normAddr(req.socket.remoteAddress), localUser: name => own(users, name),
     });
   } catch (e) { console.error(e.message); process.exit(1); }
 })();
@@ -799,7 +808,7 @@ server.listen(CONFIG.port, CONFIG.host, () => {
   log(`Strata listening on http://${CONFIG.host}:${CONFIG.port}`);
   log(`Data folder: ${CONFIG.dataDir}`);
   if (sso.oidc) log(`Single sign-on: ${sso.name} (OpenID Connect); local accounts: ${sso.localLogin}`);
-  if (sso.header) log(`Single sign-on: user from the trusted proxies' headers; local accounts: ${sso.localLogin}`);
+  if (sso.header) log(`Single sign-on: user from the headers of the sign-in proxy; local accounts: ${sso.localLogin}`);
   if (!authEnabled() && !sso.enabled()) log('WARNING: no account configured (EDIT_PASS empty, no data/users.json): anyone who can reach this port can read and edit the map.');
   else log(`Accounts: ${Object.entries(users).filter(([, u]) => !u.disabled).map(([n, u]) => `${n} (${u.role})`).join(', ')}`);
   if (CONFIG.readOnly) log('READ_ONLY is on: nobody can edit.');

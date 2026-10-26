@@ -2947,6 +2947,7 @@ async function showAccount(){
   <h3 class="cap">New account</h3>
   <form class="frm" id="userForm" style="padding:0" novalidate><div class="f2"><div class="f"><label for="nuName">Name</label><input id="nuName" autocomplete="off" placeholder="e.g. alice.martin"></div><div class="f"><label for="nuRole">Role</label><select id="nuRole">${roleOpts('contributor')}</select></div></div>
   <div class="f"><label for="nuPass">Password (10 characters or more)</label><input id="nuPass" type="password" autocomplete="new-password"></div><button class="btn small" type="submit">Create the account</button></form>
+  ${me.sso?`<h3 class="cap">Single sign-on</h3><p class="fhint">Sessions keep the role given at sign-in until they expire. After a group change, or when someone leaves, end them all: everyone signs in again.</p><div class="c2"><button class="ibtn" data-endsessions>End all single sign-on sessions</button></div>`:''}
   <h3 class="cap">API tokens · ${tokens.length}</h3>
   <p class="fhint">For scripts and integrations: <code>Authorization: Bearer stk_…</code>. A token is shown once, when it is created.</p>
   ${tokens.length?`<ul class="list">${tokens.map(t=>`<li class="usr" data-token="${esc(t.id)}"><b>${esc(t.name)}</b><span>${esc(t.role)}</span><small>${Date.parse(t.expiresAt)<Date.now()?'expired':'until '+fmtDate(t.expiresAt)}${t.lastUsedAt?' · used '+fmtDate(t.lastUsedAt):' · never used'}</small><button class="ibtn" data-tdel>Revoke</button></li>`).join('')}</ul>`:''}
@@ -2970,6 +2971,8 @@ det.addEventListener('click',async e=>{
   const t=e.target,q=s=>t.closest(s);
   if(q('[data-new-prop]'))return proposalForm();
   if(q('[data-signout]')){try{const j=await Store.api('POST','auth/logout',{});location.href=j.location||'auth/login';}catch(err){toast(err.message,true);}return;}
+  if(q('[data-endsessions]')){const b=q('[data-endsessions]');if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='Confirm: sign everyone out';return;}
+    try{const j=await Store.api('DELETE','api/sessions',{});toast(`${j.ended} session(s) ended.`);showAccount();}catch(err){toast(err.message,true);}return;}
   if(q('[data-tdel]')){const b=q('[data-tdel]');if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='Confirm';return;}
     try{await Store.api('DELETE','api/tokens/'+encodeURIComponent(b.closest('[data-token]').dataset.token));toast('Token revoked.');showAccount();}catch(err){toast(err.message,true);}return;}
   if(q('[data-open-prop]'))return openProposal(q('[data-open-prop]').dataset.openProp);

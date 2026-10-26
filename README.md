@@ -249,9 +249,13 @@ SSO_DEFAULT_ROLE=viewer                      # everyone else; empty: no access
 
 Opening Strata then shows a sign-in page: *Sign in with Microsoft Entra ID*, and *Sign in with a local account* if local accounts are allowed. The groups come from the `groups` claim (`SSO_GROUPS_CLAIM`; for Entra ID, add the groups claim to the token, or use app roles with `SSO_GROUPS_CLAIM=roles`), the user name from `preferred_username` (`SSO_USER_CLAIM`). Strata checks the ID token's signature against the provider's keys, its issuer, audience, expiry and nonce, and uses PKCE. *Account › Sign out* ends the session at the provider too.
 
-**A sign-in proxy you already run** (Authelia, oauth2-proxy, Pomerium, Authentik outpost): `SSO_HEADER_USER=Remote-User` and `SSO_HEADER_GROUPS=Remote-Groups`, with the same `SSO_ROLE_*`. The headers are believed only from a proxy listed in `TRUST_PROXY`: list that proxy's own address (`TRUST_PROXY=10.0.0.5`, or `loopback` when it runs on the same machine), not a whole range, since anything in the range could send them. The proxy must set them itself and drop any coming from the browser.
+**A sign-in proxy you already run** (Authelia, oauth2-proxy, Pomerium, Authentik outpost): `SSO_HEADER_USER=Remote-User`, `SSO_HEADER_GROUPS=Remote-Groups` and `SSO_HEADER_TRUST`, the address the proxy connects to Strata from (`127.0.0.1` when it runs on the same machine; several addresses comma-separated, no range: anything in a range could claim to be anyone). The same `SSO_ROLE_*` apply. The proxy must set the headers itself and drop any coming from the browser. `TRUST_PROXY` stays what it was, for the client address.
 
-**Local accounts** stay: for the tests, small installations, and as a way in when the provider is down. `LOCAL_LOGIN=admins` keeps them for administrators only (break-glass), `LOCAL_LOGIN=off` turns them off. An SSO user with the same name as a local account is the same person in the history and the proposals: give local accounts the names your provider uses.
+**Local accounts** stay: for the tests, small installations, and as a way in when the provider is down. `LOCAL_LOGIN=admins` keeps them for administrators only (break-glass), `LOCAL_LOGIN=off` turns them off; a refused local sign-in answers like a wrong password.
+
+**Names.** The history and the proposals name people by the name the provider gives. A name that is also a local account is refused (rename one of them), and an e-mail address is used only once the provider has verified it. Prefer a name people cannot change themselves at the provider (`SSO_USER_CLAIM=oid` on Entra ID, or `sub`), or make sure they cannot.
+
+**Sessions** last `SESSION_HOURS` (8 by default) with the role given at sign-in. *Account › End all single sign-on sessions* (admin) signs everyone out, after a group change or when someone leaves.
 
 **API tokens** for scripts and integrations: *Account › API tokens* (admin), with a name, a role and a validity of 1 to 730 days. The token (`stk_…`) is shown once and stored hashed; send it as `Authorization: Bearer stk_…`. Basic Auth with a local account keeps working for scripts.
 
@@ -507,7 +511,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 - Published Docker images are signed (Sigstore provenance attestation): check them with `gh attestation verify` (section 2).
 - These protections (authentication, roles, cross-site writes, four-eyes rule, access to the server's files) are checked by the automated tests on every code change (section 14).
 - Give everyone a named account with the lowest role that is enough: every change is attributed in the history.
-- With single sign-on, keep `LOCAL_LOGIN=admins` and one local admin with a long password, as the way in when the provider is down. Give scripts API tokens with the lowest role and a short validity, not a person's password.
+- With single sign-on, keep `LOCAL_LOGIN=admins` and one local admin with a long password (a name your provider does not use), as the way in when the provider is down. Give scripts API tokens with the lowest role and a short validity, not a person's password.
 - Repeated failed sign-ins are refused for a while (`429`), per account and per client address (`LOGIN_MAX_FAILS`, `LOGIN_MAX_FAILS_PER_ADDRESS`, `LOGIN_LOCK_MINUTES`); browsers already signed in keep working. Behind a reverse proxy, set `TRUST_PROXY` (section 5).
 - Connectors: use **read-only** service accounts in Cyberwatch, GLPI, phpIPAM and PAN-OS, restricted to the Strata server's IP when the tool allows it. Their secrets are in `data/connectors.json`: protect the volume and the backup archives.
 - Connector modules run in their own process, which cannot read the data files or the other connectors' settings, but can use the network. Install only modules you trust: the store lists reviewed modules and checks their checksum; `MODULE_UPLOAD` is off by default and `MODULE_REGISTRY=off` turns the store off ([MODULES.md](MODULES.md#what-a-module-can-reach)).
@@ -530,7 +534,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 ## 13. Limits of v0.8
 
 - Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
-- Sessions of single sign-on are kept in memory: restarting Strata signs SSO users out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 12 by default). LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).
+- Sessions of single sign-on are kept in memory: restarting Strata signs SSO users out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 8 by default), or at once with *End all single sign-on sessions*. LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).
 - Two approvers editing the same IS directly at the same time: the last save wins (the history lets you go back). Proposals, on the other hand, detect conflicts.
 - draw.io or Visio diagrams cannot be imported: only Strata JSON exports can become a proposal.
 - Opened without its server, the app keeps the map in the browser only: no accounts, history, proposals or connectors.
