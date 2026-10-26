@@ -308,7 +308,7 @@ function recordFailure(kind, key, credential) {
   let f = m.get(key);
   if (!f || (now - f.first > CONFIG.loginLockMs && f.until <= now)) f = { first: now, seen: new Set(), until: 0 };
   if (f.seen.size < max) f.seen.add(credential);
-  if (f.seen.size >= max && f.until <= now) { f.until = now + CONFIG.loginLockMs; log(`Sign-in locked for ${Math.round(CONFIG.loginLockMs / 60000)} min: ${kind} ${key}`); }
+  if (f.seen.size >= max && f.until <= now) { f.until = now + CONFIG.loginLockMs; log(`Sign-in locked for ${Math.round(CONFIG.loginLockMs / 60000)} min: ${kind} ${JSON.stringify(key)}`); }
   m.delete(key); m.set(key, f);
   if (m.size > 10000) m.delete(m.keys().next().value);
 }

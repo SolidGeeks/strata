@@ -22,8 +22,9 @@ function start(extra) {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const stop = () => new Promise(res => { if (proc.exitCode !== null) return res(); proc.once('exit', res); proc.kill(); }).then(() => rmSync(dataDir, { recursive: true, force: true, maxRetries: 5 }));
+  let out = '';
   return new Promise((res, rej) => {
-    proc.stdout.on('data', d => { if (String(d).includes('listening')) res({ port, stop }); });
+    proc.stdout.on('data', d => { out += d; if (String(d).includes('listening')) res({ port, stop, log: () => out }); });
     proc.on('exit', code => rej(new Error(`exit ${code}`)));
   });
 }
@@ -100,5 +101,15 @@ test('a browser already signed in keeps working from its address while the accou
     assert.equal((await get(s.port, 'admin', ADMIN, '192.0.2.10')).status, 200);
     assert.equal((await get(s.port, 'admin', ADMIN, '192.0.2.66')).status, 429);
     assert.equal((await get(s.port, 'admin', ADMIN, '192.0.2.11')).status, 429);
+  } finally { await s.stop(); }
+});
+
+test('an account name cannot write fake lines into the log', async () => {
+  const s = await start({ LOGIN_MAX_FAILS: '1', LOGIN_MAX_FAILS_PER_ADDRESS: '100' });
+  try {
+    assert.equal((await get(s.port, 'x\n2026-01-01T00:00:00.000Z FAKE', 'a')).status, 401);
+    await wait(200);
+    assert.match(s.log(), /Sign-in locked .*account "x\\n2026/);
+    assert.doesNotMatch(s.log(), /^2026-01-01T00:00:00.000Z FAKE/m);
   } finally { await s.stop(); }
 });
