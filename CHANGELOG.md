@@ -19,6 +19,9 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 - **A crafted Palo Alto configuration file could stall the server** (found by the security review, [#14](https://github.com/SolidGeeks/strata/issues/14)). The XML parser read the attributes of a tag with a regular expression that took quadratic time on a long tag without `=`: an 80 KB tag took 4 s, and a 20 MB file, which any **contributor** may import, would have blocked the server for every user for hours. Attributes are now read in one pass (20 MB in under 0.2 s), with the same result.
 - **Data files were readable by every local user** on installs without Docker or the NixOS module (systemd, `npm start`): the map, its history and proposals, the accounts (password hashes) and, for an instant before a `chmod`, the connector settings with their secrets. They are now written with mode 600 and the backups folder with 700, and files left readable by older versions are tightened at start. Docker volumes and the NixOS module were not affected.
 
+### Fixed
+- A request body over its limit (an import bigger than `MAX_IMPORT_MB`) gets a `413` answer with the usual JSON error, instead of a cut connection that the app could only show as a network error ([#3](https://github.com/SolidGeeks/strata/issues/3)).
+
 ### Changed
 - Security review ([#14](https://github.com/SolidGeeks/strata/issues/14)), hardening: `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy: same-origin` on every response; a path with a malformed percent-encoding gets `400` instead of an internal error; the current password is compared in constant time when it is changed.
 

@@ -375,11 +375,24 @@ function send(res, status, body, headers = {}) {
   res.end(isJson ? JSON.stringify(body) : body);
 }
 const fail = (res, status, error, extra) => send(res, status, { error, ...(extra || {}) });
+// A body over its limit is no longer kept, but read to its end, so that the 413 answer reaches the client
+// (closing the connection at once left it with a network error). Past the limit by more than
+// DISCARD_MAX, the connection is cut: nobody waits for a body that large.
+const DISCARD_MAX = 64 * 1024 * 1024;
 function readBody(req, limit) {
   return new Promise((resolve, reject) => {
-    let size = 0; const chunks = [];
-    req.on('data', c => { size += c.length; if (size > limit) { reject(httpError(413, 'Payload too large')); req.destroy(); return; } chunks.push(c); });
-    req.on('end', () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null); } catch { reject(httpError(400, 'Invalid JSON')); } });
+    let size = 0, over = false; const chunks = [];
+    req.on('data', c => {
+      size += c.length;
+      if (over) { if (size > limit + DISCARD_MAX) req.destroy(); return; }
+      if (size > limit) { over = true; chunks.length = 0; return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (over) return reject(httpError(413, 'Payload too large'));
+      try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null); } catch { reject(httpError(400, 'Invalid JSON')); }
+    });
+    req.on('close', () => { if (over) reject(httpError(413, 'Payload too large')); });
     req.on('error', reject);
   });
 }

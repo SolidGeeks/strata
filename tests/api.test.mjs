@@ -183,8 +183,12 @@ test('import: replaces the map, validates ids, and enforces MAX_IMPORT_MB', asyn
   const bob = as('bob');
   assert.equal((await bob.post('/api/import', { si: { 'bad id!': {} }, assets: {} })).status, 400);
   const big = { si: { x: { name: 'x'.repeat(1.2 * 1024 * 1024) } }, assets: {} };
-  const tooBig = await bob.post('/api/import', big).catch(e => ({ status: 'connection closed', error: e }));
-  assert.ok(tooBig.status === 413 || tooBig.status === 'connection closed', `got ${tooBig.status}`);
+  // the server answers 413 with its usual JSON error, instead of cutting the connection
+  const tooBig = await bob.post('/api/import', big);
+  assert.equal(tooBig.status, 413);
+  assert.deepEqual(tooBig.data, { error: 'Payload too large' });
+  // and keeps working for the next request
+  assert.equal((await bob.get('/api/state')).status, 200);
   const before = await rev();
   const r = await bob.post('/api/import', { si: { lille: { name: 'Lille' } }, assets: {} });
   assert.equal(r.status, 200, JSON.stringify(r.data));
