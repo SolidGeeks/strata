@@ -167,3 +167,69 @@ test('risk priorities: assets highest first, and the known exploited flaw is the
   assert.ok(A.likelihoodOf({ epss: null }) > A.likelihoodOf({ epss: 0.01 }));
   assert.equal(A.likelihoodOf({ kev: true, epss: 0 }), 1);
 });
+
+// An IS to attack: the Internet reaches web through the edge firewall; web calls app, app calls db;
+// an admin reaches db over SSH from the bastion; db sends logs to the SIEM
+const target = () => {
+  const a = (id, vulns = [], more = {}) => ({ id, vulns, ...more });
+  const byId = {
+    fw: a('fw', [], { type: 'firewall' }),
+    web: a('web', [{ cvss: 9.8, kev: true }]),
+    app: a('app'),
+    db: a('db', [{ cvss: 7.5, epss: 0.02 }]),
+    bastion: a('bastion'),
+    siem: a('siem'),
+  };
+  return {
+    byId, services: [],
+    flows: [
+      flow('f1', 'internet', 'web', ['fw'], 'tcp/443'), flow('f2', 'web', 'app', [], 'tcp/8080'), flow('f3', 'app', 'db', [], 'tcp/5432'),
+      flow('f4', 'bastion', 'db', [], 'tcp/22'), flow('f5', 'db', 'siem', [], 'udp/514'), flow('f6', 'web', 'bastion', [], 'tcp/22'),
+    ],
+  };
+};
+
+test('attack step: vulnerabilities, remote administration port, or any other service', () => {
+  const s = target();
+  // a KEV at CVSS 9.8: certain to be exploited, times its severity
+  assert.equal(A.stepOdds(s.byId.web, 'tcp/443').why, 'vuln');
+  assert.ok(Math.abs(A.stepOdds(s.byId.web, 'tcp/443').p - 0.98) < 1e-9);
+  assert.deepEqual(J(A.stepOdds(s.byId.bastion, 'tcp/22')), { p: 0.5, why: 'admin' });
+  assert.deepEqual(J(A.stepOdds(s.byId.app, 'tcp/8080')), { p: 0.1, why: 'service' });
+});
+
+test('blast radius: everything reachable along the flows, each with its most likely way in', () => {
+  const s = target();
+  const r = A.blastRadius(s, 'web');
+  assert.deepEqual([...r.keys()].sort(), ['app', 'bastion', 'db', 'siem']);
+  // db: through the bastion over SSH (0.5 × db's vulns) beats the app server (0.1 × db's vulns)
+  assert.deepEqual([...r.get('db').path], ['web', 'bastion', 'db']);
+  assert.deepEqual([...r.get('db').flows], ['f6', 'f4']);
+  assert.equal(r.get('db').steps, 2);
+  // flows do not run backwards: the SIEM reaches nothing, and nothing reaches the Internet side
+  assert.equal(A.blastRadius(s, 'siem').size, 0);
+  assert.equal(r.has('fw'), false);
+});
+
+test('attack paths from the Internet: every path to a target, most likely first, and where to cut', () => {
+  const s = target();
+  const { byTarget, truncated } = A.attackPaths(s, A.outside(s), ['db']);
+  assert.equal(truncated, false);
+  assert.deepEqual(J(byTarget.db.map(x => x.path.join('>'))), ['internet>web>bastion>db', 'internet>web>app>db']);
+  assert.ok(byTarget.db[0].p > byTarget.db[1].p);
+  const cut = A.chokePoints(s, byTarget);
+  // every path goes through web and crosses the edge firewall; the bastion and app are on one each
+  assert.deepEqual(J(cut.filter(c => c.every.length).map(c => [c.id, c.kind])), [['fw', 'equipment'], ['web', 'asset']]);
+  assert.deepEqual(J(cut.find(c => c.id === 'bastion')), { id: 'bastion', kind: 'asset', every: [], paths: 1, held: 1 });
+});
+
+test('attack paths: unlikely and long paths are left out, and a cut-short search says so', () => {
+  const s = target();
+  // two plain services in a row (10% × 10%) fall under a 2% floor
+  const far = A.attackPaths(s, 'web', ['siem'], { min: 0.02 });
+  assert.deepEqual(J(far.byTarget.siem.map(x => x.path.join('>'))), ['web>bastion>db>siem']);
+  assert.equal(A.attackPaths(s, 'web', ['siem'], { depth: 2 }).byTarget.siem.length, 0);
+  assert.equal(A.attackPaths(s, 'internet', ['siem'], { budget: 2 }).truncated, true);
+  // a target nothing leads to has no path
+  assert.deepEqual(J(A.attackPaths(s, A.outside(s), ['bastion', 'fw']).byTarget.fw), []);
+});

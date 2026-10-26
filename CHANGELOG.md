@@ -2,6 +2,13 @@
 
 All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+### Added
+- **Attack paths** (Analysis): the critical assets an attacker coming from the Internet could reach (criticality High, of their own or through a business service they would hit), every path to each one along the allowed flows, most likely first, and **where to cut**: the assets and the equipment that every path to a critical asset goes through. The rest of the model fades, and hovering a path picks it out, in 3D and in 2D.
+  - Each step of a path is an asset taken over, with a likelihood: its vulnerabilities (CVSS times likelihood of exploitation, as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service. A path counts for the product of its steps. Flows run one way: answering a flow does not let the destination reach back.
+- **Blast radius**: pick any asset as the attacker's starting point (in the panel, or *Blast radius* on the asset sheet) and see everything reachable from it, the most likely way to each asset, and the business services hit. The asset sheet gives its size.
+- Both export as CSV.
+
 ## [0.6.0] - 2026-10-26
 ### Added
 - Flows through interconnection equipment are readable: every flow that crosses a firewall, router, switch or gateway gets its own lane there, in the 3D model and in the 2D diagram, instead of all threads meeting at one point.

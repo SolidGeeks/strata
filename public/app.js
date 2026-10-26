@@ -558,6 +558,9 @@ function compile(){
     // Risk: one score per asset and the fixes in order, once exposure and reachability are known
     const bizCrit={};Object.entries(s.impact.byAsset).forEach(([id,l])=>bizCrit[id]=Math.max(...l.map(x=>x.crit)));
     s.risk=SA.riskPriorities(s,bizCrit);s.riskById={};s.risk.assets.forEach(r=>s.riskById[r.id]=r);
+    // Attack paths: the critical assets (their own criticality, or that of a business service they
+    // would hit) and what an attacker coming from the Internet could reach
+    s.bizCrit=bizCrit;s.critIds=s.assets.filter(a=>a.crit===3||bizCrit[a.id]===3).map(a=>a.id);s.atkOut=SA.blastRadius(s,SA.outside(s));
     s.usedSvc=new Set(s.flows.flatMap(f=>[f.src,f.dst]).filter(id=>id!=='internet'&&isNet(id)));
     const cnt=k=>s.assets.filter(a=>a.exp===k).length;
     s.stats={vlans:s.vlans.length,assets:s.assets.length,crit:s.assets.reduce((n,a)=>n+a.vulns.filter(v=>v.sev==='crit').length,0),
@@ -579,7 +582,7 @@ const nameOf=id=>id==='internet'?'Internet':SVC[id]?SVC[id].name:(byId[id]&&!byI
 const siteServices=()=>SITE?SITE.services.filter(x=>x.scope==='site'||SITE.usedSvc.has(x.id)):[];
 const vnum=a=>{const v=vlanById[a.vlan];return v?v.num:'?';};
 
-const state={hoverFlow:null,lens:'physical',biz:null,view:'overview',siteId:null,ovSelId:null,selId:null,mode:'zones',hidden:new Set(),minSev:0,minExp:0,dir:'all',color:'risk',flows:true,riskOnly:false,labels:true,ports:false,rotate:false,gap:8,path:false,panel:null,posts:'off',compact:true,arrange:false,flat:false,tool:'move'};
+const state={attack:{from:'internet'},attackHl:null,hoverFlow:null,lens:'physical',biz:null,view:'overview',siteId:null,ovSelId:null,selId:null,mode:'zones',hidden:new Set(),minSev:0,minExp:0,dir:'all',color:'risk',flows:true,riskOnly:false,labels:true,ports:false,rotate:false,gap:8,path:false,panel:null,posts:'off',compact:true,arrange:false,flat:false,tool:'move'};
 const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
 // saved theme applied before the first frame, so the page does not flash
 try{const t=localStorage.getItem('strata-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}
@@ -637,6 +640,7 @@ function renderVlanList(){
   $('#pathCount').textContent=SITE.stats.reach;
   $('#portsCount').textContent=SITE.stats.ports;
   $('#riskCount').textContent=SITE.risk.assets.length?SITE.risk.assets[0].score:'';
+  const atkN=SITE.critIds.filter(id=>SITE.atkOut.has(id)).length;$('#atkCount').textContent=SITE.critIds.length?`${atkN}/${SITE.critIds.length}`:'';
 }
 function renderLegend(){
   const sev=['crit','high','med','low'].map(k=>`<span><i class="pin" style="background:var(${SEV[k].css})"></i>${SEV[k].label}</span>`).join('')+`<span class="wide">Pin: worst vulnerability. Flag: critical.</span>`;
@@ -660,6 +664,7 @@ function syncUI(){
   document.body.classList.toggle('readonly',!Store.canWrite);
   $('#portsBtn').setAttribute('aria-pressed',String(state.panel==='ports'));
   $('#riskBtn').setAttribute('aria-pressed',String(state.panel==='risk'));
+  $('#atkBtn').setAttribute('aria-pressed',String(state.panel==='attack'));
   renderLegend();renderDirNote();
 }
 function renderEmpty(){
@@ -1020,6 +1025,7 @@ function computeVis(){
   const sel=selAsset(),nb=sel?neighborsOf(sel.id):null,fsel=(state.hoverFlow&&FLOWS.find(x=>x.id===state.hoverFlow))||(state.panel==='flow'?FLOWS.find(x=>x.id===state.flowId):null);
   const dirPeers=sel&&state.dir!=='all'?new Set(FLOWS.filter(f=>dirOk(f,sel)).flatMap(f=>f.hops)):null;
   const aOp={},fv={},bdep=state.biz&&SITE.impact.byBusiness[state.biz]?SITE.impact.byBusiness[state.biz].assets:null;
+  const atk=state.panel==='attack'?attackData():null,ahl=atk&&state.attackHl?atk.hl.get(state.attackHl):null,aon=atk&&(ahl||atk);
   ASSETS.forEach(a=>{let op=1;
     if(SEV[a.sev].rank<state.minSev)op=0.15;
     if(EXP[a.exp].rank<state.minExp)op=Math.min(op,0.15);
@@ -1027,6 +1033,7 @@ function computeVis(){
     if(state.path&&EXPO[a.id]===undefined)op=Math.min(op,0.15);
     if(fsel&&!fsel.hops.includes(a.id))op=Math.min(op,0.18);
     if(bdep&&!bdep[a.id])op=Math.min(op,0.15);
+    if(aon&&!aon.nodes.has(a.id))op=Math.min(op,0.12);
     aOp[a.id]=op;});
   const shown=id=>isNet(id)||(byId[id]&&!state.hidden.has(byId[id].vlan));
   FLOWS.forEach(f=>{
@@ -1036,6 +1043,7 @@ function computeVis(){
     let op=f.risk?0.95:0.8;
     if(sel)op=dirOk(f,sel)?1:0.07;
     if(state.path)op=(EXPO[f.src]!==undefined&&EXPO[f.dst]===EXPO[f.src]+1)?1:0.07;
+    if(aon)op=aon.flows.has(f.id)?1:0.05;
     if(fsel)op=f===fsel?1:0.06;
     else if(bdep)op=(bdep[f.src]||isNet(f.src))&&(bdep[f.dst]||isNet(f.dst))?1:0.06;
     const dimEnd=id=>!isNet(id)&&SEV[byId[id].sev].rank<state.minSev;
@@ -1073,8 +1081,8 @@ function placeSelRing(){
 const det=$('#det');
 const tag=k=>`<span class="tag" style="color:var(${SEV[k].css})"><i style="background:var(${SEV[k].css})"></i>${SEV[k].label}</span>`;
 const xtag=k=>`<span class="xtag" style="color:var(${EXP[k].css})">${EXP[k].label}</span>`;
-function openDet(html,panel){det.innerHTML=html;det.hidden=false;det.scrollTop=0;document.body.classList.add('has-det');state.panel=panel;renderEmpty();syncUI();placeLens();}
-function closeDet(){const wasFlow=state.panel==='flow';det.hidden=true;document.body.classList.remove('has-det');state.panel=null;renderEmpty();syncUI();placeLens();if(wasFlow&&state.view==='site')refresh();}
+function openDet(html,panel){det.innerHTML=html;det.hidden=false;det.scrollTop=0;document.body.classList.add('has-det');const wasAtk=state.panel==='attack'&&panel!=='attack';state.panel=panel;renderEmpty();syncUI();placeLens();if(wasAtk&&state.view==='site')refresh();}
+function closeDet(){const wasFlow=state.panel==='flow'||state.panel==='attack';det.hidden=true;document.body.classList.remove('has-det');state.panel=null;state.attackHl=null;renderEmpty();syncUI();placeLens();if(wasFlow&&state.view==='site')refresh();}
 function contactsHtml(list){
   return `<ul class="list">${list.map(c=>`<li class="contact"><div class="who"><b>${esc(c.name||'Contact')}</b><span>${esc(c.role||'')}${c.dispo?' · '+esc(c.dispo):''}</span></div>
     ${c.phone?`<div class="line"><span>${esc(c.phone)}</span><button class="copy" data-copy="${esc(c.phone)}">Copy</button></div>`:''}
@@ -1127,7 +1135,7 @@ function showAsset(a){
   openDet(`<div class="d-head"><div><span class="cap">${esc(TYPE_LABEL[a.type])}</span><h2>${esc(a.name)}</h2><p>${esc(a.ip||'No IP address')}</p></div><button class="close" data-close aria-label="Close the asset sheet">×</button></div>
   <div class="d-body">
   <div class="actions edit-only"><button class="btn small" data-edit-asset="${esc(a.id)}">Edit</button><button class="btn small" data-new-flow-to="${esc(a.id)}">+ Inbound flow</button><button class="btn small" data-new-flow-from="${esc(a.id)}">+ Outbound flow</button></div>
-  <div class="actions docs"><button class="btn small" data-plan-asset="${esc(a.id)}">2D plan</button><button class="btn small" data-csv-flows="${esc(a.id)}">Flow matrix (CSV)</button><button class="btn small" data-csv-fw="${esc(a.id)}">Firewall rules (CSV)</button></div>
+  <div class="actions docs"><button class="btn small" data-plan-asset="${esc(a.id)}">2D plan</button><button class="btn small" data-csv-flows="${esc(a.id)}">Flow matrix (CSV)</button><button class="btn small" data-csv-fw="${esc(a.id)}">Firewall rules (CSV)</button><button class="btn small" data-blast="${esc(a.id)}">Blast radius</button></div>
   <dl class="kv">
     <dt>IS</dt><dd>${esc(SITE.name)}</dd>
     <dt>VLAN</dt><dd><i class="sw" style="display:inline-block;background:var(--c${v.ci});margin-right:7px"></i>${esc(v.num)} · ${esc(v.name)}</dd>
@@ -1138,6 +1146,7 @@ function showAsset(a){
     <dt>Exposure</dt><dd>${xtag(a.exp)}</dd>
     <dt>From Internet</dt><dd>${hops===undefined?'Not reachable':`Reachable in ${plural(hops,'hop')}`}</dd>
     <dt>Risk score</dt><dd>${riskTag(SITE.riskById[a.id])}${SITE.riskById[a.id]?` <button class="linkbtn" data-risk-why="${esc(a.id)}">Why?</button>`:''}</dd>
+    <dt>Blast radius</dt><dd>${blastLine(a)}</dd>
   </dl>
   <div id="riskWhy" hidden></div>
   <h3 class="cap">Business services impacted · ${impactOf(a).length}</h3>${impactHtml(a)}
@@ -1232,6 +1241,90 @@ function showPath(){
   openDet(`<div class="d-head"><div><span class="cap">Analysis · IS ${esc(SITE.name)}</span><h2>Reachable from Internet</h2><p>Paths that follow the recorded flows, hop by hop</p></div><button class="close" data-close aria-label="Close the analysis">×</button></div>
   <div class="d-body"><p class="summary"><b>${reach.length}</b> assets can be reached from the Internet, <b style="color:var(--crit)">${critN}</b> of them with a critical vulnerability.</p>
   ${reach.length?Object.keys(groups).map(h=>`<div class="hopgrp"><h4>${plural(+h,'hop')}</h4><ul class="list">${groups[h].map(a=>`<li class="reach"><button data-goto="${esc(a.id)}">${esc(a.name)}<small>${esc(a.role||'')} · VLAN ${esc(vnum(a))}</small></button>${tag(a.sev)}</li>`).join('')}</ul></div>`).join(''):'<p class="empty">No flow starts from the Internet. Add a flow with Internet as its source.</p>'}</div>`,'path');
+}
+/* ---- Attack paths and blast radius ---- */
+const pct=p=>p>=0.995?'100%':p<0.01?'<1%':Math.round(p*100)+'%';
+const oddsBand=p=>p>=0.5?'crit':p>=0.2?'high':p>=0.05?'med':'low';
+const oddsTag=p=>`<span class="tag" style="color:var(${SEV[oddsBand(p)].css})" title="Likelihood of getting there"><i style="background:var(${SEV[oddsBand(p)].css})"></i>${pct(p)}</span>`;
+const WHY={vuln:'vulnerable',admin:'remote admin',service:'service'};
+// The steps of a path: each asset taken over, with the port of the flow that reaches it
+function stepsHtml(x){const fl=x.flows.map(id=>FLOWS.find(f=>f.id===id));
+  return x.path.map((id,i)=>i?`<span class="ap-s">${esc(nameOf(id))}<i>${esc(fl[i-1]?fl[i-1].port:'')}</i></span>`:`<span class="ap-s from">${esc(nameOf(id))}</span>`).join('<span class="ap-ar">→</span>');}
+function blastLine(a){
+  const r=SA.blastRadius(SITE,a.id),crit=SITE.critIds.filter(id=>r.has(id)).length;
+  return r.size?`${plural(r.size,'asset')}${crit?` · <b style="color:var(--crit)">${crit} critical</b>`:''} <button class="linkbtn" data-blast="${esc(a.id)}">Show</button>`:'Reaches no other asset';
+}
+// What the panel draws on the model, worked out once per IS and starting point
+let ATK=null;
+function attackData(){
+  if(!state.attack.from||(state.attack.from!=='internet'&&!byId[state.attack.from]))state.attack.from='internet';
+  const from=state.attack.from;
+  if(ATK&&ATK.site===SITE&&ATK.from===from)return ATK;
+  const d={site:SITE,from,nodes:new Set(),flows:new Set(),hl:new Map()};
+  const mark=(key,x)=>{const n=new Set(x.path),fl=new Set(x.flows);x.flows.forEach(id=>{const f=FLOWS.find(y=>y.id===id);if(f)f.via.forEach(v=>n.add(v));});
+    n.forEach(v=>d.nodes.add(v));fl.forEach(v=>d.flows.add(v));d.hl.set(key,{nodes:n,flows:fl});};
+  if(from==='internet'){
+    const P=SA.attackPaths(SITE,SA.outside(SITE),SITE.critIds);
+    d.truncated=P.truncated;d.cut=SA.chokePoints(SITE,P.byTarget);
+    // every critical asset in reach, with its paths; below the search floor, its most likely one
+    d.targets=SITE.critIds.filter(id=>SITE.atkOut.has(id)).map(id=>({id,best:SITE.atkOut.get(id),paths:P.byTarget[id]&&P.byTarget[id].length?P.byTarget[id]:[SITE.atkOut.get(id)]}))
+      .sort((x,y)=>y.best.p-x.best.p||byId[y.id].crit-byId[x.id].crit||byId[x.id].name.localeCompare(byId[y.id].name));
+    d.out=SITE.critIds.filter(id=>!SITE.atkOut.has(id));
+    d.targets.forEach(t=>t.paths.forEach((x,i)=>mark(`${t.id}|${i}`,x)));
+  }else{
+    d.reach=[...SA.blastRadius(SITE,from).entries()].map(([id,x])=>Object.assign({id},x)).sort((x,y)=>y.p-x.p||x.steps-y.steps||byId[x.id].name.localeCompare(byId[y.id].name));
+    d.nodes.add(from);d.reach.forEach(x=>mark(x.id,x));
+    const hit=new Map();[from,...d.reach.map(x=>x.id)].forEach(id=>impactOf(byId[id]).forEach(b=>{if(!hit.has(b.id))hit.set(b.id,b);}));
+    d.biz=[...hit.values()].sort((x,y)=>y.crit-x.crit||x.name.localeCompare(y.name));
+  }
+  return ATK=d;
+}
+function setAttack(from){state.attack.from=from;state.attackHl=null;if(state.path)setPath(false);state.selId=null;state.biz=null;if(state.lens!=='physical')setLens('physical');showAttack();refresh();}
+function showAttack(){
+  const d=attackData(),from=d.from,src=byId[from];
+  const opts=`<option value="internet"${from==='internet'?' selected':''}>The Internet: every path to the critical assets</option>`+ZONES.slice().reverse().flatMap(z=>z.vlans).filter(v=>ASSETS.some(a=>a.vlan===v.id))
+    .map(v=>`<optgroup label="VLAN ${esc(v.num)} · ${esc(v.name)}">${ASSETS.filter(a=>a.vlan===v.id).map(a=>`<option value="${esc(a.id)}"${a.id===from?' selected':''}>${esc(a.name)}</option>`).join('')}</optgroup>`).join('');
+  const row=(key,x,title,right)=>`<li class="atk" data-hl-path="${esc(key)}"><div class="atk-h">${title}${right}</div><div class="atk-p">${stepsHtml(x)}</div></li>`;
+  let body;
+  if(from==='internet'){
+    const T=d.targets,n=SITE.critIds.length,np=T.reduce((k,t)=>k+t.paths.length,0);
+    body=!n?`<p class="empty">No critical asset on this IS. Set an asset's business criticality to High, or record a business service of High criticality in the Business view.</p>`
+    :`<p class="summary"><b style="color:var(${T.length?'--crit':'--fg'})">${T.length}</b> of ${plural(n,'critical asset')} can be reached from the Internet${T.length?`, along ${d.truncated?'at least ':''}${plural(np,'path')}`:''}.</p>
+    <div class="actions"><button class="btn small" data-csv-attack>Attack paths (CSV)</button></div>
+    ${T.length?`<h3 class="cap">Critical assets in reach · ${T.length}</h3>${T.map(t=>{const a=byId[t.id];return `<div class="atk-t"><div class="reach"><button data-goto="${esc(a.id)}">${esc(a.name)}<small>${esc(a.role||TYPE_LABEL[a.type])} · VLAN ${esc(vnum(a))} · ${plural(t.paths.length,'path')}</small></button>${oddsTag(t.best.p)}</div>
+      <ol class="list">${t.paths.slice(0,5).map((x,i)=>row(`${t.id}|${i}`,x,`<span class="cap">Path ${i+1} · ${plural(x.path.length-1,'step')}</span>`,oddsTag(x.p))).join('')}</ol>${t.paths.length>5?`<p class="fhint">${t.paths.length-5} more in the CSV.</p>`:''}</div>`;}).join('')}`:''}
+    ${d.cut.length?`<h3 class="cap">Where to cut · ${Math.min(d.cut.length,8)}</h3><ul class="list">${d.cut.slice(0,8).map(c=>{const a=byId[c.id];return `<li class="reach"><button data-goto="${esc(a.id)}">${esc(a.name)}<small>${c.kind==='equipment'?'Crossed: tighten its rules':c.held<c.paths?'Crossed, and taken over on some paths: harden it, tighten its rules':'Taken over on the way: harden it'} · ${c.every.length?`on every path to ${c.every.map(id=>esc(byId[id].name)).join(', ')}`:`on ${plural(c.paths,'path')}`}</small></button>${c.every.length?`<span class="tag" style="color:var(--crit)"><i style="background:var(--crit)"></i>${c.every.length} cut off</span>`:''}</li>`;}).join('')}</ul>`:''}
+    ${d.out.length?`<h3 class="cap">Out of reach from the Internet · ${d.out.length}</h3><p class="chips">${d.out.map(id=>`<button class="chip" data-goto="${esc(id)}">${esc(byId[id].name)}</button>`).join('')}</p>`:''}
+    ${d.truncated?'<p class="fhint">The search kept the most likely paths: there are more, all less likely.</p>':''}`;
+  }else{
+    const R=d.reach,likely=R.filter(x=>x.p>=0.2).length,crit=R.filter(x=>SITE.critIds.includes(x.id)).length;
+    body=!R.length?`<p class="empty">No flow leaves ${esc(src.name)} towards another asset: an attacker holding it reaches nothing else along the recorded flows.</p>`
+    :`<p class="summary">An attacker holding <b>${esc(src.name)}</b> reaches <b>${plural(R.length,'asset')}</b>, <b style="color:var(--crit)">${likely}</b> of them likely taken over (20% or more), <b style="color:var(--crit)">${crit}</b> critical.</p>
+    <div class="actions"><button class="btn small" data-csv-attack>Blast radius (CSV)</button></div>
+    ${d.biz.length?`<h3 class="cap">Business services hit · ${d.biz.length}</h3><ul class="list">${d.biz.map(b=>`<li class="biz"><button data-biz="${esc(b.id)}"><b>${esc(b.name)}</b></button>${critTag(b.crit)}</li>`).join('')}</ul>`:''}
+    <h3 class="cap">Reached · ${R.length}</h3><ol class="list">${R.map(x=>{const a=byId[x.id];return row(x.id,x,`<button data-goto="${esc(a.id)}">${esc(a.name)}${SITE.critIds.includes(a.id)?' <span class="crit-dot" title="Critical asset">●</span>':''}<small>${plural(x.steps,'step')} · last one ${esc(x.port)}, ${WHY[x.why]}</small></button>`,oddsTag(x.p));}).join('')}</ol>`;
+  }
+  openDet(`<div class="d-head"><div><span class="cap">Analysis · IS ${esc(SITE.name)}</span><h2>${from==='internet'?'Attack paths':'Blast radius'}</h2><p>${from==='internet'?'Every way in from the Internet to the critical assets, along the allowed flows':`Everything an attacker could reach from ${esc(src.name)}, along the allowed flows`}</p></div><button class="close" data-close aria-label="Close the analysis">×</button></div>
+  <div class="d-body">
+  <div class="f"><label for="atkFrom">Attacker starts from</label><select id="atkFrom" data-atk-from>${opts}</select></div>
+  ${body}
+  <p class="fhint">Hover a path to pick it out on the model. An attacker who holds an asset can open the flows that leave it. Taking the next asset over counts for the highest of: its vulnerabilities (CVSS times likelihood of exploitation, as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC) for credentials picked up on the way, 10% on any other service. A path counts for the product of its steps. Flows run one way: answering a flow does not let the destination reach back.</p>
+  </div>`,'attack');
+}
+function exportAttack(){
+  const d=attackData(),ports=x=>x.flows.map(id=>{const f=FLOWS.find(y=>y.id===id);return f?f.port:'';}).join(' > '),names=x=>x.path.map(nameOf).join(' > ');
+  let rows,name;
+  if(d.from==='internet'){
+    rows=[['Critical asset','IP','VLAN','Path','Likelihood (%)','Steps','Path through','Ports']];
+    d.targets.forEach(t=>{const a=byId[t.id];t.paths.forEach((x,i)=>rows.push([a.name,a.ip||'',vnum(a),i+1,Math.round(x.p*1000)/10,x.path.length-1,names(x),ports(x)]));});
+    name=`attack-paths_${fileStem(SITE.name)}_${today()}.csv`;
+  }else{
+    rows=[['Asset','IP','VLAN','Critical','Likelihood (%)','Steps','Path through','Ports','Last step']];
+    d.reach.forEach(x=>{const a=byId[x.id];rows.push([a.name,a.ip||'',vnum(a),SITE.critIds.includes(a.id)?'yes':'no',Math.round(x.p*1000)/10,x.steps,names(x),ports(x),WHY[x.why]]);});
+    name=`blast-radius_${fileStem(byId[d.from].name)}_${today()}.csv`;
+  }
+  if(rows.length===1){toast('Nothing to export.',true);return;}
+  saveFile(name,'text/csv;charset=utf-8',csv(rows));
 }
 function showSite(s){
   const links=WAN.filter(w=>w.a===s.id||w.b===s.id);
@@ -1553,6 +1646,8 @@ det.addEventListener('click',async e=>{
   if(q('[data-edit-flow]')){flowForm(FLOWS.find(f=>f.id===q('[data-edit-flow]').dataset.editFlow));return;}
   if(q('[data-risk-why]')){const w=$('#riskWhy');if(w.hidden){w.innerHTML=riskWhyHtml(byId[q('[data-risk-why]').dataset.riskWhy]);w.hidden=false;}else w.hidden=true;return;}
   if(q('[data-csv-risk]')){exportRisk();return;}
+  if(q('[data-blast]')){setAttack(q('[data-blast]').dataset.blast);closeCtlMobile(true);return;}
+  if(q('[data-csv-attack]')){exportAttack();return;}
   if(q('[data-biz]')){const b=SITE&&SITE.bizById[q('[data-biz]').dataset.biz];if(b)showBusiness(b);return;}
   if(q('[data-biz-hl]')){const id=q('[data-biz-hl]').dataset.bizHl;setBizHighlight(state.biz===id?null:id);showBusiness(SITE.bizById[id]);return;}
   if(q('[data-edit-biz]')){businessForm(SITE.bizById[q('[data-edit-biz]').dataset.editBiz]);return;}
@@ -1569,7 +1664,7 @@ det.addEventListener('click',async e=>{
   if(q('[data-svc]')){const id=q('[data-svc]').dataset.svc,x=SVC[id]||(state.view==='overview'?globalServices().find(y=>y.id===id):null);if(x)showService(x);return;}
   if(q('[data-edit-svc]')){const id=q('[data-edit-svc]').dataset.editSvc;serviceForm(allServices().find(y=>y.id===id));return;}
   if(q('[data-new-svc]')){serviceForm(null,q('[data-new-svc]').dataset.newSvc);return;}
-  if(q('[data-close]')){if(state.view==='overview'){selectSite(null);return;}if(state.path)setPath(false);if(state.panel==='ports'||state.panel==='risk'){closeDet();return;}select(null);}
+  if(q('[data-close]')){if(state.view==='overview'){selectSite(null);return;}if(state.path)setPath(false);if(state.panel==='ports'||state.panel==='risk'||state.panel==='attack'){closeDet();return;}select(null);}
 });
 
 /* ================= Global actions ================= */
@@ -2832,6 +2927,7 @@ function onData(){
       else if(state.panel==='path')showPath();else if(state.panel==='ports')showPorts();
       else if(state.panel==='flow'){const f=FLOWS.find(x=>x.id===state.flowId);if(f)showFlow(f);else closeDet();}
       else if(state.panel==='risk')showRisk();
+      else if(state.panel==='attack')showAttack();
       else if(state.panel==='business'){const b=SITE.bizById[state.bizPanel];if(b)showBusiness(b);else closeDet();}
     }
   }else{
@@ -2974,8 +3070,10 @@ function setColour(c){if(c===state.color)return;state.color=c;segPress('#colSeg'
 $('#colSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setColour(b.dataset.col);});
 // Hovering a flow in the sheet picks it out on the model and the diagram
 function hoverFlow(id){if(state.hoverFlow===id)return;state.hoverFlow=id;if(state.view==='site')refresh();}
-det.addEventListener('pointerover',e=>{const li=e.target.closest('[data-hl-flow]');hoverFlow(li?li.dataset.hlFlow:null);});
-det.addEventListener('pointerleave',()=>hoverFlow(null));
+det.addEventListener('pointerover',e=>{const li=e.target.closest('[data-hl-flow]');hoverFlow(li?li.dataset.hlFlow:null);
+  const p=e.target.closest('[data-hl-path]'),k=p?p.dataset.hlPath:null;if(state.panel==='attack'&&k!==state.attackHl){state.attackHl=k;refresh();}});
+det.addEventListener('pointerleave',()=>{hoverFlow(null);if(state.attackHl){state.attackHl=null;refresh();}});
+det.addEventListener('change',e=>{const s=e.target.closest('[data-atk-from]');if(s)setAttack(s.value);});
 $('#modeSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.dataset.mode===state.mode)return;
   state.mode=b.dataset.mode;segPress('#modeSeg',b);buildScene();layout();refresh();resetView();renderVlanList();syncUI();});
 $('#optFlows').addEventListener('change',e=>{state.flows=e.target.checked;rerender();});
@@ -2990,6 +3088,10 @@ $('#portsBtn').addEventListener('click',()=>{
   if(state.path){state.path=false;$('#pathBtn').setAttribute('aria-pressed','false');}
   state.selId=null;if(!state.ports){state.ports=true;$('#optPorts').checked=true;}
   showPorts();refresh();closeCtlMobile(true);
+});
+$('#atkBtn').addEventListener('click',()=>{
+  if(state.panel==='attack'){closeDet();return;}
+  setAttack('internet');closeCtlMobile(true);
 });
 $('#riskBtn').addEventListener('click',()=>{
   if(state.panel==='risk'){closeDet();return;}

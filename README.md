@@ -21,6 +21,12 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 
 Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
 
+## Next: attack paths and blast radius
+
+- **Attack paths** (*Analysis*): which critical assets an attacker could reach from the Internet, every path to each one along the allowed flows, most likely first, and **where to cut** (the assets to harden and the equipment whose rules to tighten, that every path to a critical asset goes through). Hover a path to pick it out on the model, in 3D or in 2D.
+- **Blast radius**: pick an asset (in the panel, or *Blast radius* on its sheet) and see everything an attacker holding it could reach, the most likely way to each asset, and the business services hit.
+- A step counts for the highest of: the vulnerabilities of the asset taken over (as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service; a path for the product of its steps. Both lists export as CSV.
+
 ## New in v0.6: business views and risk priorities
 
 - **Three points of view** on an IS, switched at the top: **Physical** (the 3D model and the 2D diagram), **Application** (one box per application, with the assets it runs on and the flows between applications) and **Business**.
@@ -424,6 +430,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 - GLPI: one call per asset (plus one per technician and per unknown software, cached); allow a few minutes for several thousand assets. The new GLPI 11 API (`/api.php/v2`) is not supported yet.
 - NetBox and NetFlow are not connected yet.
 - Business dependencies follow the recorded flows: a dependency with no flow on the map (a licence server reached through a proxy, a shared storage mounted by hand) is not seen. Log and monitoring flows (syslog, SNMP traps, NetFlow) are left out on purpose.
+- Attack paths follow the recorded flows only: a flow missing from the map is a path Strata does not see, and a flow recorded but blocked in practice is a path it shows. The likelihoods are a way to rank paths, not a measured probability. Paths below 0.1% or longer than 8 steps are left out of the lists (the most likely way to each asset is always given).
 - The risk score uses the EPSS and KEV values recorded on each vulnerability: Strata does not fetch the FIRST and CISA feeds, so keep them up to date through the Cyberwatch connector or an import. A vulnerability is not tied to a port, so any open flow to its asset counts as a way to reach it.
 
 ## 13. Development and tests

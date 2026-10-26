@@ -168,5 +168,112 @@ function riskPriorities(site,bizCrit){
   return {assets,fixes};
 }
 
-root.StrataAnalysis={riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph};
+/* ---- Attack paths and blast radius ---- */
+// An attacker who holds an asset can open the flows that leave it, and so reach the asset at the
+// other end on the flow's port. Taking that asset over is a step, with a likelihood from what
+// is there, the highest of:
+//  - its vulnerabilities, combined as for the risk score (severity times likelihood of
+//    exploitation, the chance that at least one gets exploited), whatever the port;
+//  - a remote administration port (SSH, Telnet, RPC, SMB, RDP, VNC, WinRM): 50%, for credentials
+//    picked up on the way;
+//  - any other service: 10%, for what the last scan did not see.
+// A path counts for the product of its steps. Flows only go from their source to their
+// destination: answering a flow does not let the destination reach back.
+const ADMIN_PORTS=new Set(['tcp/22','tcp/23','tcp/135','tcp/139','tcp/445','tcp/3389','tcp/5900','tcp/5985','tcp/5986']);
+const STEP_ADMIN=0.5,STEP_SERVICE=0.1;
+function stepOdds(asset,port){
+  const vuln=1-(asset.vulns||[]).reduce((p,v)=>p*(1-vulnRisk(v)),1),admin=ADMIN_PORTS.has(port)?STEP_ADMIN:0;
+  const p=Math.max(vuln,admin,STEP_SERVICE);
+  return {p,why:vuln>0&&p===vuln?'vuln':admin&&p===admin?'admin':'service'};
+}
+const isTarget=(site,id)=>!!site.byId[id]&&!site.byId[id].isInternet;
+// The flows leaving each node, towards an asset
+function flowsFrom(site){
+  const out=new Map();
+  site.flows.forEach(f=>{if(!isTarget(site,f.dst))return;if(!out.has(f.src))out.set(f.src,[]);out.get(f.src).push(f);});
+  return out;
+}
+// Where an attack can start from the outside: the Internet, and the Internet services that send flows in
+const outside=site=>['internet',...(site.services||[]).map(x=>x.id)];
+const EPS=1e-12;
+const better=(a,b)=>a.p>b.p+EPS||(Math.abs(a.p-b.p)<=EPS&&(a.steps<b.steps||(a.steps===b.steps&&byName(a.path.join('>'),b.path.join('>'))<0)));
+// Everything an attacker holding `from` (an asset id, or several, such as outside(site)) could
+// reach along the flows, each asset with its most likely way in.
+// Returns Map {assetId: {p, steps, path: [node ids, start first], flows: [flow ids], port, why, step}}.
+function blastRadius(site,from){
+  const starts=[].concat(from),best=new Map(),done=new Set(),out=flowsFrom(site);
+  starts.forEach(s=>best.set(s,{p:1,steps:0,path:[s],flows:[]}));
+  for(;;){
+    let n=null;
+    best.forEach((v,k)=>{if(!done.has(k)&&(n===null||better(v,best.get(n))))n=k;});
+    if(n===null)break;
+    done.add(n);const b=best.get(n);
+    (out.get(n)||[]).forEach(f=>{
+      if(done.has(f.dst))return;
+      const s=stepOdds(site.byId[f.dst],f.port);
+      const c={p:b.p*s.p,steps:b.steps+1,path:b.path.concat(f.dst),flows:b.flows.concat(f.id),port:f.port,why:s.why,step:s.p};
+      const cur=best.get(f.dst);if(!cur||better(c,cur))best.set(f.dst,c);
+    });
+  }
+  starts.forEach(s=>best.delete(s));
+  return best;
+}
+// Every path from `from` to each of `targets`, never through the same node twice, most likely
+// first. Paths below `min` likelihood or longer than `depth` steps are left out. The search
+// stops after `budget` steps, and keeps the `max` most likely paths per target: `truncated`
+// says when paths may be missing.
+// Returns {byTarget: {id: [{p, path, flows}]}, truncated}
+function attackPaths(site,from,targets,{max=20,depth=8,min=0.001,budget=50000}={}){
+  const want=new Set(targets),found=new Map(),out=flowsFrom(site),seen=new Set();
+  let left=budget,truncated=false;
+  want.forEach(t=>found.set(t,[]));
+  const walk=(n,p,path,flows)=>{
+    if(--left<0){truncated=true;return;}
+    for(const f of out.get(n)||[]){
+      if(seen.has(f.dst))continue;
+      const q=p*stepOdds(site.byId[f.dst],f.port).p;
+      if(q<min)continue;
+      const P=path.concat(f.dst),F=flows.concat(f.id);
+      if(want.has(f.dst))found.get(f.dst).push({p:q,path:P,flows:F});
+      if(P.length-1<depth){seen.add(f.dst);walk(f.dst,q,P,F);seen.delete(f.dst);}
+      if(left<0)return;
+    }
+  };
+  [].concat(from).forEach(s=>{if(want.has(s))return;seen.add(s);walk(s,1,[s],[]);seen.delete(s);});
+  const byTarget={};
+  found.forEach((l,t)=>{
+    l.sort((a,b)=>(b.p-a.p)||(a.path.length-b.path.length)||byName(a.path.join('>'),b.path.join('>')));
+    if(l.length>max)truncated=true;
+    byTarget[t]=l.slice(0,max);
+  });
+  return {byTarget,truncated};
+}
+// Where to cut: the assets an attacker goes through, and the equipment their flows cross, on the
+// way to the targets. `every` lists the targets that no path reaches without it; `paths` counts
+// the paths that use it, `held` those that take it over. Most targets cut off first.
+// Returns [{id, kind: 'asset' (taken over on some path) | 'equipment' (only crossed), every: [target ids], paths, held}]
+function chokePoints(site,byTarget){
+  const flowById=new Map(site.flows.map(f=>[f.id,f])),pts=new Map(),held=new Map();
+  Object.entries(byTarget).forEach(([t,list])=>{
+    const count=new Map();
+    list.forEach(x=>{
+      const mid=x.path.slice(1,-1),on=new Set(mid);
+      x.flows.forEach(id=>{const f=flowById.get(id);(f&&f.via||[]).forEach(v=>on.add(v));});
+      on.delete(t);
+      on.forEach(id=>count.set(id,(count.get(id)||0)+1));
+      mid.forEach(id=>held.set(id,(held.get(id)||0)+1));
+    });
+    count.forEach((n,id)=>{
+      if(!site.byId[id])return;
+      if(!pts.has(id))pts.set(id,{id,kind:'equipment',every:[],paths:0,held:0});
+      const p=pts.get(id);p.paths+=n;if(n===list.length)p.every.push(t);
+    });
+  });
+  // taken over on at least one path: an asset to harden; only crossed: equipment whose rules to tighten
+  pts.forEach(p=>{if(held.has(p.id)){p.kind='asset';p.held=held.get(p.id);}});
+  return [...pts.values()].sort((x,y)=>y.every.length-x.every.length||y.paths-x.paths||byName(x.id,y.id));
+}
+
+root.StrataAnalysis={riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph,
+  stepOdds,blastRadius,attackPaths,chokePoints,outside};
 })(typeof globalThis!=='undefined'?globalThis:this);
