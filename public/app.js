@@ -660,7 +660,7 @@ function renderDirNote(){
 function syncUI(){
   const flat=state.flat&&state.view==='site';
   document.querySelectorAll('#ctl [data-view],#ctl [data-only3d]').forEach(el=>el.hidden=(el.dataset.view&&el.dataset.view!==state.view)||(el.hasAttribute('data-only3d')&&flat));
-  $('#hint').textContent=flat?(state.tool==='flow'?'Draw a flow: press on the source asset and release on the destination':state.tool==='asset'?'Add an asset: click on a VLAN plate where it should go':'Drag the background to pan · scroll to zoom · drag an asset, or a plate by its header (anywhere on its level, or onto another level)'):state.view==='overview'?'Drag to orbit · click a plinth for its summary · click again to open it':state.arrange?'Arrange mode · drag a plate anywhere on its level (left, right, front, back) · click “Arrange plates” again to finish':'Drag to orbit · scroll to zoom · click an asset or a flow';
+  $('#hint').textContent=flat?(state.tool==='flow'?'Draw a flow: press on the source asset and release on the destination':state.tool==='asset'?'Add an asset: click on a VLAN plate where it should go':'Drag the background to pan · scroll to zoom · drag an asset, or a plate by its header (anywhere on its level, or onto another level)'):state.view==='overview'?'Drag to orbit · middle or right button to move the view · click a plinth for its summary · click again to open it':state.arrange?'Arrange mode · drag a plate anywhere on its level (left, right, front, back) · click “Arrange plates” again to finish':'Drag to orbit · middle or right button to move the view · scroll to zoom · click an asset or a flow';
   document.querySelectorAll('#siteList .site').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.site===state.ovSelId)));
   document.body.classList.toggle('readonly',!Store.canWrite);
   $('#portsBtn').setAttribute('aria-pressed',String(state.panel==='ports'));
@@ -698,6 +698,14 @@ const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(42,1,0.1,700);
 const controls=new THREE.OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;controls.dampingFactor=0.08;controls.maxPolarAngle=Math.PI*0.47;controls.minDistance=8;controls.maxDistance=260;controls.autoRotateSpeed=0.45;
+// Left button orbits; the middle button (or the right one) moves the view across the screen, left, right,
+// up and down, so the model need not stay centred on one point. The wheel zooms; on a touch screen,
+// two fingers zoom and move.
+controls.enablePan=true;controls.screenSpacePanning=true;
+controls.mouseButtons={LEFT:THREE.MOUSE.ROTATE,MIDDLE:THREE.MOUSE.PAN,RIGHT:THREE.MOUSE.PAN};
+controls.touches={ONE:THREE.TOUCH.ROTATE,TWO:THREE.TOUCH.DOLLY_PAN};
+// No browser autoscroll on a middle click in the 3D view
+renderer.domElement.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault();});
 
 const W=34,D=21,SLAB=0.3,TABLE_Y=-2;
 let floors={},pickables=[],cloud=null,selRing=null,sun=null,levelTags=[],extent=W,nLevels=0,ANIM=[],OV={spanX:60,spanZ:40,ex:14,sites:{}};
@@ -1021,6 +1029,16 @@ function layout(){
   buildFlows();placeSelRing();
 }
 function center(){return state.view==='overview'?new THREE.Vector3(0,TABLE_Y+3,0):new THREE.Vector3(0,Math.max(0,nLevels-1)*state.gap/2,0);}
+// Moving the view stops when the point it looks at reaches the edge of the model, so the model cannot be
+// lost off screen (Reset view centres it again). The camera follows that point, so the angle and the
+// distance stay as they were.
+function keepInView(){
+  const c=center(),ov=state.view==='overview';
+  const rx=ov?OV.spanX/2:extent/2,rz=ov?OV.spanZ/2:extent/2,ry=ov?6:Math.max(1,nLevels)*state.gap/2+4;
+  const t=controls.target,clamp=(v,o,r)=>Math.max(o-r,Math.min(o+r,v));
+  const dx=clamp(t.x,c.x,rx)-t.x,dy=clamp(t.y,c.y,ry)-t.y,dz=clamp(t.z,c.z,rz)-t.z;
+  if(dx||dy||dz){t.x+=dx;t.y+=dy;t.z+=dz;camera.position.x+=dx;camera.position.y+=dy;camera.position.z+=dz;}
+}
 // Opacity of every asset and flow under the current filters and selection (3D model and 2D diagram)
 function computeVis(){
   const sel=selAsset(),nb=sel?neighborsOf(sel.id):null,fsel=(state.hoverFlow&&FLOWS.find(x=>x.id===state.hoverFlow))||(state.panel==='flow'?FLOWS.find(x=>x.id===state.flowId):null);
@@ -3174,7 +3192,9 @@ function pick(ev){
 let down=null,drag=null;
 const flowPath=f=>f.hops.map(id=>esc(nameOf(id))).join(' → ');
 renderer.domElement.addEventListener('pointerdown',e=>{
-  down={x:e.clientX,y:e.clientY};stopRotate();
+  // only the left button (or a touch) selects and drags; the others move the view
+  down=e.button===0?{x:e.clientX,y:e.clientY}:null;stopRotate();
+  if(e.button!==0)return;
   // Arrange mode: grab a plate (or an asset on it) and slide it along its level
   if(state.view!=='site'||!state.arrange||state.mode!=='zones'||!Store.canWrite||state.panel==='form')return;
   const u=pick(e),id=u&&(u.plate||(u.asset&&u.asset.vlan));if(!id||!floors[id])return;
@@ -3261,7 +3281,7 @@ function setArrange(on){
   if(on&&state.mode!=='zones')toast('In “1 VLAN per floor”, reorder the floors with the arrows in the VLAN list.');
   $('#arrangeBtn').setAttribute('aria-pressed',String(state.arrange));
   document.body.classList.toggle('arranging',state.arrange);
-  $('#hint').textContent=state.arrange?'Arrange mode · drag a plate anywhere on its level (left, right, front, back) · click “Arrange plates” again to finish':'Drag to orbit · scroll to zoom · click an asset or a flow';
+  $('#hint').textContent=state.arrange?'Arrange mode · drag a plate anywhere on its level (left, right, front, back) · click “Arrange plates” again to finish':'Drag to orbit · middle or right button to move the view · scroll to zoom · click an asset or a flow';
 }
 function stopRotate(){if(state.rotate){state.rotate=false;$('#optRotate').checked=false;controls.autoRotate=false;}}
 
@@ -3362,7 +3382,7 @@ function tick(){
   if(fly){const k=Math.min(1,(performance.now()-fly.t0)/fly.dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
     controls.target.lerpVectors(fly.fromT,fly.toT,e);camera.position.lerpVectors(fly.fromC,fly.toC,e);if(k>=1)fly=null;}
   if(!reduceMotion)ANIM.forEach(o=>{if(!o.tube.visible)return;o.parts.forEach(p=>{if(!p.visible)return;p.userData.t=(p.userData.t+dt*o.speed)%1;p.position.copy(o.curve.getPoint(p.userData.t));});});
-  if(!(state.flat&&state.view==='site')){controls.update();renderer.render(scene,camera);}requestAnimationFrame(tick);
+  if(!(state.flat&&state.view==='site')){controls.update();if(!fly)keepInView();renderer.render(scene,camera);}requestAnimationFrame(tick);
 }
 function start(){
   resize();buildOverview();renderCart();syncUI();renderEmpty();setViewNow();tick();

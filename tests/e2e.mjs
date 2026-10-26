@@ -74,6 +74,17 @@ async function colours(page, selector) {
   }, png);
 }
 
+// Share of the pixels that differ between two screenshots of the same size
+async function changed(page, a, b) {
+  return page.evaluate(async ([a, b]) => {
+    const load = async src => { const img = new Image(); img.src = 'data:image/png;base64,' + src; await img.decode(); const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const x = c.getContext('2d'); x.drawImage(img, 0, 0); return x.getImageData(0, 0, c.width, c.height).data; };
+    const [p, q] = [await load(a), await load(b)];
+    let diff = 0;
+    for (let i = 0; i < p.length; i += 4) if (Math.abs(p[i] - q[i]) + Math.abs(p[i + 1] - q[i + 1]) + Math.abs(p[i + 2] - q[i + 2]) > 30) diff++;
+    return diff / (p.length / 4);
+  }, [a.toString('base64'), b.toString('base64')]);
+}
+
 test('walk-through: demo, 3D model, 2D diagram, then a proposal from draft to approval', async () => {
   // 1. The admin signs in on an empty map and loads the demo
   const admin = await signIn('admin');
@@ -87,6 +98,23 @@ test('walk-through: demo, 3D model, 2D diagram, then a proposal from draft to ap
   await admin.waitForTimeout(1500);
   const n3d = await colours(admin, '#scene canvas');
   assert.ok(n3d > 40, `the 3D view looks blank (${n3d} colours)`);
+
+  // The middle button moves the view across the screen; a middle click selects nothing
+  const box = await admin.locator('#scene canvas').boundingBox(), cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  const still = await admin.locator('#scene canvas').screenshot();
+  await admin.mouse.move(cx, cy);
+  await admin.mouse.down({ button: 'middle' });
+  await admin.mouse.move(cx + 260, cy, { steps: 12 }); // sideways: zooming would ignore it
+  await admin.mouse.up({ button: 'middle' });
+  await admin.waitForTimeout(800);
+  const moved = await admin.locator('#scene canvas').screenshot();
+  const share = await changed(admin, still, moved);
+  assert.ok(share > 0.05, `the view did not move with the middle button (${(share * 100).toFixed(1)}% of the pixels changed)`);
+  await admin.mouse.click(cx, cy, { button: 'middle' });
+  await admin.waitForTimeout(300);
+  assert.equal(await admin.evaluate(() => document.body.classList.contains('has-det')), false, 'a middle click opened a sheet');
+  await admin.click('#resetBtn');
+  await admin.waitForTimeout(1000);
 
   // 3. The 2D diagram shows the same IS
   await admin.click('#viewSeg [data-v="2d"]');

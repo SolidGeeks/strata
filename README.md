@@ -23,6 +23,8 @@ Follow it on the [milestones page](https://github.com/SolidGeeks/strata/mileston
 
 ## Next: attack paths and blast radius
 
+- **Moving around the 3D view**: drag with the left button to orbit, with the **middle** (or right) button to move the view left, right, up and down, and scroll to zoom; on a touch screen, two fingers zoom and move. The view stops at the edge of the model, and *Reset view* centres it again.
+
 - **Attack paths** (*Analysis*): which critical assets an attacker could reach from the Internet, every path to each one along the allowed flows, most likely first, and **where to cut** (the assets to harden and the equipment whose rules to tighten, that every path to a critical asset goes through). Hover a path to pick it out on the model, in 3D or in 2D.
 - **Blast radius**: pick an asset (in the panel, or *Blast radius* on its sheet) and see everything an attacker holding it could reach, the most likely way to each asset, and the business services hit.
 - A step counts for the highest of: the vulnerabilities of the asset taken over (as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service; a path for the product of its steps. Both lists export as CSV.
