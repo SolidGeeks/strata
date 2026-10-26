@@ -2014,7 +2014,8 @@ const PC_FLOW=['#2f63c8','#d97a0f','#13917f','#8549c9','#4a8f1f','#c93f8f','#a88
 const PC={ink:'#1b2125',muted:'#454e53',line:'#c2c6c0',panel:'#ffffff',paper:'#f7f7f3',zone:'#ecece6',dev:'#2b3238',devText:'#f0eee8',net:'#8a3fbf',inter:'#2a7fa6',intra:'#5f6a72',crit:'#c4313d',high:'#cc6a22',med:'#b38d14',low:'#3a8763',none:'#6a747a',accent:'#2b5884',
   vlan:['#d2a198','#9db9a3','#d5b671','#97acc3','#aea8c9','#b8c39e','#c6a9b9','#a9c4c0','#d8b49a','#b3b8a6']};
 const measureCtx=document.createElement('canvas').getContext('2d');
-const tw=(t,size,weight,fam)=>{measureCtx.font=`${weight} ${size}px ${fam}`;return measureCtx.measureText(String(t)).width;};
+// Width of a text in px: a number, never the text (the drawings place their shapes with it)
+const tw=(t,size,weight,fam)=>{measureCtx.font=`${weight} ${size}px ${fam}`;return Math.max(0,Number(measureCtx.measureText(String(t)).width)||0);};
 function clip(t,size,weight,fam,max){t=String(t||'');if(tw(t,size,weight,fam)<=max)return t;while(t.length>1&&tw(t+'…',size,weight,fam)>max)t=t.slice(0,-1);return t+'…';}
 // Which flows and assets the plan of an asset shows: its own flows, the equipment they cross,
 // and every recorded path from the Internet to it and from it to the Internet
