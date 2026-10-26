@@ -43,6 +43,7 @@ Connectors are now **modules**: a folder with a manifest (`strata-module.json`: 
 - **Attack paths** (*Analysis*): which critical assets an attacker could reach from the Internet, every path to each one along the allowed flows, most likely first, and **where to cut** (the assets to harden and the equipment whose rules to tighten, that every path to a critical asset goes through). Hover a path to pick it out on the model, in 3D or in 2D.
 - **Blast radius**: pick an asset (in the panel, or *Blast radius* on its sheet) and see everything an attacker holding it could reach, the most likely way to each asset, and the business services hit.
 - A step counts for the highest of: the vulnerabilities of the asset taken over (as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service; a path for the product of its steps. Both lists export as CSV.
+- **Incident mode, with Muster** (*Incident* in the controls of an IS): mark assets compromised, suspected or contained; the incident sheet lists who to call, the flows to cut and the firewall where to cut each, the business services and assets that depend on them, what the attacker reaches next. A Muster incident opens on the map and its playbook decisions point at the assets. Each asset also has anonymised *AI prompts*: its major risks, and a guide for an AI to write the response playbooks of its plausible incidents in Muster's format.
 - **Architecture file**: one document per IS (*Analysis › Architecture file*, or the IS summary), in the shape audits and security accreditation expect: cover and sign-off table, summary, scope, network diagram, zones and VLANs, applications, asset inventory, flow matrix, the rules each firewall needs, exposure, vulnerabilities and remediation order, attack paths, plans of the exposed and critical assets, incident contacts, change history and method. *Download* saves it as one HTML file, with no outside resource, that prints to A4 PDF from the browser.
 - **Nix and NixOS**: the repository is a flake, with a package and a hardened `services.strata` module (section 6, *Nix and NixOS*).
 - **Failed sign-ins are limited** per account and per client address (`429`), and passwords can be read from files (`EDIT_PASS_FILE`, `VIEW_PASS_FILE`): section 3.
@@ -458,6 +459,8 @@ Every route needs the same credentials as the interface (a local account with Ba
 | `DELETE /api/assets/{id}` | Deletes an asset |
 | `PUT /api/wan` | Replaces the links between IS: `{"links": [...]}` |
 | `POST /api/import` | Replaces the whole map: `{si, assets, wan, services}` |
+| `GET /api/incidents` | Incident mode of every IS: `{incidents: {<IS id>: {on, marks, cuts, run, log}}}` |
+| `PUT /api/incidents/{IS id}` | Replaces the incident of an IS (`contributor` and up, no proposal): marks are `compromised`, `suspected` or `contained` |
 | `PUT /api/services` | Replaces the common catalogue of Internet services: `{"services": [...]}` |
 | `GET /api/history` | Latest changes (`?before=REV&limit=N`); `GET /api/history/{rev}`: the before/after details |
 | `GET /api/state?at=REV` | The map as it was right after version REV |

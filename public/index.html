@@ -109,6 +109,12 @@
     <div class="seg" id="sevSeg" role="group" aria-label="Minimum severity"></div>
   </div>
   <div class="sec" data-view="site">
+    <h3 class="cap">Incident</h3>
+    <div class="btns">
+      <button class="btn" id="incBtn" aria-pressed="false" title="Mark compromised assets: who to call, which flows to cut, what depends on them. Muster incidents open here."><span>Incident mode</span><span class="mono" id="incCount"></span></button>
+    </div>
+  </div>
+  <div class="sec" data-view="site">
     <h3 class="cap">Analysis</h3>
     <div class="btns">
       <button class="btn" id="portsBtn" aria-pressed="false"><span>Exposed ports</span><span class="mono" id="portsCount"></span></button>
@@ -204,6 +210,7 @@
 <input type="file" id="io" accept="application/json,.json" tabindex="-1" aria-hidden="true">
 
 <script src="analysis.js"></script>
+<script src="incident.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

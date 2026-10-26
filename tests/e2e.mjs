@@ -161,3 +161,45 @@ test('walk-through: demo, 3D model, 2D diagram, then a proposal from draft to ap
 
   assert.deepEqual(errors, [], 'JavaScript errors in the pages');
 });
+
+test('incident mode: a Muster incident opens on the map, a contributor works it, others see it live', async () => {
+  // runs after the walk-through: the demo is loaded
+  const alice = await signIn('alice');
+  await openIs(alice, 'lyon');
+  const bob = await signIn('bob');
+  await openIs(bob, 'lyon');
+
+  // the contributor switches incident mode on and opens the ransomware example
+  await alice.click('#incBtn');
+  await alice.click('#det [data-inc-open="0"]');
+  await alice.waitForSelector('#det .inc-run');
+  await alice.click('#det [data-inc-go]');
+  await alice.click('#det [data-inc-lbl="Yes"]');
+  await alice.waitForFunction(() => /Isolate affected hosts/.test(document.querySelector('#det .inc-step.cur')?.textContent || ''));
+  const text = await alice.locator('#det').textContent();
+  for (const s of ['file-01', 'pc-acct-01', 'Who to call', 'Flows to cut', 'Reachable next']) assert.ok(text.includes(s), `the incident sheet lacks ${s}`);
+  // the step points at the flows to cut, and cutting one is recorded
+  await alice.click('#det .inc-tg [data-inc-cut]');
+  await alice.waitForFunction(() => /Flow cut at/.test(document.querySelector('#det .inc-log')?.textContent || ''));
+  // the 2D diagram shows the marks
+  await alice.click('#viewSeg [data-v="2d"]');
+  await alice.waitForSelector('#flatSvg text');
+  assert.match(await alice.locator('#flatSvg').textContent(), /COMPROMISED/);
+
+  // the approver's page follows without a reload
+  await bob.waitForFunction(() => /Incident mode/i.test(document.querySelector('#cart .incband')?.textContent || ''));
+  const saved = await api('bob', 'GET', 'api/incidents');
+  assert.equal(saved.data.incidents.lyon.run.cur, 'isolate');
+  assert.equal(saved.data.incidents.lyon.cuts.length, 1);
+
+  // the anonymised prompts of an asset name nothing that identifies it
+  await alice.fill('#search', 'db-erp');
+  await alice.press('#search', 'Enter');
+  await alice.click('#det [data-ai-asset]');
+  await alice.waitForSelector('#ai-risk');
+  const prompt = await alice.locator('#ai-risk').textContent();
+  for (const s of ['db-erp', '10.20.0.21', 'Lyon', 'example.com']) assert.ok(!prompt.includes(s), `the prompt leaks ${s}`);
+  assert.match(prompt, /ASSET-T/);
+
+  assert.deepEqual(errors, [], 'JavaScript errors in the pages');
+});

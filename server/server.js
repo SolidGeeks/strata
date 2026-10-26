@@ -60,6 +60,7 @@ const DB_FILE = path.join(CONFIG.dataDir, 'db.json');
 const USERS_FILE = path.join(CONFIG.dataDir, 'users.json');
 const HISTORY_FILE = path.join(CONFIG.dataDir, 'history.jsonl');
 const PROPOSALS_FILE = path.join(CONFIG.dataDir, 'proposals.json');
+const INCIDENTS_FILE = path.join(CONFIG.dataDir, 'incidents.json');
 const BACKUP_DIR = path.join(CONFIG.dataDir, 'backups');
 // Ids and account names become object keys: the names that reach Object.prototype are refused
 const ID_RE = /^(?!(?:__proto__|constructor|prototype)$)[A-Za-z0-9_.:@+~-]{1,120}$/;
@@ -81,7 +82,7 @@ let state = { si: {}, assets: {}, wan: [], services: [], rev: 0, updatedAt: null
 // The data files describe the weak spots of the network, the accounts and the connector secrets: readable by
 // the server's own user only. Files written by older versions with the default mode are tightened at start.
 function protectDataFiles() {
-  const files = [DB_FILE, USERS_FILE, HISTORY_FILE, PROPOSALS_FILE, path.join(CONFIG.dataDir, 'connectors.json')];
+  const files = [DB_FILE, USERS_FILE, HISTORY_FILE, PROPOSALS_FILE, INCIDENTS_FILE, path.join(CONFIG.dataDir, 'connectors.json')];
   try { for (const f of fs.readdirSync(BACKUP_DIR)) files.push(path.join(BACKUP_DIR, f)); } catch { }
   for (const f of files) { try { if ((fs.statSync(f).mode & 0o077) !== 0) fs.chmodSync(f, 0o600); } catch { } }
 }
@@ -196,6 +197,26 @@ const nameOfDoc = (kind, doc) => !doc ? '' : kind === 'si' ? (doc.name || '') : 
 let proposals = {};
 function loadProposals() { if (fs.existsSync(PROPOSALS_FILE)) { try { proposals = JSON.parse(fs.readFileSync(PROPOSALS_FILE, 'utf8')) || {}; } catch { proposals = {}; } } }
 const saveProposals = () => { broadcast('proposals', { at: Date.now() }); return writeJson(PROPOSALS_FILE, proposals); };
+
+/* ---------------- Incidents ----------------
+   Incident mode, one document per IS: the assets marked compromised, suspected or contained, the flows cut, the
+   Muster incident being run and its timeline. Kept apart from the map and its history: during an incident it
+   changes by the minute and goes through no proposal. Contributors and up change it. */
+let incidents = {};
+const INCIDENT_STATES = ['compromised', 'suspected', 'contained'];
+function loadIncidents() { if (fs.existsSync(INCIDENTS_FILE)) { try { const o = JSON.parse(fs.readFileSync(INCIDENTS_FILE, 'utf8')); incidents = isObj(o) ? o : {}; } catch { incidents = {}; } } }
+const saveIncidents = () => { broadcast('incidents', { at: Date.now() }); return writeJson(INCIDENTS_FILE, incidents); };
+function cleanIncident(b) {
+  if (!isObj(b)) throw httpError(400, 'Body must be a JSON object');
+  const marks = {};
+  if (isObj(b.marks)) for (const [k, v] of Object.entries(b.marks)) { if (ID_RE.test(k) && INCIDENT_STATES.includes(v)) marks[k] = v; }
+  return {
+    on: !!b.on, marks,
+    cuts: Array.isArray(b.cuts) ? b.cuts.filter(x => typeof x === 'string' && ID_RE.test(x)).slice(0, 5000) : [],
+    run: isObj(b.run) ? b.run : null,
+    log: Array.isArray(b.log) ? b.log.filter(isObj).slice(0, 500) : [],
+  };
+}
 function cleanChanges(c) {
   const out = { si: {}, assets: {} };
   if (!isObj(c)) return out;
@@ -482,6 +503,18 @@ async function api(req, res, parts, url, auth) {
     res.write(`retry: 3000\nevent: change\ndata: ${JSON.stringify({ rev: state.rev })}\n\n`);
     clients.add(res); req.on('close', () => clients.delete(res));
     return;
+  }
+
+  /* ---- incident mode: contributors and up, without a proposal ---- */
+  if (r1 === 'incidents' && !id && method === 'GET') return send(res, 200, { incidents });
+  if (r1 === 'incidents' && id !== undefined && !r3 && method === 'PUT') {
+    if (!ID_RE.test(id)) throw httpError(400, 'Invalid id');
+    need(auth, 'contributor');
+    if (!own(state.si, id)) throw httpError(404, 'Unknown IS');
+    const doc = cleanIncident(await readBody(req, 512 * 1024));
+    incidents[id] = { ...doc, updatedAt: new Date().toISOString(), updatedBy: auth.user || '' };
+    await saveIncidents();
+    return send(res, 200, { ok: true, incident: incidents[id] });
   }
 
   /* ---- live map: approvers and admins ---- */
@@ -798,6 +831,7 @@ const connectors = /^(0|false|no|off)$/i.test(env.CONNECTORS || '') ? null : cre
 });
 const modStore = connectors ? createStore({ registryUrl: CONFIG.moduleRegistry, uploads: CONFIG.moduleUpload, installedDir: MODULES_INSTALLED, strataVersion: STRATA_VERSION, connectors, log }) : null;
 loadProposals();
+loadIncidents();
 bootstrapUsers();
 await backup('startup');
 setInterval(() => backup('scheduled').catch(e => log('Backup failed:', e.message)), CONFIG.backupEveryHours * 3600 * 1000).unref();

@@ -26,7 +26,7 @@ const F=(id,title,cvss,sev)=>Object.assign({id,title,cvss:cvss==null?null:cvss,s
 const TYPE_LABEL={server:'Server',dc:'Domain controller',db:'Database',hypervisor:'Hypervisor / storage',firewall:'Firewall',gateway:'VPN gateway',router:'Router / L3 core',switch:'Switch / load balancer',workstation:'Workstation',printer:'Printer',phone:'IP phone',ap:'Wi-Fi access point',camera:'IP camera',plc:'PLC',iot:'IoT device'};
 // Interconnection equipment: flows can be routed through these
 const INTERCO=new Set(['firewall','router','switch','gateway']);
-const SA=StrataAnalysis;
+const SA=StrataAnalysis,IR=StrataIncident;
 // Colours of the "Per flow" mode: --f0 to --f9 in app.css
 const FLOW_PAL=10;
 // Internet endpoints: the Internet as a whole, or a named service (ESET updates, Ubuntu mirrors…) as "svc:<id>"
@@ -386,6 +386,7 @@ const Store={
     es.addEventListener('change',e=>{try{const {rev}=JSON.parse(e.data);if(rev!==this.rev&&!this.bulk)this.pull();}catch(err){}});
     es.addEventListener('proposals',()=>{onProposalsChanged();});
     es.addEventListener('connectors',()=>{onConnectorsChanged();});
+    es.addEventListener('incidents',()=>{onIncidentsChanged();});
     let first=true;es.addEventListener('open',()=>{if(!first)this.pull();first=false;});
   },
   async api(method,url,body){
@@ -620,8 +621,9 @@ function renderCart(){
     const s=SITE.stats;
     c.innerHTML=`<div class="t"><button class="back" data-back>← Overview</button><h1>IS ${esc(SITE.name)}</h1><span class="cap">${esc(SITE.kind||'Information system')}</span></div><div class="pl"><span class="cap">Sheet</span><b>${SITE.planche}</b></div>
     <div class="meta"><span>Zones <b>${ZONES.length}</b></span><span>Scale <b>1 plate = 1 VLAN</b></span><span>Storage ${storeBadge()}</span></div>
-    ${nums([[s.assets,'assets'],[s.xNet,'internet-facing','net'],[s.crit,'critical vulns','alert'],[s.risk,'risky flows','alert']])}`;
+    ${nums([[s.assets,'assets'],[s.xNet,'internet-facing','net'],[s.crit,'critical vulns','alert'],[s.risk,'risky flows','alert']])}${incBand()}`;
   }
+  document.body.classList.toggle('incident-on',incOn());
   placeCtl();
 }
 function placeCtl(){
@@ -631,7 +633,7 @@ function placeCtl(){
 }
 addEventListener('resize',placeCtl);
 function renderSiteList(){
-  $('#siteList').innerHTML=SITES.length?SITES.map(s=>`<button class="site" data-site="${esc(s.id)}" aria-pressed="${state.ovSelId===s.id}"><b>${esc(s.name)}</b><span class="c" title="Critical vulnerabilities">${s.stats.crit} crit.</span><small>${esc(s.kind||'IS')} · ${plural(s.stats.vlans,'VLAN')} · ${plural(s.stats.assets,'asset')}</small></button>`).join(''):'<p class="empty">No information system yet.</p>';
+  $('#siteList').innerHTML=SITES.length?SITES.map(s=>`<button class="site" data-site="${esc(s.id)}" aria-pressed="${state.ovSelId===s.id}"><b>${esc(s.name)}</b>${Inc.all[s.id]&&Inc.all[s.id].on?'<span class="incb">Incident</span>':''}<span class="c" title="Critical vulnerabilities">${s.stats.crit} crit.</span><small>${esc(s.kind||'IS')} · ${plural(s.stats.vlans,'VLAN')} · ${plural(s.stats.assets,'asset')}</small></button>`).join(''):'<p class="empty">No information system yet.</p>';
 }
 function renderVlanList(){
   // By zone: listed left to right as on the level. One VLAN per floor: listed top to bottom.
@@ -671,6 +673,8 @@ function syncUI(){
   $('#portsBtn').setAttribute('aria-pressed',String(state.panel==='ports'));
   $('#riskBtn').setAttribute('aria-pressed',String(state.panel==='risk'));
   $('#atkBtn').setAttribute('aria-pressed',String(state.panel==='attack'));
+  $('#incBtn').setAttribute('aria-pressed',String(incOn()));$('#incBtn').classList.toggle('on',incOn());
+  $('#incCount').textContent=incOn()?String(incView().aff.length):'';
   renderLegend();renderDirNote();
 }
 function renderEmpty(){
@@ -968,6 +972,9 @@ function buildScene(){
       if(DIFF&&DIFF.A[a.id]){const r=new THREE.Mesh(new THREE.RingGeometry(1.2,1.42,40).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:new THREE.Color(css(DIFF_COL[DIFF.A[a.id]])),depthWrite:false}));r.position.y=0.05;ag.add(r);}
       const top=Math.max(h,pinTop);
       const lift=compact&&sp.ci%2?0.62:0;
+      const im=incMark(a.id);
+      if(im){const ic=new THREE.Color(css(INC_COL[im]));const r=new THREE.Mesh(new THREE.RingGeometry(1.3,1.7,40).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:ic,depthWrite:false,transparent:true,opacity:im==='suspected'?0.75:0.95}));r.position.y=0.07;ag.add(r);
+        const it=tagLabel(INC_LBL[im].toUpperCase(),css(INC_COL[im]),0.5,600,css(INC_COL[im]));it.position.set(0,top+(a.ports.length?2.0:1.4)+lift,0);ag.add(it);}
       const label=tagLabel(a.name,a.sev==='none'?null:sevColor(a.sev));label.position.set(0,top+0.7+lift,0);ag.add(label);
       let portLabel=null;
       if(a.ports.length){portLabel=tagLabel(portText(a),expColor(a.exp),0.5,600,expColor(a.exp));portLabel.position.set(0,top+1.35+lift,0);ag.add(portLabel);}
@@ -988,7 +995,7 @@ function buildScene(){
     const lb=tagLabel(x.name,css('--x-net'),0.5);lb.position.y=1.15;g.add(lb);scene.add(g);byId[x.id]={id:x.id,name:x.name,group:g,h:0,isInternet:true,isSvc:true};return g;});
 }
 function anchor(id){const a=byId[id],p=new THREE.Vector3();a.group.getWorldPosition(p);if(!a.isInternet)p.y+=a.h*0.55;else if(!a.isSvc)p.y-=0.6;return p;}
-function flowColorVar(f){if(DIFF&&DIFF.F[f.id])return DIFF_COL[DIFF.F[f.id]];return state.color==='exp'?EXP[f.level].css:state.color==='flow'?'--f'+(SITE.fcol[f.id]||0):(f.risk?'--crit':'--thread');}
+function flowColorVar(f){if(DIFF&&DIFF.F[f.id])return DIFF_COL[DIFF.F[f.id]];const iv=incView();if(iv&&iv.flows.has(f.id))return iv.flows.get(f.id).cut?'--none':'--crit';return state.color==='exp'?EXP[f.level].css:state.color==='flow'?'--f'+(SITE.fcol[f.id]||0):(f.risk?'--crit':'--thread');}
 // A flow is drawn hop by hop: source -> each interconnection device -> destination,
 // with an arrowhead at the end of every hop so the direction and the origin read at a glance
 const coneGeo=new THREE.ConeGeometry(0.2,0.55,10).rotateX(Math.PI/2),pickMat=new THREE.MeshBasicMaterial({colorWrite:false,depthWrite:false});
@@ -1053,7 +1060,9 @@ function computeVis(){
   const dirPeers=sel&&state.dir!=='all'?new Set(FLOWS.filter(f=>dirOk(f,sel)).flatMap(f=>f.hops)):null;
   const aOp={},fv={},bdep=state.biz&&SITE.impact.byBusiness[state.biz]?SITE.impact.byBusiness[state.biz].assets:null;
   const atk=state.panel==='attack'?attackData():null,ahl=atk&&state.attackHl?atk.hl.get(state.attackHl):null,aon=atk&&(ahl||atk);
+  const iv=incView(),idim=iv&&iv.dim;
   ASSETS.forEach(a=>{let op=1;
+    if(idim&&!iv.focus.has(a.id))op=0.16;
     if(SEV[a.sev].rank<state.minSev)op=0.15;
     if(EXP[a.exp].rank<state.minExp)op=Math.min(op,0.15);
     if(sel&&sel!==a&&!(dirPeers?dirPeers.has(a.id):nb.has(a.id)))op=Math.min(op,0.18);
@@ -1068,6 +1077,7 @@ function computeVis(){
     if(!sel&&state.dir!=='all'&&!dirOk(f,null))vis=false;
     if(EXP[f.level].rank<state.minExp)vis=false;
     let op=f.risk?0.95:0.8;
+    if(idim)op=iv.flows.has(f.id)?1:0.05;
     if(sel)op=dirOk(f,sel)?1:0.07;
     if(state.path)op=(EXPO[f.src]!==undefined&&EXPO[f.dst]===EXPO[f.src]+1)?1:0.07;
     if(aon)op=aon.flows.has(f.id)?1:0.05;
@@ -1108,7 +1118,7 @@ function placeSelRing(){
 const det=$('#det');
 const tag=k=>`<span class="tag" style="color:var(${SEV[k].css})"><i style="background:var(${SEV[k].css})"></i>${SEV[k].label}</span>`;
 const xtag=k=>`<span class="xtag" style="color:var(${EXP[k].css})">${EXP[k].label}</span>`;
-function openDet(html,panel){det.innerHTML=html;det.hidden=false;det.scrollTop=0;document.body.classList.add('has-det');const wasAtk=state.panel==='attack'&&panel!=='attack';state.panel=panel;renderEmpty();syncUI();placeLens();if(wasAtk&&state.view==='site')refresh();}
+function openDet(html,panel){det.classList.toggle('wide',panel==='incident'||panel==='ai');det.innerHTML=html;det.hidden=false;det.scrollTop=0;document.body.classList.add('has-det');const wasAtk=state.panel==='attack'&&panel!=='attack';state.panel=panel;renderEmpty();syncUI();placeLens();if(wasAtk&&state.view==='site')refresh();}
 function closeDet(){const wasFlow=state.panel==='flow'||state.panel==='attack';det.hidden=true;document.body.classList.remove('has-det');state.panel=null;state.attackHl=null;renderEmpty();syncUI();placeLens();if(wasFlow&&state.view==='site')refresh();}
 function contactsHtml(list){
   return `<ul class="list">${list.map(c=>`<li class="contact"><div class="who"><b>${esc(c.name||'Contact')}</b><span>${esc(c.role||'')}${c.dispo?' · '+esc(c.dispo):''}</span></div>
@@ -1162,7 +1172,8 @@ function showAsset(a){
   openDet(`<div class="d-head"><div><span class="cap">${esc(TYPE_LABEL[a.type])}</span><h2>${esc(a.name)}</h2><p>${esc(a.ip||'No IP address')}</p></div><button class="close" data-close aria-label="Close the asset sheet">×</button></div>
   <div class="d-body">
   <div class="actions edit-only"><button class="btn small" data-edit-asset="${esc(a.id)}">Edit</button><button class="btn small" data-new-flow-to="${esc(a.id)}">+ Inbound flow</button><button class="btn small" data-new-flow-from="${esc(a.id)}">+ Outbound flow</button></div>
-  <div class="actions docs"><button class="btn small" data-plan-asset="${esc(a.id)}">2D plan</button><button class="btn small" data-csv-flows="${esc(a.id)}">Flow matrix (CSV)</button><button class="btn small" data-csv-fw="${esc(a.id)}">Firewall rules (CSV)</button><button class="btn small" data-blast="${esc(a.id)}">Blast radius</button></div>
+  ${incAssetHtml(a)}
+  <div class="actions docs"><button class="btn small" data-plan-asset="${esc(a.id)}">2D plan</button><button class="btn small" data-ai-asset="${esc(a.id)}">AI prompts</button><button class="btn small" data-csv-flows="${esc(a.id)}">Flow matrix (CSV)</button><button class="btn small" data-csv-fw="${esc(a.id)}">Firewall rules (CSV)</button><button class="btn small" data-blast="${esc(a.id)}">Blast radius</button></div>
   <dl class="kv">
     <dt>IS</dt><dd>${esc(SITE.name)}</dd>
     <dt>VLAN</dt><dd><i class="sw" style="display:inline-block;background:var(--c${v.ci});margin-right:7px"></i>${esc(v.num)} · ${esc(v.name)}</dd>
@@ -2413,6 +2424,7 @@ function flatSvgMarkup(G,V,forExport,pal){
     o+=`<g data-asset="${esc(a.id)}" opacity="${drag?0.85:op}" class="fa">`;
     if(isSel)o+=`<rect x="${x-0.16}" y="${y-0.16}" width="${g.w+0.32}" height="${g.h+0.32}" rx="0.32" fill="none" stroke="${C('--accent')}" stroke-width="0.12"/>`;
     if(DIFF&&DIFF.A[a.id])o+=`<rect x="${x-0.28}" y="${y-0.28}" width="${g.w+0.56}" height="${g.h+0.56}" rx="0.4" fill="none" stroke="${C(DIFF_COL[DIFF.A[a.id]])}" stroke-width="0.14" stroke-dasharray="${DIFF.A[a.id]==='added'?'none':'0.35 0.2'}"/><text x="${x+g.w+0.1}" y="${y-0.36}" text-anchor="end" font-family="${D}" font-weight="700" font-size="0.36" fill="${C(DIFF_COL[DIFF.A[a.id]])}">${DIFF.A[a.id]==='added'?'NEW':'CHANGED'}</text>`;
+    const im=forExport?null:incMark(a.id);if(im)o+=`<rect x="${x-0.3}" y="${y-0.3}" width="${g.w+0.6}" height="${g.h+0.6}" rx="0.42" fill="none" stroke="${C(INC_COL[im])}" stroke-width="0.16"${im==='suspected'?' stroke-dasharray="0.35 0.2"':''}/><text x="${x+g.w+0.1}" y="${y-0.4}" text-anchor="end" font-family="${D}" font-weight="700" font-size="0.36" fill="${C(INC_COL[im])}">${INC_LBL[im].toUpperCase()}</text>`;
     o+=`<rect x="${x}" y="${y}" width="${g.w}" height="${g.h}" rx="0.2" fill="${fill}" stroke="${dev?fill:C('--line')}" stroke-width="0.05"/>`;
     if(sev)o+=`<rect x="${x}" y="${y+g.h-0.14}" width="${g.w}" height="0.14" fill="${sev}"/>`;
     if(a.exp!=='none'&&state.ports)o+=`<rect x="${x+g.w-0.95}" y="${y-0.42}" width="0.95" height="0.42" rx="0.08" fill="${C(EXP[a.exp].css)}"/><text x="${x+g.w-0.475}" y="${y-0.12}" text-anchor="middle" font-family="${M}" font-size="0.27" font-weight="600" fill="#fff">IN ${a.ports.length}</text>`;
@@ -3197,6 +3209,261 @@ async function exportSite(s){
   await saveFile(`strata_${fileStem(s.name)}_${today()}.json`,'application/json',data);
 }
 
+/* ================= Incident mode ================= */
+// During an incident the map shows what is hit: assets marked compromised, suspected or contained, the flows to cut
+// and where, who to call, what depends on them. A Muster incident opens here and its playbook steps point at the map.
+// The state of each IS is kept apart from the map: it changes by the minute and needs no proposal. It lives in this
+// browser (local mode) or on the server (api/incidents, contributors and up).
+const INC_KEY='strata-incidents';
+const INC_COL={compromised:'--crit',suspected:'--high',contained:'--low'};
+const INC_LBL={compromised:'Compromised',suspected:'Suspected',contained:'Contained'};
+const Inc={all:{},ver:0,timers:{},busy:0,
+  get canWrite(){return Store.mode==='local'||!!(Store.me&&Store.me.canPropose);},
+  async load(){
+    let all={};
+    if(Store.mode==='api'){try{const j=await Store.api('GET','api/incidents');all=j.incidents||{};}catch(e){}}
+    else{try{all=JSON.parse(localStorage.getItem(INC_KEY)||'{}')||{};}catch(e){}}
+    this.all={};Object.keys(all).forEach(k=>{this.all[k]=IR.clean(all[k]);});this.ver++;
+  },
+  of(id){if(!Object.hasOwn(this.all,id))this.all[id]=IR.empty();return this.all[id];},
+  changed(id){
+    this.ver++;
+    if(Store.mode!=='api'){try{localStorage.setItem(INC_KEY,JSON.stringify(this.all));}catch(e){toast('This browser refused to save the incident (storage full or disabled).',true);}return;}
+    clearTimeout(this.timers[id]);this.busy++;
+    this.timers[id]=setTimeout(()=>Store.api('PUT','api/incidents/'+encodeURIComponent(id),this.all[id])
+      .catch(e=>toast('The incident could not be saved: '+(e.message||'error')+'.',true)).finally(()=>{this.busy--;}),250);
+  }
+};
+// Another person changed an incident (server mode): read them again, unless a change of ours is on its way
+function onIncidentsChanged(){if(Inc.busy)return;Inc.load().then(()=>incRedraw(true));}
+const curInc=()=>state.view==='site'&&SITE?Inc.of(SITE.id):null;
+const incOn=()=>{const i=curInc();return !!(i&&i.on);};
+const incMark=id=>incOn()?Inc.of(SITE.id).marks[id]||null:null;
+const hhmm=t=>{const d=new Date(t);return `${pad(d.getHours())}:${pad(d.getMinutes())}`;};
+function incLog(inc,msg,kind){inc.log.unshift({at:Date.now(),msg,kind:kind||'info',by:Store.user||''});}
+// What the model and the diagram show, worked out once per change
+let INCV=null;
+function incView(){
+  if(!incOn())return null;
+  const hl=state.incHl||null;
+  if(INCV&&INCV.site===SITE&&INCV.ver===Inc.ver&&INCV.hl===hl)return INCV;
+  const inc=Inc.of(SITE.id),aff=IR.affected(SITE,inc),reach=IR.reach(SITE,aff),cons=IR.consumers(SITE,aff),rows=IR.flowsToCut(SITE,inc,aff);
+  const focus=new Set([...aff,...Object.keys(reach),...cons,...(hl||[])]);rows.forEach(r=>r.f.via.forEach(v=>focus.add(v)));
+  return INCV={site:SITE,ver:Inc.ver,hl,inc,aff,reach,cons,rows,flows:new Map(rows.map(r=>[r.f.id,r])),focus,dim:aff.length>0||!!(hl&&hl.length)};
+}
+// Marks change the model (rings, labels, flow colours): rebuild it, then the open sheet
+function incRedraw(full){
+  INCV=null;
+  if(state.view==='site'&&SITE){if(full){buildScene();layout();}else buildFlows();refresh();}
+  renderSiteList();renderCart();syncUI();
+  if(state.panel==='incident')showIncident(true);
+  else if(state.panel==='asset'&&selAsset())showAsset(selAsset());
+}
+function incSave(full){Inc.changed(SITE.id);incRedraw(full);}
+function incSetMark(inc,id,st,quiet){
+  const was=inc.marks[id]||null;if(was===(st||null))return;
+  if(st)inc.marks[id]=st;else delete inc.marks[id];
+  if(!quiet)incLog(inc,st?`${byId[id].name} marked ${st}`:`${byId[id].name}: mark cleared`,st==='compromised'?'crit':st==='contained'?'ok':'info');
+}
+function incMarkAsset(id,st){
+  if(!Inc.canWrite){toast('Your role cannot change the incident.',true);return;}
+  const inc=Inc.of(SITE.id);if(st&&!inc.on){inc.on=true;incLog(inc,'Incident mode on','info');}
+  incSetMark(inc,id,st);incSave(true);
+}
+function incToggle(on){
+  if(!Inc.canWrite){toast('Your role cannot change the incident.',true);return;}
+  const inc=Inc.of(SITE.id);if(inc.on===on)return;inc.on=on;incLog(inc,on?'Incident mode on':'Incident mode off','info');
+  incSave(true);if(on)showIncident();else if(state.panel==='incident')closeDet();
+}
+// Shows an asset on the model without leaving the sheet: the rest dims, the view flies to it
+function incLocate(id){
+  const a=byId[id];if(!a)return;
+  if(state.hidden.has(a.vlan)){state.hidden.delete(a.vlan);const cb=$('#vl-'+a.vlan);if(cb)cb.checked=true;}
+  state.incHl=[id];INCV=null;refresh();
+  if(state.flat)centerFlatOn(a);else if(a.group){const p=new THREE.Vector3();a.group.getWorldPosition(p);p.y+=a.h/2;flyTo(p);}
+  clearTimeout(incLocate.t);incLocate.t=setTimeout(()=>{state.incHl=null;INCV=null;refresh();},4000);
+}
+const incChip=id=>{const m=Inc.of(SITE.id).marks[id];return `<button class="chip inc-chip${m?' '+m:''}" data-inc-loc="${esc(id)}" title="Show on the model"><i></i>${esc(nameOf(id))}</button>`;};
+function incCallHtml(list){
+  return list.length?`<ul class="list">${list.map(c=>`<li class="contact"><div class="who"><b>${esc(c.name||'Contact')}</b><span>${esc(c.role||'')}${c.dispo?' · '+esc(c.dispo):''}</span></div>
+    <span class="inc-why">For ${esc(c.why.join(', '))}</span>
+    ${c.phone?`<div class="line"><span>${esc(c.phone)}</span><button class="copy" data-copy="${esc(c.phone)}">Copy</button></div>`:''}
+    ${c.email?`<div class="line"><span>${esc(c.email)}</span><button class="copy" data-copy="${esc(c.email)}">Copy</button></div>`:''}
+    ${!c.phone&&!c.email?'<span class="inc-why">No number recorded: look them up in the directory.</span>':''}</li>`).join('')}</ul>`:'<p class="empty">Nobody recorded.</p>';
+}
+function incFlowsHtml(rows,compact){
+  const w=Inc.canWrite;
+  return rows.length?`<ul class="list">${rows.map(r=>`<li class="inc-flow${r.cut?' cut':''}" data-hl-flow="${esc(r.f.id)}"><div class="inc-fh"><span class="inc-p p${r.prio}">P${r.prio}</span><b>${esc(r.srcName)} → ${esc(r.dstName)}</b><span class="meta">${esc(r.f.port)}</span></div>
+    <span class="inc-why">${r.why.length?esc(r.why.join(' · ')):'Internal flow'}</span>
+    ${compact?'':`<span class="inc-why">Cut at <b>${esc(r.at.label)}</b>${r.breaks.length?` · stops ${esc(r.breaks.join(', '))}`:''}</span>`}
+    <span class="inc-fa">${r.iso?'<span class="tag" style="color:var(--low)"><i style="background:var(--low)"></i>Host isolated</span>':w?`<button class="btn small" data-inc-cut="${esc(r.f.id)}" aria-pressed="${r.cut}">${r.cut?'Cut':'Mark as cut'}</button>`:r.cut?'<span class="tag">Cut</span>':''}</span></li>`).join('')}</ul>`:'<p class="empty">No flow.</p>';
+}
+function incTargetHtml(sel,s,run){
+  const r=IR.resolve(SITE,Inc.of(SITE.id),sel,run.params),head=`<span class="inc-sel">targets <b>${esc(sel.replace(/\{(\w+)\}/g,(m,k)=>run.params[k]!=null?run.params[k]:m))}</b> · ${r.items.length} on the map</span>`;
+  if(r.kind==='assets'){const more=s.act==='isolate'&&Inc.canWrite&&r.items.some(id=>Inc.of(SITE.id).marks[id]!=='contained')?`<button class="btn small" data-inc-isolate="${esc(sel)}">Mark all isolated</button>`:'';
+    return `<div class="inc-tg">${head}<div class="chips">${r.items.map(incChip).join('')||'<span class="empty">None.</span>'}</div>${more}</div>`;}
+  if(r.kind==='flows')return `<div class="inc-tg">${head}${incFlowsHtml(r.items.filter(x=>x.prio<3||x.cut).slice(0,6),true)}</div>`;
+  if(r.kind==='business')return `<div class="inc-tg">${head}<ul class="list">${r.items.map(b=>`<li class="biz"><button data-biz="${esc(b.id)}"><b>${esc(b.name)}</b><small>${esc(b.owner||'')}</small></button>${critTag(b.crit)}</li>`).join('')||'<li class="empty">None.</li>'}</ul></div>`;
+  return `<div class="inc-tg">${head}${incCallHtml(r.items.slice(0,4))}</div>`;
+}
+function incRunHtml(inc){
+  const run=inc.run,pb=IR.PLAYBOOKS[run.pb];if(!pb)return `<p class="empty">Playbook ${esc(run.pb)} is unknown here.</p>`;
+  const R=IR.route(pb,run),w=Inc.canWrite;
+  return `<ol class="inc-steps">${R.map((sid,i)=>{const s=IR.step(pb,sid),cur=sid===run.cur&&!run.closed,done=i<run.path.length-1||(run.closed&&sid===run.cur),ahead=i>=run.path.length;
+    let h=`<li class="inc-step ${s.type}${done?' done':''}${cur?' cur':''}${ahead?' ahead':''}"><span class="dot">${done?'✓':i+1}</span><div class="inc-sb"><b>${esc(s.title)}</b><small>${esc(s.phase)}${s.role?' · '+esc(s.role):''}${s.sla?` · SLA ${s.sla} min`:''}</small>${run.answers[sid]?`<span class="inc-ans">→ ${esc(run.answers[sid])}</span>`:''}`;
+    if(cur){
+      const out=IR.nextOf(pb,sid);
+      h+=`<div class="inc-cur">${s.desc?`<p class="fhint">${esc(s.desc)}</p>`:''}
+        ${(s.checklist||[]).map((t,j)=>`<label class="inc-chk"><input type="checkbox" data-inc-chk="${esc(sid+':'+j)}" ${run.checks[sid+':'+j]?'checked':''} ${w?'':'disabled'}> <span>${esc(t)}</span></label>`).join('')}
+        ${s.targets.length?`<div class="inc-tgs">${s.targets.map(t=>incTargetHtml(t,s,run)).join('')}</div>`:''}
+        ${w&&out.length?`<div class="actions">${s.type==='decision'?out.map(e=>`<button class="btn small primary" data-inc-go="${esc(e[1])}" data-inc-lbl="${esc(e[2]||'')}">${esc(e[2]||'Next')}</button>`).join(''):`<button class="btn small primary" data-inc-go="${esc(out[0][1])}">Step done</button>`}</div>`:''}</div>`;}
+    return h+'</div></li>';}).join('')}</ol>`;
+}
+// What this integration sends back to Muster: the log entries and the assets linked to the incident
+function incContract(inc){
+  const run=inc.run,pb=IR.PLAYBOOKS[run.pb],s=pb&&IR.step(pb,run.cur);
+  return {'Muster → Strata':{ref:run.ref,playbook:`${run.pb} v${run.v}`,mode:run.mode,assets:run.assets,params:run.params,step:s?{id:s.id,title:s.title,targets:s.targets}:null},
+    'Strata → Muster':{log:inc.log.slice(0,4).map(l=>({at:new Date(l.at).toISOString(),msg:l.msg,by:l.by})),assets:IR.affected(SITE,inc).map(id=>({id,name:nameOf(id),state:inc.marks[id]}))}};
+}
+function showIncident(keep){
+  if(!SITE)return;
+  const inc=Inc.of(SITE.id),iv=incView(),run=inc.run,w=Inc.canWrite,top=keep?det.scrollTop:0;
+  const aff=iv?iv.aff:IR.affected(SITE,inc),rows=iv?iv.rows:[],open=rows.filter(r=>!r.cut).length;
+  let body='';
+  if(!inc.on)body+=`<p class="summary">Incident mode is off for IS ${esc(SITE.name)}.</p>${w?'<div class="actions"><button class="btn small primary" data-inc-on>Switch incident mode on</button></div>':'<p class="empty">Your role can read the incident, not change it.</p>'}`;
+  body+=`<h3 class="cap">Muster</h3>`;
+  if(!run){
+    const feed=IR.demoFeed(SITE);
+    body+=`<p class="fhint">No Muster incident is linked to this IS. When an analyst declares one in Muster with assets of this IS, it opens here and its playbook points at the model.</p>
+      ${feed.length?`<ul class="list">${feed.map((sc,i)=>`<li class="reach"><span class="nm">${esc(sc.ref)} · ${esc(sc.name)}<small>${esc(sc.pb)} ${esc(IR.PLAYBOOKS[sc.pb].name)} · ${esc(sc.mode)} · ${esc(sc.note)}</small></span>${w?`<button class="btn small" data-inc-open="${i}">Open</button>`:''}</li>`).join('')}</ul>
+      <p class="fhint">Muster is not connected to this Strata: these two incidents are examples built from this map.</p>`:''}`;
+  }else{
+    const pb=IR.PLAYBOOKS[run.pb],mins=Math.floor((Date.now()-run.startedAt)/60000);
+    body+=`<div class="inc-run"><div class="inc-rh"><span class="mono">${esc(run.ref)} · ${esc(run.pb)} v${esc(run.v)} · ${esc(run.mode)}</span><span class="mono">T+${pad(Math.floor(mins/60))}:${pad(mins%60)}</span></div>
+      <b class="inc-rn">${esc(run.name)}</b>
+      <div class="chips"><span class="tag" style="color:var(--crit)"><i style="background:var(--crit)"></i>${esc(run.severity)}</span><span class="chip">${esc(pb?pb.name:run.pb)}</span>${run.params.cve?`<span class="chip">${esc(run.params.cve)}</span>`:''}${run.closed?'<span class="tag" style="color:var(--low)"><i style="background:var(--low)"></i>Closed</span>':''}</div>
+      ${w?'<div class="actions"><button class="btn small" data-inc-unlink>Unlink from Muster</button></div>':''}</div>
+      <h3 class="cap">Playbook · decisions point at the model</h3>${incRunHtml(inc)}
+      <details class="inc-contract"><summary>What Strata and Muster exchange</summary><pre>${esc(JSON.stringify(incContract(inc),null,2))}</pre></details>`;
+  }
+  body+=`<h3 class="cap">Assets hit · ${aff.length}</h3>${aff.length?`<div class="chips">${aff.map(incChip).join('')}</div>`:`<p class="empty">Nothing marked. Select an asset on the model and mark it from its sheet${run?', or answer the playbook decisions':''}.</p>`}`;
+  if(aff.length&&iv){
+    const calls=IR.callList(SITE,aff),biz=IR.business(SITE,aff),reach=Object.entries(iv.reach).sort((a,b)=>a[1]-b[1]);
+    body+=`<h3 class="cap">Who to call · ${calls.length}</h3>${incCallHtml(calls)}
+    <h3 class="cap">Flows to cut · ${open} open of ${rows.length}</h3><p class="fhint">Internet first (command and control, data theft), then flows that reach critical assets or carry administration protocols. Cut at the first firewall the flow crosses.</p>${incFlowsHtml(rows,false)}
+    <h3 class="cap">What depends on them</h3>
+    <p class="fhint">Business services hit</p>${biz.length?`<ul class="list">${biz.map(b=>`<li class="biz"><button data-biz="${esc(b.id)}"><b>${esc(b.name)}</b><small>${esc(b.owner||'')}</small></button>${critTag(b.crit)}</li>`).join('')}</ul>`:'<p class="empty">No business service recorded on these assets.</p>'}
+    <p class="fhint">Assets that call them: they lose a service when these are isolated</p>${iv.cons.length?`<div class="chips">${iv.cons.map(incChip).join('')}</div>`:'<p class="empty">None.</p>'}
+    <p class="fhint">Reachable next by the attacker, along the flows that leave them</p>
+    ${reach.length?`<ul class="list">${reach.slice(0,10).map(([id,n])=>{const a=byId[id],k=a.vulns.filter(v=>v.kev);return `<li class="reach"><button data-inc-loc="${esc(id)}">${esc(a.name)}<small>${plural(n,'step')} · ${esc(a.role||TYPE_LABEL[a.type])}${k.length?' · exploitable: '+esc(k.map(v=>v.id).join(', ')):''}</small></button>${SITE.critIds.includes(id)?critTag(3):''}</li>`;}).join('')}</ul>`:'<p class="empty">No flow leaves them.</p>'}`;
+  }
+  body+=`<h3 class="cap">Timeline · ${inc.log.length}</h3>${inc.log.length?`<ol class="inc-log">${inc.log.slice(0,60).map(l=>`<li class="${esc(l.kind)}"><span class="mono">${hhmm(l.at)}</span><span>${esc(l.msg)}${l.by?` <small>${esc(l.by)}</small>`:''}</span></li>`).join('')}</ol>`:'<p class="empty">Empty.</p>'}
+    ${w&&(inc.on||inc.log.length)?`<div class="actions">${inc.on?'<button class="btn small" data-inc-off>Switch incident mode off</button>':''}<button class="btn small danger" data-inc-reset>Clear this incident</button></div>`:''}`;
+  openDet(`<div class="d-head"><div><span class="cap">Incident · IS ${esc(SITE.name)}</span><h2>${run?esc(run.name):'Incident mode'}</h2><p>${inc.on?`${plural(aff.length,'asset')} hit · ${open} flow${open===1?'':'s'} to cut`:'Off'}</p></div><button class="close" data-close aria-label="Close the incident">×</button></div><div class="d-body">${body}</div>`,'incident');
+  if(keep)det.scrollTop=top;
+}
+function incOpenScenario(i){
+  const sc=IR.demoFeed(SITE)[i],pb=sc&&IR.PLAYBOOKS[sc.pb];if(!pb)return;
+  const inc=Inc.of(SITE.id);inc.on=true;inc.run=IR.start(sc,pb,Date.now()-7*60000);
+  incLog(inc,`Muster ${sc.ref} opened on the map (${sc.pb} v${pb.v})`,'sync');
+  sc.assets.forEach(id=>incSetMark(inc,id,'compromised'));
+  if(sc.params.cve){const f=IR.selectAssets(SITE,inc,'vuln:{cve}',sc.params);incLog(inc,`${sc.params.cve}: ${plural(f.length,'asset')} on the map${f.length?' ('+f.map(nameOf).join(', ')+')':''}`,'sync');}
+  incSave(true);showIncident();
+}
+function incGo(to,label){
+  const inc=Inc.of(SITE.id),run=inc.run,pb=IR.PLAYBOOKS[run.pb],s=IR.step(pb,run.cur);
+  const ch=IR.advance(SITE,inc,pb,to,label);
+  incLog(inc,label?`Decision “${s.title}” → ${label}`:`Step done: ${s.title}`,label?'dec':'ok');
+  ch.forEach(([id,st])=>incSetMark(inc,id,st));
+  incLog(inc,run.closed?'Incident closed in Muster':`Muster step: ${IR.step(pb,to).title}`,'sync');
+  incSave(ch.length>0);
+}
+// Clicks in the incident sheet and on the incident buttons of an asset sheet
+det.addEventListener('click',e=>{
+  const q=s=>e.target.closest(s);if(state.view!=='site'||!SITE)return;
+  if(q('[data-inc-loc]')){incLocate(q('[data-inc-loc]').dataset.incLoc);return;}
+  if(q('[data-inc-mark]')){const b=q('[data-inc-mark]');incMarkAsset(b.dataset.id,b.dataset.incMark||null);return;}
+  if(q('[data-ai-asset]')){showPrompts(byId[q('[data-ai-asset]').dataset.aiAsset]);return;}
+  if(!Inc.canWrite)return;
+  const inc=Inc.of(SITE.id);
+  if(q('[data-inc-on]')){incToggle(true);return;}
+  if(q('[data-inc-off]')){incToggle(false);return;}
+  if(q('[data-inc-open]')){incOpenScenario(+q('[data-inc-open]').dataset.incOpen);return;}
+  if(q('[data-inc-go]')){const b=q('[data-inc-go]');incGo(b.dataset.incGo,b.dataset.incLbl||'');return;}
+  if(q('[data-inc-cut]')){const id=q('[data-inc-cut]').dataset.incCut,f=FLOWS.find(x=>x.id===id),r=IR.flowsToCut(SITE,inc,IR.affected(SITE,inc)).find(x=>x.f.id===id);
+    const i=inc.cuts.indexOf(id);if(i>=0){inc.cuts.splice(i,1);incLog(inc,`Flow reopened: ${nameOf(f.src)} → ${nameOf(f.dst)} ${f.port}`);}
+    else{inc.cuts.push(id);incLog(inc,`Flow cut at ${r?r.at.label:'the host'}: ${nameOf(f.src)} → ${nameOf(f.dst)} ${f.port}`,'ok');}
+    incSave(false);return;}
+  if(q('[data-inc-isolate]')){IR.selectAssets(SITE,inc,q('[data-inc-isolate]').dataset.incIsolate,inc.run&&inc.run.params).forEach(id=>incSetMark(inc,id,'contained'));incSave(true);return;}
+  if(q('[data-inc-unlink]')){incLog(inc,`Muster ${inc.run.ref} unlinked`,'sync');inc.run=null;incSave(false);return;}
+  if(q('[data-inc-reset]')){const b=q('[data-inc-reset]');if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='Confirm: clear marks, cuts, run and timeline';return;}
+    Inc.all[SITE.id]=IR.empty();incSave(true);toast('Incident cleared.');return;}
+});
+det.addEventListener('change',e=>{const c=e.target.closest('[data-inc-chk]');if(!c||!SITE)return;const inc=Inc.of(SITE.id);if(!inc.run)return;inc.run.checks[c.dataset.incChk]=c.checked;Inc.changed(SITE.id);});
+$('#incBtn').addEventListener('click',()=>{if(!SITE)return;if(state.panel==='incident'){closeDet();return;}if(!incOn()&&Inc.canWrite)incToggle(true);else showIncident();closeCtlMobile(true);});
+$('#cart').addEventListener('click',e=>{if(e.target.closest('[data-inc-board]'))showIncident();});
+function incBand(){
+  const iv=incView();if(!iv)return '';const run=iv.inc.run,open=iv.rows.filter(r=>!r.cut).length;
+  return `<div class="incband"><b>Incident mode</b><span>${run?`${esc(run.ref)} · ${esc(run.pb)}`:'No Muster incident'} · ${plural(iv.aff.length,'asset')} hit · ${open} to cut</span><button data-inc-board>Board</button></div>`;
+}
+// The asset sheet: mark it, and prompt a public AI about it
+function incAssetHtml(a){
+  const m=Inc.of(SITE.id).marks[a.id]||null;
+  if(!Inc.canWrite)return m?`<p class="inc-state"><span class="tag" style="color:var(${INC_COL[m]})"><i style="background:var(${INC_COL[m]})"></i>${INC_LBL[m]}</span></p>`:'';
+  return `<div class="actions inc-acts"><span class="cap">Incident</span>${IR.STATES.map(s=>`<button class="btn small inc-${s}" data-inc-mark="${s}" data-id="${esc(a.id)}" aria-pressed="${m===s}">${INC_LBL[s]}</button>`).join('')}${m?`<button class="btn small" data-inc-mark="" data-id="${esc(a.id)}">Clear</button>`:''}</div>`;
+}
+
+/* ---- Anonymised prompts for a public AI ---- */
+// Options are a convenience of this browser: language, what to keep, a context sentence per IS, terms never to send
+const AI_KEY='strata-ai-prompts';
+let AIO={lang:'fr',versions:true,cves:true,biz:false,neigh:true,ctx:{},never:''},AI_ANSWER='',AI_FOR=null;
+try{Object.assign(AIO,JSON.parse(localStorage.getItem(AI_KEY)||'{}'));}catch(e){}
+const aiSave=()=>{try{localStorage.setItem(AI_KEY,JSON.stringify(AIO));}catch(e){}};
+function showPrompts(a,keep){
+  if(!a)return;if(AI_FOR!==a.id){AI_ANSWER='';AI_FOR=a.id;}
+  const top=keep?det.scrollTop:0,o=Object.assign({},AIO,{ctx:AIO.ctx[SITE.id]||''});
+  const {P,risk,play}=IR.prompts(SITE,a.id,o),lk=[...new Set([...IR.leaks(SITE,risk,AIO.never),...IR.leaks(SITE,play,AIO.never)])],yc=AI_ANSWER?IR.yamlCheck(AI_ANSWER):null;
+  const box=(k,t,txt)=>`<div class="ai-p"><div class="ai-ph"><b>${t}</b><span class="mono">${txt.length} chars</span><button class="btn small primary" data-ai-copy="${k}">Copy</button></div><pre id="ai-${k}">${esc(txt)}</pre></div>`;
+  const real=r=>r.kind==='asset'?byId[r.real].name:r.kind==='segment'?(v=>`VLAN ${v.num} · ${v.name}`)(vlanById[r.real.slice(5)]):SITE.bizById[r.real.slice(4)].name;
+  openDet(`<div class="d-head"><div><span class="cap">AI prompts · anonymised</span><h2>${esc(a.name)}</h2><p>Copy a prompt into the AI of your choice. Nothing leaves Strata by itself.</p></div><button class="close" data-ai-back="${esc(a.id)}" aria-label="Back to the asset sheet">×</button></div>
+  <div class="d-body">
+  <h3 class="cap">Anonymisation</h3>
+  <div class="ai-opts">
+    <label><input type="checkbox" checked disabled> Names, addresses, subnets, contacts and the IS always replaced</label>
+    <label><input type="checkbox" data-ai-opt="versions" ${AIO.versions?'checked':''}> Keep exact software versions (needed to match vulnerabilities)</label>
+    <label><input type="checkbox" data-ai-opt="cves" ${AIO.cves?'checked':''}> Keep CVE identifiers (public data)</label>
+    <label><input type="checkbox" data-ai-opt="biz" ${AIO.biz?'checked':''}> Keep business service names</label>
+    <label><input type="checkbox" data-ai-opt="neigh" ${AIO.neigh?'checked':''}> Describe its neighbours and the critical assets within 2 hops</label>
+  </div>
+  <div class="f"><label for="aiCtx">Context: sector, size, team (never the company name)</label><textarea id="aiCtx" rows="2" data-ai-ctx placeholder="${AIO.lang==='fr'?'Entreprise industrielle de taille moyenne, un siège et une usine…':'Mid-size industrial company, a head office and a plant…'}">${esc(AIO.ctx[SITE.id]||'')}</textarea></div>
+  <div class="f"><label for="aiNever">Never send these terms (comma-separated)</label><input id="aiNever" type="text" data-ai-never value="${esc(AIO.never)}" placeholder="Company name, project code names…"></div>
+  <div class="seg two" role="group" aria-label="Prompt language"><button data-ai-lang="fr" aria-pressed="${AIO.lang==='fr'}">Français</button><button data-ai-lang="en" aria-pressed="${AIO.lang==='en'}">English</button></div>
+  ${lk.length?`<p class="ai-leak bad">Found in the prompts: ${esc(lk.join(', '))}. Change the context or the options before copying.</p>`:'<p class="ai-leak ok">Leak check passed: no name, address, contact, IS name or listed term in the prompts.</p>'}
+  <h3 class="cap">1 · Major risks of this asset</h3>${box('risk','Risks, scenarios, mitigations',risk)}
+  <h3 class="cap">2 · Plausible incidents and their playbooks</h3>${box('play','Incidents, then Muster playbooks',play)}
+  <p class="fhint">Asks for playbooks in muster/v1 YAML, the format Muster exports, with a targets field on each step so the playbook points at this map.</p>
+  <h3 class="cap">Placeholders · kept here, never in a prompt</h3>
+  <table class="ai-map">${P.rev.map(r=>`<tr><td class="mono">${r.ph}</td><td>${esc(real(r))}</td></tr>`).join('')}</table>
+  <h3 class="cap">Bring the answer back</h3>
+  <div class="f"><label for="aiAnswer">Paste the AI's answer: placeholders turn back into your names, here only</label><textarea id="aiAnswer" rows="5" data-ai-answer>${esc(AI_ANSWER)}</textarea></div>
+  ${AI_ANSWER?`${yc?`<p class="ai-leak ${yc.bad.length?'bad':'ok'}">${plural(yc.blocks,'muster/v1 playbook')} · ${plural(yc.steps,'step')} · ${yc.targets} with targets${yc.bad.length?' · unknown step types: '+esc(yc.bad.join(', ')):''}</p>`:''}${box('back','With your names',IR.reidentify(SITE,AI_ANSWER,P))}`:''}
+  </div>`,'ai');
+  if(keep)det.scrollTop=top;
+}
+det.addEventListener('click',async e=>{
+  const q=s=>e.target.closest(s);if(state.panel!=='ai'||!SITE)return;const a=byId[AI_FOR];
+  if(q('[data-ai-back]')){if(a)select(a);return;}
+  if(q('[data-ai-lang]')){AIO.lang=q('[data-ai-lang]').dataset.aiLang;aiSave();showPrompts(a,true);return;}
+  if(q('[data-ai-copy]')){const el=$('#ai-'+q('[data-ai-copy]').dataset.aiCopy);try{await navigator.clipboard.writeText(el.textContent);toast('Prompt copied.');}catch(err){const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r);toast('Text selected: copy it with Ctrl+C.');}}
+});
+det.addEventListener('change',e=>{
+  if(state.panel!=='ai'||!SITE)return;const t=e.target,a=byId[AI_FOR];
+  if(t.dataset.aiOpt){AIO[t.dataset.aiOpt]=t.checked;aiSave();showPrompts(a,true);return;}
+  if(t.hasAttribute('data-ai-ctx')){AIO.ctx[SITE.id]=t.value;aiSave();showPrompts(a,true);return;}
+  if(t.hasAttribute('data-ai-never')){AIO.never=t.value;aiSave();showPrompts(a,true);return;}
+  if(t.hasAttribute('data-ai-answer')){AI_ANSWER=t.value;showPrompts(a,true);}
+});
+
 /* ================= Navigation ================= */
 let fly=null;
 function flyTo(target,dist){const off=camera.position.clone().sub(controls.target);off.setLength(dist||Math.min(off.length(),28));
@@ -3249,6 +3516,8 @@ function onData(){
       else if(state.panel==='flow'){const f=FLOWS.find(x=>x.id===state.flowId);if(f)showFlow(f);else closeDet();}
       else if(state.panel==='risk')showRisk();
       else if(state.panel==='attack')showAttack();
+      else if(state.panel==='incident')showIncident(true);
+      else if(state.panel==='ai'){const a=byId[AI_FOR];if(a)showPrompts(a,true);else closeDet();}
       else if(state.panel==='business'){const b=SITE.bizById[state.bizPanel];if(b)showBusiness(b);else closeDet();}
     }
   }else{
@@ -3472,7 +3741,7 @@ function tick(t){
 }
 function start(){
   resize();buildOverview();renderCart();syncUI();renderEmpty();setViewNow();tick();
-  Store.init().then(()=>{renderCollab();if(Store.features.proposals)loadProposals();});
+  Store.init().then(()=>{renderCollab();if(Store.features.proposals)loadProposals();return Inc.load();}).then(()=>incRedraw(true));
 }
 const ready=document.fonts&&document.fonts.ready?Promise.race([document.fonts.ready,new Promise(r=>setTimeout(r,1500))]):Promise.resolve();
 ready.then(start,start);

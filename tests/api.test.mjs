@@ -317,3 +317,23 @@ test('live updates: /api/events streams the revision on every change, and propos
     assert.equal(typeof p.data.at, 'number');
   } finally { ev.close(); }
 });
+
+test('incidents: contributors mark assets and cut flows without a proposal, viewers only read', async () => {
+  const admin = as('admin'), alice = as('alice'), vic = as('vic');
+  assert.equal((await admin.put('/api/si/inc-is', { name: 'Incident IS', zones: [], vlans: [], flows: [] })).status, 200);
+  const before = await rev();
+  const doc = { on: true, marks: { 'a-1': 'compromised', 'a-2': 'owned' }, cuts: ['f-1', 3], run: null, log: [{ at: 1, msg: 'Incident mode on' }] };
+  // a mark on a prototype key is dropped too
+  const r = await alice.put('/api/incidents/inc-is', JSON.stringify(doc).replace('"a-2"', '"__proto__":"compromised","a-2"'));
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.deepEqual(r.data.incident.marks, { 'a-1': 'compromised' }, 'unknown states are dropped');
+  assert.deepEqual(r.data.incident.cuts, ['f-1']);
+  assert.equal(r.data.incident.updatedBy, 'alice');
+  assert.equal(await rev(), before, 'the map and its history do not change');
+  assert.equal((await vic.put('/api/incidents/inc-is', doc)).status, 403, 'viewers cannot change an incident');
+  assert.equal((await alice.put('/api/incidents/no-such-is', doc)).status, 404);
+  assert.equal((await alice.put('/api/incidents/inc-is', [])).status, 400);
+  const all = await vic.get('/api/incidents');
+  assert.equal(all.status, 200);
+  assert.equal(all.data.incidents['inc-is'].on, true);
+});
