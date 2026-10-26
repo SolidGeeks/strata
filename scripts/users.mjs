@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Manage Strata accounts from the command line (works while the server runs).
 //   node scripts/users.mjs list
-//   node scripts/users.mjs set <name> <viewer|contributor|approver|admin>   (asks for a password, or NEW_PASSWORD=...)
+//   node scripts/users.mjs set <name> <viewer|contributor|approver|admin>   (asks for a password, or NEW_PASSWORD=... or NEW_PASSWORD_FILE=...)
 //   node scripts/users.mjs role <name> <role>
 //   node scripts/users.mjs disable <name> | enable <name> | delete <name>
 // With Docker: docker compose exec strata node scripts/users.mjs list
@@ -20,6 +20,7 @@ const load = () => { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')).user
 const save = u => { fs.mkdirSync(path.dirname(FILE), { recursive: true }); fs.writeFileSync(FILE + '.tmp', JSON.stringify({ users: u }, null, 2)); fs.renameSync(FILE + '.tmp', FILE); };
 const die = m => { console.error(m); process.exit(1); };
 async function askPassword() {
+  if (process.env.NEW_PASSWORD_FILE) { try { return fs.readFileSync(process.env.NEW_PASSWORD_FILE, 'utf8').replace(/\r?\n$/, ''); } catch (e) { die(`NEW_PASSWORD_FILE: ${e.message}`); } }
   if (process.env.NEW_PASSWORD) return process.env.NEW_PASSWORD;
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   rl._writeToOutput = s => { if (/password/i.test(s)) process.stdout.write(s); };

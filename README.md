@@ -136,6 +136,7 @@ strata/
 ├── scripts/           vendor.mjs (fetches three.js and the fonts), users.mjs (accounts), backup.sh, restore.sh
 ├── deploy/            Caddyfile (HTTPS), strata.service (systemd)
 ├── tests/             API tests (npm test)
+├── flake.nix, nix/    Nix package, NixOS module (services.strata) and its VM test
 ├── Dockerfile, docker-compose.yml, .env.example
 └── package.json
 ```
@@ -147,7 +148,8 @@ strata/
 One of these two options:
 
 - **Docker** with Docker Compose v2 (`docker compose version`), recommended;
-- **Node.js 20 or later** (`node --version`).
+- **Node.js 20 or later** (`node --version`);
+- or **Nix** with flakes, or **NixOS** (section 5, *Nix and NixOS*).
 
 The machine needs access to the npm registry **once**, during the build, to download three.js 0.128 and the fonts. After that, the app runs without Internet access.
 
@@ -198,6 +200,7 @@ By default, the port only listens on the machine itself (`127.0.0.1:8080`). To o
 |---|---|---|
 | `EDIT_USER` / `EDIT_PASS` | `admin` / empty | First admin account, recreated or reset on every start. **With no `EDIT_PASS` and no account in `data/users.json`, there is no authentication at all.** |
 | `VIEW_USER` / `VIEW_PASS` | `viewer` / empty | Shared read-only account, ignored while `VIEW_PASS` is empty. |
+| `EDIT_PASS_FILE` / `VIEW_PASS_FILE` | — | Read the password from this file instead (Docker secrets, systemd credentials, sops-nix, agenix). The file wins over the variable; a trailing newline is ignored. If the file cannot be read, the server does not start. |
 | `ALLOW_SELF_APPROVAL` | `false` | `true` lets an approver approve their own proposals. |
 | `HISTORY_KEEP` | `5000` | Number of changes kept in the history. |
 | `READ_ONLY` | `false` | Freezes the map for everyone. |
@@ -281,6 +284,59 @@ EDIT_PASS=test npm start
 ```
 
 Then open http://localhost:8080.
+
+### Build from source
+
+What the Dockerfile does, step by step, for packagers and other platforms:
+
+| Step | Command | Needs |
+|---|---|---|
+| Install the dependencies | `npm ci` | Node.js 20 or later, npm, the npm registry (`package-lock.json` pins every package: three.js 0.128 and the Archivo and IBM Plex Mono fonts) |
+| Copy them into the app | `npm run vendor` (`scripts/vendor.mjs`) | writes `public/vendor/` |
+| Test | `npm test` | starts the server on `127.0.0.1` |
+| Run | `node server/server.js` | Node.js only: no npm package at run time, nothing downloaded, no write outside `DATA_DIR` |
+
+The files to ship are `package.json`, `server/`, `public/` (with `public/vendor/`) and, for the command line, `scripts/users.mjs`. `PUBLIC_DIR` and `DATA_DIR` say where the app and the data are; each release tag (`vX.Y.Z`) has a GitHub release with its source archive.
+
+### Nix and NixOS
+
+The repository is a flake. To try Strata (data in `./data`, listening on `127.0.0.1:8080`):
+
+```bash
+EDIT_PASS=test nix run github:SolidGeeks/strata
+```
+
+On NixOS, the module runs it as a hardened systemd service (its own `strata` user, data in `/var/lib/strata`, read-only system, no capabilities, restricted system calls):
+
+```nix
+{
+  inputs.strata.url = "github:SolidGeeks/strata";
+
+  outputs = { nixpkgs, strata, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      modules = [
+        strata.nixosModules.default
+        {
+          services.strata = {
+            enable = true;
+            settings = {               # section 3; HOST defaults to 127.0.0.1, PORT to 8080
+              EDIT_USER = "admin";
+              BACKUP_KEEP = 30;
+            };
+            secretFiles.EDIT_PASS = "/run/secrets/strata-admin";   # kept out of the Nix store
+            # environmentFile = "/run/secrets/strata.env";          # or KEY=value lines
+            openFirewall = false;      # keep it behind an HTTPS reverse proxy (section 4)
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+Files in `secretFiles` are read by systemd as root and handed to the service as credentials: they can stay readable by root only. Accounts from the command line: `sudo -u strata env DATA_DIR=/var/lib/strata strata-users set alice contributor`.
+
+The `Nix` workflow builds the package (which runs `npm test`) and runs a NixOS VM test of the module on every change. When `package-lock.json` changes, `npmDepsHash` in `nix/package.nix` has to follow: the build fails and prints the new value. `nix flake update` moves nixpkgs forward.
 
 ---
 

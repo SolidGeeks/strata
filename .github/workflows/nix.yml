@@ -1,0 +1,51 @@
+# Builds Strata with Nix (flake.nix): the package build runs npm test, and the flake checks add a NixOS
+# VM test of services.strata. flake.lock pins nixpkgs: refresh it with "nix flake update".
+name: Nix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - flake.nix
+      - flake.lock
+      - nix/**
+      - package.json
+      - package-lock.json
+      - public/**
+      - server/**
+      - scripts/**
+      - tests/**
+      - .github/workflows/nix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  flake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The official installer at a fixed version, checked against its checksum (it checks the
+      # checksum of the Nix it downloads in turn)
+      - name: Install Nix 2.31.2
+        run: |
+          curl -sSfL https://releases.nixos.org/nix/nix-2.31.2/install -o "$RUNNER_TEMP/install-nix"
+          echo "078e2ffeddf6a9c1f22adf41458ccc46a58bb26911a9e01579645314f9982994  $RUNNER_TEMP/install-nix" | sha256sum -c -
+          printf 'experimental-features = nix-command flakes\nsystem-features = nixos-test benchmark big-parallel kvm\n' > "$RUNNER_TEMP/nix.conf"
+          sh "$RUNNER_TEMP/install-nix" --daemon --yes --no-channel-add --nix-extra-conf-file "$RUNNER_TEMP/nix.conf"
+          echo /nix/var/nix/profiles/default/bin >> "$GITHUB_PATH"
+      # The NixOS VM test runs under KVM
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # First run only: there is no flake.lock yet, print the one Nix writes so it can be committed
+      - name: Lock nixpkgs
+        run: |
+          if [ ! -f flake.lock ]; then nix flake lock; echo "----- flake.lock -----"; cat flake.lock; echo "----------------------"; fi
+      - name: Build the package (runs npm test)
+        run: nix build -L .#default
+      - name: Flake checks (NixOS VM test of the module)
+        run: nix flake check -L

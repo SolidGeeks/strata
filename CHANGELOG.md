@@ -4,6 +4,9 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 
 ## [Unreleased]
 ### Added
+- **Nix and NixOS**: the repository is a flake. `nix run github:SolidGeeks/strata` runs the server; `nixosModules.default` provides `services.strata`, a hardened systemd service (its own user, data in `/var/lib/strata`, read-only system, no capabilities, restricted system calls) with `settings`, `secretFiles`, `environmentFile` and `openFirewall`. A `Nix` workflow builds the package, which runs the tests, and runs a NixOS VM test of the module.
+- `EDIT_PASS_FILE` and `VIEW_PASS_FILE` read the passwords from files (Docker secrets, systemd credentials, sops-nix, agenix); `NEW_PASSWORD_FILE` likewise for `scripts/users.mjs`. An unreadable file stops the server instead of starting it without a password.
+- README: how to build from source without Docker, step by step.
 - **Attack paths** (Analysis): the critical assets an attacker coming from the Internet could reach (criticality High, of their own or through a business service they would hit), every path to each one along the allowed flows, most likely first, and **where to cut**: the assets and the equipment that every path to a critical asset goes through. The rest of the model fades, and hovering a path picks it out, in 3D and in 2D.
   - Each step of a path is an asset taken over, with a likelihood: its vulnerabilities (CVSS times likelihood of exploitation, as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service. A path counts for the product of its steps. Flows run one way: answering a flow does not let the destination reach back.
 - **Blast radius**: pick any asset as the attacker's starting point (in the panel, or *Blast radius* on the asset sheet) and see everything reachable from it, the most likely way to each asset, and the business services hit. The asset sheet gives its size.

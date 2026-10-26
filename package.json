@@ -12,7 +12,7 @@
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
     "start": "node server/server.js",
-    "test": "node --test tests/api.test.mjs tests/analysis.test.mjs",
+    "test": "node --test tests/api.test.mjs tests/analysis.test.mjs tests/secrets.test.mjs",
     "setup": "npm ci && npm run vendor"
   },
   "dependencies": {

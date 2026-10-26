@@ -13,15 +13,25 @@ import { createConnectors } from './connectors/index.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = process.env;
+// A secret from NAME, or from the file NAME_FILE points to (Docker secrets, systemd credentials, NixOS
+// secret managers), so it stays out of the environment and of the Nix store. The file wins; its
+// trailing newline is dropped. An unreadable file stops the server: starting without the password
+// would start without authentication.
+function secret(name) {
+  const file = env[name + '_FILE'];
+  if (!file) return env[name] || '';
+  try { return fs.readFileSync(file, 'utf8').replace(/\r?\n$/, ''); }
+  catch (e) { console.error(`${name}_FILE: cannot read ${file}: ${e.message}`); process.exit(1); }
+}
 const CONFIG = {
   port: parseInt(env.PORT || '8080', 10),
   host: env.HOST || '0.0.0.0',
   dataDir: path.resolve(env.DATA_DIR || path.join(ROOT, 'data')),
   publicDir: path.resolve(env.PUBLIC_DIR || path.join(ROOT, 'public')),
   editUser: env.EDIT_USER || 'admin',
-  editPass: env.EDIT_PASS || '',
+  editPass: secret('EDIT_PASS'),
   viewUser: env.VIEW_USER || 'viewer',
-  viewPass: env.VIEW_PASS || '',
+  viewPass: secret('VIEW_PASS'),
   readOnly: /^(1|true|yes)$/i.test(env.READ_ONLY || ''),
   allowSelfApproval: /^(1|true|yes)$/i.test(env.ALLOW_SELF_APPROVAL || ''),
   backupKeep: Math.max(0, parseInt(env.BACKUP_KEEP || '14', 10)),
