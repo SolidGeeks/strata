@@ -1353,7 +1353,7 @@ function showSite(s){
 // vulnerabilities and attack paths, plans of the exposed and critical assets, contacts, history,
 // method. Built from the map as it is shown; a standalone HTML file, printable to PDF.
 const ARCH_CSS=`
-:root{--ink:#1d2321;--muted:#3d4744;--line:#d5dbd7;--soft:#f2f5f3;--accent:#1f5f8b;--crit:#b3261e;--high:#c25e00;--med:#8a6d00;--low:#2f6f3e;--net:#7a2fa0;--inter:#1f5f8b}
+:root,:host{color-scheme:light;--ink:#1d2321;--muted:#3d4744;--line:#d5dbd7;--soft:#f2f5f3;--accent:#1f5f8b;--crit:#b3261e;--high:#c25e00;--med:#8a6d00;--low:#2f6f3e;--net:#7a2fa0;--inter:#1f5f8b}
 *{box-sizing:border-box}
 .af{font-family:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:#fff;font-size:10.5pt;line-height:1.45;max-width:210mm;margin:0 auto;padding:18mm 16mm}
 .af h1,.af h2,.af h3{font-family:"Archivo Narrow","Archivo",system-ui,sans-serif;line-height:1.2;text-wrap:balance;margin:0}
@@ -1396,27 +1396,35 @@ const ARCH_CSS=`
 .af .ip{white-space:nowrap}
 @media (max-width:640px){.af figure{overflow-x:auto}.af figure svg{width:760px;max-width:none}.af figure.net svg{width:1100px}.af{padding:18px 16px;font-size:15px}.af table{font-size:12.5px}.af .mono,.af code,.af td.m,.af .path{font-size:12px}.af figcaption,.af .note,.af .fig span{font-size:12.5px}.af .t{font-size:11px}.af .figs{grid-template-columns:repeat(2,1fr)}.af .toc{columns:1}.af .meta{grid-template-columns:1fr}.af .scroll{overflow-x:auto}}
 `;
-const afSev=k=>`<span class="t ${k}">${SEV[k].label}</span>`;
-const afExp=k=>`<span class="t x-${k}">${EXP[k].label}</span>`;
+// class names from fixed tables, never from the data
+const AF_CLS={crit:'crit',high:'high',med:'med',low:'low',none:'none',internet:'internet',inter:'inter',intra:'intra'};
+const afSev=k=>`<span class="t ${AF_CLS[k]||'none'}">${esc(SEV[k]?SEV[k].label:k)}</span>`;
+const afExp=k=>`<span class="t x-${AF_CLS[k]||'none'}">${esc(EXP[k]?EXP[k].label:k)}</span>`;
 const afTable=(head,rows,cls='')=>rows.length?`<div class="scroll"><table${cls?` class="${cls}"`:''}><thead><tr>${head.map(h=>`<th${/^(#|Rule|CVSS|EPSS|Score|MB\/h|Assets|Flows|Steps|Paths|Hops|Likelihood)/.test(h)?' class="num"':''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td${typeof c==='number'?' class="num"':''}>${typeof c==='number'?c:c==null?'':c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:'<p class="muted">None.</p>';
 // The SVG of a drawing, sized to the page width
 const afFit=svg=>svg.replace(/<svg([^>]*?)\swidth="[^"]*"\sheight="[^"]*"/,'<svg$1');
-// The 2D diagram of the whole IS, every plate and flow shown, coloured by exposure, on a light page
+// The light theme of app.css, for drawings on paper: fixed values, whatever the theme on screen
+// (the greys a shade darker, for print)
+const PAPER={'--mat':'#5e7d6c','--matline':'#86a291','--fg':'#1b2125','--panel':'#f7f7f3','--muted':'#454e53','--detail':'#3a4148','--card':'#f0eee8','--line':'#c2c6c0','--accent':'#2b5884',
+  '--thread':'#4b5a68','--crit':'#c4313d','--high':'#cc6a22','--med':'#b38d14','--low':'#3a8763','--none':'#6a747a','--x-net':'#8a3fbf','--x-inter':'#2a7fa6','--x-intra':'#5f6a72',
+  '--c0':'#d2a198','--c1':'#9db9a3','--c2':'#d5b671','--c3':'#97acc3','--c4':'#aea8c9','--c5':'#b8c39e','--c6':'#c6a9b9','--c7':'#a9c4c0','--c8':'#d8b49a','--c9':'#b3b8a6',
+  '--f0':'#2f63c8','--f1':'#d97a0f','--f2':'#13917f','--f3':'#8549c9','--f4':'#4a8f1f','--f5':'#c93f8f','--f6':'#a88200','--f7':'#1688b8','--f8':'#8c5a36','--f9':'#55657d'};
+// The 2D diagram of the whole IS, every plate and flow shown, coloured by exposure, on paper colours
 function afDiagram(){
-  const r=document.documentElement,theme=r.dataset.theme,keep={hidden:state.hidden,color:state.color,ports:state.ports};
-  r.dataset.theme='light';Object.assign(state,{hidden:new Set(),color:'exp',ports:false});
+  const keep={hidden:state.hidden,color:state.color,ports:state.ports};
+  Object.assign(state,{hidden:new Set(),color:'exp',ports:false});
   try{
     const G=flatGeometry(),V={sel:null,aOp:{},fv:{}};
     ASSETS.forEach(a=>V.aOp[a.id]=1);FLOWS.forEach(f=>V.fv[f.id]={vis:true,op:f.risk?0.95:0.8});
-    return afFit(flatSvgMarkup(G,V,true));
-  }finally{Object.assign(state,keep);if(theme)r.dataset.theme=theme;else delete r.dataset.theme;}
+    return afFit(flatSvgMarkup(G,V,true,n=>PAPER[n]||PAPER['--fg']));
+  }finally{Object.assign(state,keep);}
 }
 async function afHistory(){
   if(!Store.features.history)return null;
   try{const j=await Store.api('GET','api/history?limit=500');return (j.entries||[]).filter(h=>h.site===SITE.id).slice(0,60);}catch(e){return null;}
 }
 async function buildArchFile(){
-  const s=SITE,now=new Date(),date=now.toISOString().slice(0,10),ver=($('#appVer')||{}).textContent||'';
+  const s=SITE,now=new Date(),date=now.toISOString().slice(0,10);
   const crit=a=>`<span class="t ${['none','low','med','crit'][a.crit]||'none'}">${CRIT_LBL[a.crit]||'—'}</span>`;
   const vl=a=>{const v=vlanById[a.vlan];return v?`${esc(v.num)} · ${esc(v.name)}`:'';};
   const vulns=ASSETS.flatMap(a=>a.vulns.map(v=>({a,v}))).sort((x,y)=>SEV[y.v.sev].rank-SEV[x.v.sev].rank||(y.v.kev?1:0)-(x.v.kev?1:0)||(+y.v.cvss||0)-(+x.v.cvss||0));
@@ -1440,7 +1448,7 @@ async function buildArchFile(){
   <dl class="meta">
     <dt>Date</dt><dd>${esc(date)}</dd>
     <dt>Map version</dt><dd>${Store.mode==='api'?`v${esc(Store.rev)}`:'Copy kept in a browser (no version number)'}${Store.view==='preview'&&Store.preview?` · shown as of version ${esc(Store.preview.rev)}`:Store.view==='draft'?' · including a draft not yet approved':''}</dd>
-    <dt>Generated by</dt><dd>Strata ${esc(ver)}${Store.user?`, for ${esc(Store.user)}`:''}</dd>
+    <dt>Generated by</dt><dd>Strata${Store.user?`, for ${esc(Store.user)}`:''}</dd>
     <dt>Status</dt><dd>Generated from the map. To be reviewed and signed by the IS owner.</dd>
   </dl>
 </section>
@@ -1506,7 +1514,7 @@ ${H('vuln')}
 ${afTable(['#','Vulnerability','Asset','CVSS','EPSS','Exposure','Score'],s.risk.fixes.slice(0,40).map((x,i)=>[i+1,`<b>${esc(x.vuln.id||'—')}</b> ${esc(x.vuln.title)}${x.vuln.kev?' <span class="t kev">KEV</span>':''}`,esc(byId[x.asset].name),x.vuln.cvss==null?'':(+x.vuln.cvss).toFixed(1),x.vuln.epss==null?'':`${(x.vuln.epss*100).toFixed(1)}%`,afExp(byId[x.asset].exp),x.score]))}
 ${s.risk.fixes.length>40?`<p class="muted">${s.risk.fixes.length-40} more in the remediation list (CSV), from Analysis › Risk priorities.</p>`:''}
 <h3>Assets by risk score</h3>
-${afTable(['Asset','VLAN','Criticality','Exposure','Score'],s.risk.assets.map(r=>{const a=byId[r.id];return [`<b>${esc(a.name)}</b>`,vl(a),crit(a),afExp(a.exp),`<span class="${r.band}">${r.score}</span>`];}))}
+${afTable(['Asset','VLAN','Criticality','Exposure','Score'],s.risk.assets.map(r=>{const a=byId[r.id];return [`<b>${esc(a.name)}</b>`,vl(a),crit(a),afExp(a.exp),`<span class="${AF_CLS[r.band]||'none'}">${r.score}</span>`];}))}
 <h3>All vulnerabilities</h3>
 ${afTable(['Reference','Title','Asset','Severity','CVSS','EPSS','Source'],vulns.map(({a,v})=>[`<span class="mono">${esc(v.id||'—')}</span>${v.kev?' <span class="t kev">KEV</span>':''}`,esc(v.title),esc(a.name),afSev(v.sev),v.cvss==null?'':(+v.cvss).toFixed(1),v.epss==null?'':`${(v.epss*100).toFixed(1)}%`,esc(v.src||'entered by hand')]))}
 
@@ -2319,8 +2327,9 @@ const GLYPH={
   plc:'M.08 .2h.18v.6h-.18zM.31 .2h.18v.6h-.18zM.54 .2h.18v.6h-.18zM.77 .25h.15v.5h-.15z',
   iot:'M.3 .1h.4v.8h-.4zM.4 .25h.2v.2h-.2zM.45 .7h.1'
 };
-function flatSvgMarkup(G,V,forExport){
-  const C=n=>css(n),bg=C('--mat'),line=C('--matline'),ink=C('--fg'),card=C('--panel'),muted=C('--muted'),dark=C('--detail'),devText='#eef0ec';
+// pal: the colour of a theme token; the current theme by default
+function flatSvgMarkup(G,V,forExport,pal){
+  const C=pal||css,bg=C('--mat'),line=C('--matline'),ink=C('--fg'),card=C('--panel'),muted=C('--muted'),dark=C('--detail'),devText='#eef0ec';
   const sel=V.sel,edit=Store.canWrite&&!forExport;
   const pos=id=>{
     if(id==='internet')return G.internet;
