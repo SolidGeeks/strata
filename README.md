@@ -207,6 +207,10 @@ By default, the port only listens on the machine itself (`127.0.0.1:8080`). To o
 | `BACKUP_KEEP` | `14` | Number of automatic backups kept. |
 | `BACKUP_EVERY_HOURS` | `24` | How often automatic backups are made. |
 | `MAX_IMPORT_MB` | `20` | Maximum size of an imported file. |
+| `LOGIN_MAX_FAILS` | `10` | Different wrong passwords for one account before its sign-ins are refused (`429`) for `LOGIN_LOCK_MINUTES`. `0` turns it off. |
+| `LOGIN_MAX_FAILS_PER_ADDRESS` | `20` | The same, for all the accounts tried from one client address. `0` turns it off. |
+| `LOGIN_LOCK_MINUTES` | `15` | How long a lock lasts; failures are counted over the same time. |
+| `TRUST_PROXY` | — | Reverse proxies whose `X-Forwarded-For` gives the client address: addresses, IPv4 ranges (`10.0.0.0/8`), `loopback` or `private`, comma-separated. Unset: the address connecting to Strata is the client (section 4). |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | Where the server listens. |
 | `DATA_DIR` | `/data` (Docker) | Folder for the data and the backups. |
 | `SITE_ADDRESS` | — | DNS name used by the HTTPS proxy (section 4). |
@@ -231,6 +235,7 @@ Passwords travel with Basic Auth: **never expose the app over plain HTTP outside
    docker compose --profile https up -d --build
    ```
 4. Open https://strata.example.lan.
+5. Add `TRUST_PROXY=private` to `.env`, so that failed sign-ins are counted per user rather than for Caddy as a whole (section 3), and run the command of step 3 again.
 
 The `Caddyfile` uses `tls internal`: Caddy signs the certificate with its own local authority, which suits an internal network or a VPN. To remove the browser warning, install that authority on your users' machines:
 
@@ -248,6 +253,7 @@ Point the proxy at `http://127.0.0.1:8080`. Live updates use Server-Sent Events 
 location / {
     proxy_pass http://127.0.0.1:8080;
     proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }
 location /api/events {
     proxy_pass http://127.0.0.1:8080;
@@ -255,6 +261,8 @@ location /api/events {
     proxy_read_timeout 1h;
 }
 ```
+
+Set `TRUST_PROXY=loopback` (the proxy on the same machine) so that Strata reads the client address from `X-Forwarded-For`: failed sign-ins are then limited per client, not for the proxy as a whole. Only trust a proxy that sets this header itself; otherwise anyone could choose the address Strata sees.
 
 The app also works under a sub-path (for example `https://intranet/strata/`), because it only uses relative paths.
 
@@ -322,6 +330,7 @@ On NixOS, the module runs it as a hardened systemd service (its own `strata` use
             settings = {               # section 3; HOST defaults to 127.0.0.1, PORT to 8080
               EDIT_USER = "admin";
               BACKUP_KEEP = 30;
+              TRUST_PROXY = "loopback"; # behind nginx or Caddy on this host
             };
             secretFiles.EDIT_PASS = "/run/secrets/strata-admin";   # kept out of the Nix store
             # environmentFile = "/run/secrets/strata.env";          # or KEY=value lines
@@ -457,6 +466,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 - Published Docker images are signed (Sigstore provenance attestation): check them with `gh attestation verify` (section 2).
 - These protections (authentication, roles, cross-site writes, four-eyes rule, access to the server's files) are checked by the automated tests on every code change (section 13).
 - Give everyone a named account with the lowest role that is enough: every change is attributed in the history.
+- Repeated failed sign-ins are refused for a while (`429`), per account and per client address (`LOGIN_MAX_FAILS`, `LOGIN_MAX_FAILS_PER_ADDRESS`, `LOGIN_LOCK_MINUTES`); browsers already signed in keep working. Behind a reverse proxy, set `TRUST_PROXY` (section 4).
 - Connectors: use **read-only** service accounts in Cyberwatch, GLPI, phpIPAM and PAN-OS, restricted to the Strata server's IP when the tool allows it. Their secrets are in `data/connectors.json`: protect the volume and the backup archives.
 
 ---

@@ -83,7 +83,9 @@ in
       description = ''
         Environment variables of Strata, as listed in section 3 of the README and in .env.example:
         EDIT_USER, VIEW_USER, ALLOW_SELF_APPROVAL, HISTORY_KEEP, READ_ONLY, BACKUP_KEEP,
-        BACKUP_EVERY_HOURS, MAX_IMPORT_MB, CONNECTORS, SOURCE_URL. The module sets DATA_DIR to
+        BACKUP_EVERY_HOURS, MAX_IMPORT_MB, LOGIN_MAX_FAILS, LOGIN_MAX_FAILS_PER_ADDRESS,
+        LOGIN_LOCK_MINUTES, TRUST_PROXY (set it to "loopback" behind a reverse proxy on this
+        host), CONNECTORS, SOURCE_URL. The module sets DATA_DIR to
         /var/lib/strata. These values end up in the Nix store: put passwords in
         {option}`services.strata.secretFiles` or {option}`services.strata.environmentFile`.
       '';

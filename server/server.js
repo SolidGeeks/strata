@@ -39,6 +39,11 @@ const CONFIG = {
   historyKeep: Math.max(50, parseInt(env.HISTORY_KEEP || '5000', 10)),
   maxImportBytes: parseInt(env.MAX_IMPORT_MB || '20', 10) * 1024 * 1024,
   maxDocBytes: 512 * 1024,
+  // Failed sign-ins: 0 turns a limit off
+  loginMaxFails: Math.max(0, parseInt(env.LOGIN_MAX_FAILS ?? '10', 10) || 0),
+  loginMaxFailsPerAddress: Math.max(0, parseInt(env.LOGIN_MAX_FAILS_PER_ADDRESS ?? '20', 10) || 0),
+  loginLockMs: Math.max(1000, (parseFloat(env.LOGIN_LOCK_MINUTES || '15') || 15) * 60000),
+  trustProxy: String(env.TRUST_PROXY || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
   // AGPL-3.0 section 13: users of a modified version must be offered its source. Point this at your fork.
   sourceUrl: /^https?:\/\//.test(env.SOURCE_URL || '') ? env.SOURCE_URL : 'https://github.com/SolidGeeks/strata',
 };
@@ -262,23 +267,75 @@ function bootstrapUsers() {
   if (changed) saveUsers();
 }
 const authEnabled = () => Object.values(users).some(u => u.hash && !u.disabled);
+
+/* ---------------- Client address (behind a trusted reverse proxy) ---------------- */
+const ip4 = t => { const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(t); return m && m.slice(1).every(x => +x < 256) ? m.slice(1).reduce((n, x) => n * 256 + +x, 0) : null; };
+const normAddr = a => String(a || '').trim().toLowerCase().replace(/^::ffff:(?=\d+\.)/, '');
+const inCidr = (a, c) => { const [base, bits] = c.split('/'), n = ip4(a), b = ip4(base), k = +bits; if (n === null || b === null || !(k >= 0 && k <= 32)) return false; const size = 2 ** (32 - k); return Math.floor(n / size) === Math.floor(b / size); };
+const PROXY_SETS = {
+  loopback: a => a === '::1' || inCidr(a, '127.0.0.0/8'),
+  private: a => PROXY_SETS.loopback(a) || ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'].some(c => inCidr(a, c)) || /^f[cd][0-9a-f]{2}:/.test(a),
+};
+// TRUST_PROXY: the proxies whose X-Forwarded-For is believed, as addresses, IPv4 ranges (10.0.0.0/8),
+// "loopback" or "private". Unset: the peer address is the client address.
+const trustedProxy = a => CONFIG.trustProxy.some(t => PROXY_SETS[t] ? PROXY_SETS[t](a) : t.includes('/') ? inCidr(a, t) : normAddr(t) === a);
+function clientAddress(req) {
+  const peer = normAddr(req.socket.remoteAddress);
+  if (!CONFIG.trustProxy.length || !trustedProxy(peer)) return peer;
+  // The right-most address that is not one of our proxies is the client
+  const chain = String(req.headers['x-forwarded-for'] || '').split(',').map(normAddr).filter(Boolean);
+  for (let i = chain.length - 1; i >= 0; i--) if (!trustedProxy(chain[i])) return chain[i];
+  return chain[0] || peer;
+}
+
+/* ---------------- Failed sign-ins ---------------- */
+// Repeated failed sign-ins for one account, or from one client address, are refused with 429 for
+// LOGIN_LOCK_MINUTES, counted over the same time. Only different wrong passwords count: a tab still
+// sending an old password does not lock anyone out. A browser already signed in keeps working
+// from the address it signed in from.
+const failures = { account: new Map(), address: new Map() };
+const FAIL_LIMIT = { account: () => CONFIG.loginMaxFails, address: () => CONFIG.loginMaxFailsPerAddress };
+function lockedFor(kind, key) {
+  const f = failures[kind].get(key), now = Date.now();
+  if (!f) return 0;
+  if (f.until > now) return f.until - now;
+  if (now - f.first > CONFIG.loginLockMs) failures[kind].delete(key);
+  return 0;
+}
+function recordFailure(kind, key, credential) {
+  const max = FAIL_LIMIT[kind](), m = failures[kind], now = Date.now();
+  if (!max) return;
+  let f = m.get(key);
+  if (!f || (now - f.first > CONFIG.loginLockMs && f.until <= now)) f = { first: now, seen: new Set(), until: 0 };
+  if (f.seen.size < max) f.seen.add(credential);
+  if (f.seen.size >= max && f.until <= now) { f.until = now + CONFIG.loginLockMs; log(`Sign-in locked for ${Math.round(CONFIG.loginLockMs / 60000)} min: ${kind} ${key}`); }
+  m.delete(key); m.set(key, f);
+  if (m.size > 10000) m.delete(m.keys().next().value);
+}
+
 // Successful logins are cached for 10 minutes, so scrypt runs once per session, not per request
 const authCache = new Map();
+// Returns the account and role, null when the credentials are missing or wrong, or {retryAfter} (ms)
+// while sign-ins are locked
 function authenticate(req) {
   if (!authEnabled()) return { user: '', role: CONFIG.readOnly ? 'viewer' : 'admin', open: true };
   const h = req.headers.authorization || '';
   if (!h.startsWith('Basic ')) return null;
   const raw = Buffer.from(h.slice(6), 'base64').toString('utf8'), i = raw.indexOf(':');
-  if (i < 1) return null;
-  const name = raw.slice(0, i), pass = raw.slice(i + 1);
-  const key = crypto.createHash('sha256').update(raw).digest('hex'), hit = authCache.get(key);
-  let ok = hit && hit.until > Date.now();
+  const name = i < 1 ? '' : raw.slice(0, i), pass = raw.slice(i + 1);
+  const key = crypto.createHash('sha256').update(raw).digest('hex'), hit = authCache.get(key), addr = clientAddress(req);
+  const ok = hit && hit.until > Date.now() && hit.addrs.has(addr);
   if (!ok) {
-    const u = own(users, name);
-    if (!u || u.disabled || !u.hash) return null;
-    const a = Buffer.from(hashPass(pass, u.salt), 'hex'), b = Buffer.from(u.hash, 'hex');
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-    authCache.set(key, { until: Date.now() + 600000 });
+    const wait = Math.max(lockedFor('address', addr), name ? lockedFor('account', name) : 0);
+    if (wait) return { retryAfter: wait };
+    const u = name ? own(users, name) : undefined;
+    let good = !!(u && !u.disabled && u.hash);
+    if (good) { const a = Buffer.from(hashPass(pass, u.salt), 'hex'), b = Buffer.from(u.hash, 'hex'); good = a.length === b.length && crypto.timingSafeEqual(a, b); }
+    if (!good) { recordFailure('address', addr, key); if (name) recordFailure('account', name, key); return null; }
+    failures.account.delete(name);
+    const addrs = hit && hit.until > Date.now() ? hit.addrs : new Set();
+    addrs.add(addr);
+    authCache.set(key, { until: Date.now() + 600000, addrs });
   }
   const u = own(users, name);
   if (!u || u.disabled) return null;
@@ -576,6 +633,11 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname === '/healthz') return send(res, 200, 'ok');
     const auth = authenticate(req);
+    if (auth && auth.retryAfter) {
+      const s = Math.ceil(auth.retryAfter / 1000);
+      res.writeHead(429, { ...SEC_HEADERS, 'Retry-After': String(s), 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(`Too many failed sign-ins. Try again in ${s >= 120 ? Math.ceil(s / 60) + ' minutes' : s + ' seconds'}.`);
+    }
     if (!auth) {
       res.writeHead(401, { ...SEC_HEADERS, 'WWW-Authenticate': 'Basic realm="Strata", charset="UTF-8"', 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('Authentication required');

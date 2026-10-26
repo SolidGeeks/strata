@@ -4,6 +4,7 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 
 ## [Unreleased]
 ### Added
+- **Failed sign-ins are limited** ([#13](https://github.com/SolidGeeks/strata/issues/13)): after `LOGIN_MAX_FAILS` (10) different wrong passwords for one account, or `LOGIN_MAX_FAILS_PER_ADDRESS` (20) from one client address, sign-ins are refused with `429` and `Retry-After` for `LOGIN_LOCK_MINUTES` (15). The same wrong password sent again (a tab left open with an old password) counts once, and browsers already signed in keep working from their address. `TRUST_PROXY` says which reverse proxies' `X-Forwarded-For` to believe.
 - **Nix and NixOS**: the repository is a flake. `nix run github:SolidGeeks/strata` runs the server; `nixosModules.default` provides `services.strata`, a hardened systemd service (its own user, data in `/var/lib/strata`, read-only system, no capabilities, restricted system calls) with `settings`, `secretFiles`, `environmentFile` and `openFirewall`. A `Nix` workflow builds the package, which runs the tests, and runs a NixOS VM test of the module.
 - `EDIT_PASS_FILE` and `VIEW_PASS_FILE` read the passwords from files (Docker secrets, systemd credentials, sops-nix, agenix); `NEW_PASSWORD_FILE` likewise for `scripts/users.mjs`. An unreadable file stops the server instead of starting it without a password.
 - README: how to build from source without Docker, step by step.
