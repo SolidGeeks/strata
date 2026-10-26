@@ -4,6 +4,8 @@ All notable changes to Strata. Versions follow [Semantic Versioning](https://sem
 
 ## [Unreleased]
 ### Added
+- **API reference** ([`docs/api.html`](docs/api.html), on the site under *API*): every route with its role, request and answer, authentication, errors, the event stream, the export format, the module API.
+- **Compatibility policy for 1.x**: what stays stable from 1.0 on (routes, authentication, export format, module API, event names), what a minor version may add, and how something is deprecated (announced here, kept at least one more minor version). In the API reference and the README.
 - **Single sign-on**, next to the local accounts:
   - **OpenID Connect** (Entra ID, Keycloak, Authentik, Google Workspace, Okta…): a sign-in page, authorization code flow with PKCE, the ID token checked against the provider's keys (issuer, audience, expiry, nonce), then a session cookie (`HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS). Sign-out ends the session at the provider too.
   - **Roles from the provider's groups**: `SSO_ROLE_ADMIN`, `_APPROVER`, `_CONTRIBUTOR`, `_VIEWER`; `SSO_DEFAULT_ROLE` for everyone else, or no access.

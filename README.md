@@ -435,6 +435,8 @@ The data lives in the Docker volume and is not touched by the rebuild. Before up
 
 ## 10. API (for automation)
 
+The full reference, with every route's role, request and answer, the data format, the module API and the compatibility policy, is the [API reference](https://solidgeeks.github.io/strata/api.html) ([`docs/api.html`](docs/api.html)).
+
 Every route needs the same credentials as the interface (a local account with Basic Auth, an API token as `Authorization: Bearer stk_…`, or the session of a signed-in browser), with the rights of the account's role (direct writes need `approver`). Writes require the headers `Content-Type: application/json` and `X-Requested-With: strata`. A script can group several writes into a single history entry with the headers `X-Batch: <id>` and `X-Batch-Label: <URL-encoded label>`. To have a tool propose instead of write, give it a `contributor` account and use `POST /api/proposals` with `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (a document set to `null` = deletion).
 
 | Method and route | What it does |
@@ -498,6 +500,19 @@ Fields added since v0.2 (all optional):
 | `pan` | flow | (v0.5) Palo Alto rule(s) behind the flow: `{"rules":["in-web"],"scope":"vsys1"}` |
 | `business` | IS | (v0.6) business services: `[{"id":"b-erp","name":"ERP & accounting","crit":3,"owner":"Finance director","notes":"","assets":["lyo-app-erp","lyo-db-erp"]}]`. Only the assets the service runs on: dependencies come from the flows. |
 | `epss`, `kev` | vulnerability | (v0.6) EPSS, a probability from 0 to 1, and `true` when the vulnerability is on the CISA list of known exploited vulnerabilities. Used by *Risk priorities*. |
+
+### Compatibility
+
+Strata follows [Semantic Versioning](https://semver.org/). Before 1.0 a minor version may still break things, and the [CHANGELOG](CHANGELOG.md) says how to upgrade. From **1.0** on, every 1.x version keeps working:
+
+- the `/api/` routes, their methods, roles, request and answer fields;
+- authentication (Basic, `Bearer stk_…` tokens), the write headers, `X-Batch` and `X-Batch-Label`;
+- status codes and the `error` key (not its wording);
+- the export format: every export written by an earlier version keeps importing;
+- the module API (`"strataModule": 1`, `ctx`, the SDK) and the store index (`"strataRegistry": 1`);
+- the event names `change`, `proposals`, `connectors`.
+
+Minor versions may add routes, fields and events: ignore what you don't know, and send back the fields you didn't change. Something to be removed is first marked *Deprecated* in the CHANGELOG, with what to use instead, and keeps working for at least one more minor version. Only a major version removes something without that notice. Security fixes are the exception: a hole is closed in a patch version, and the CHANGELOG says so.
 
 ---
 

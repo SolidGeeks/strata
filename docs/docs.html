@@ -23,6 +23,7 @@
     <a href="./#install">Install</a>
     <a href="./#inside">Features</a>
     <a href="docs.html" aria-current="page">Documentation</a>
+    <a href="api.html">API</a>
     <a href="https://github.com/SolidGeeks/strata">GitHub</a>
   </nav>
   <div class="theme" role="group" aria-label="Page theme">
@@ -304,7 +305,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
     <p>Release candidates (<code>1.0.0-rc.1</code>…) are published under their own version only, never as <code>latest</code>: to try one, back up, set <code>image: ghcr.io/solidgeeks/strata:1.0.0-rc.1</code> in <code>docker-compose.yml</code>, then <code>docker compose pull &amp;&amp; docker compose up -d</code>.</p>
 
     <h2 id="api" style="--edge:var(--s3)">API</h2>
-    <p>Every route uses the same credentials as the interface, with the rights of the account’s role. Writes need the headers <code>Content-Type: application/json</code> and <code>X-Requested-With: strata</code>. Group several writes into one history entry with <code>X-Batch</code> and <code>X-Batch-Label</code>. For a tool that should propose rather than write, give it a contributor account and use <code>POST /api/proposals</code>.</p>
+    <p>The full reference, and the compatibility policy, are in the <a href="api.html">API reference</a>. Every route uses the same credentials as the interface, with the rights of the account’s role. Writes need the headers <code>Content-Type: application/json</code> and <code>X-Requested-With: strata</code>. Group several writes into one history entry with <code>X-Batch</code> and <code>X-Batch-Label</code>. For a tool that should propose rather than write, give it a contributor account and use <code>POST /api/proposals</code>.</p>
     <div class="tablewrap"><table>
       <thead><tr><th scope="col">Route</th><th scope="col">Does</th></tr></thead>
       <tbody>
@@ -380,7 +381,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
     <a href="https://solidgeeks.github.io/SolidGeeks/"> <img src="https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/footer/solid-geeks-footer.gif" alt="Solid Geeks: open source the world." width="100%"> </a>
   </div>
   <div class="wrap">
-    <p>Strata 0.6.0 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a> · <a href="https://github.com/SolidGeeks/strata/blob/main/CHANGELOG.md">Changelog</a></p>
+    <p>Strata 0.9 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a> · <a href="https://github.com/SolidGeeks/strata/blob/main/CHANGELOG.md">Changelog</a></p>
     <p>Cyberwatch, GLPI, phpIPAM and Palo Alto Networks are trademarks of their owners; Strata is not affiliated with them.</p>
   </div>
 </footer>

@@ -1,0 +1,334 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>API reference · Strata</title>
+<meta name="description" content="The Strata HTTP API: authentication, every route with its role, request and answer, the live event stream, the export format, the connector module API, and what stays compatible across 1.x.">
+<link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+<meta property="og:image" content="https://solidgeeks.github.io/strata/assets/img/og.jpg">
+<link rel="preload" href="assets/fonts/archivo-var.woff" as="font" type="font/woff" crossorigin>
+<link rel="stylesheet" href="assets/css/site.css">
+<script>try{var t=localStorage.getItem('strata-site-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script>
+</head>
+<body class="docs-page">
+<a class="skip" href="#content">Skip to the API reference</a>
+<header class="top">
+  <a class="mark" href="./" aria-label="Strata, home">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><polygon points="16,19 27,23.5 16,28 5,23.5" fill="var(--s1)"/><polygon points="16,12.5 27,17 16,21.5 5,17" fill="var(--s3)"/><polygon points="16,6 27,10.5 16,15 5,10.5" fill="var(--s2)"/></svg>
+    <span>Strata</span>
+  </a>
+  <nav aria-label="Main">
+    <a href="./#install">Install</a>
+    <a href="./#inside">Features</a>
+    <a href="docs.html">Documentation</a>
+    <a href="api.html" aria-current="page">API</a>
+    <a href="https://github.com/SolidGeeks/strata">GitHub</a>
+  </nav>
+  <div class="theme" role="group" aria-label="Page theme">
+    <button data-theme-set="auto" aria-pressed="true">Auto</button><button data-theme-set="light" aria-pressed="false">Day</button><button data-theme-set="dark" aria-pressed="false">Night</button>
+  </div>
+</header>
+
+<div class="doc">
+  <nav class="toc" aria-label="On this page">
+    <ol>
+      <li><a href="#basics">Basics</a></li>
+      <li><a href="#auth">Authentication</a></li>
+      <li><a href="#errors">Answers and errors</a></li>
+      <li><a href="#account">Account</a></li>
+      <li><a href="#map">The map</a></li>
+      <li><a href="#history">History</a></li>
+      <li><a href="#proposals">Proposals</a></li>
+      <li><a href="#connectors">Connectors</a></li>
+      <li><a href="#modules">Module store</a></li>
+      <li><a href="#admin">Accounts, tokens, sessions</a></li>
+      <li><a href="#events">Live events</a></li>
+      <li><a href="#pages">Sign-in pages</a></li>
+      <li><a href="#format">Data format</a></li>
+      <li><a href="#module-api">Module API</a></li>
+      <li><a href="#compat">Compatibility</a></li>
+    </ol>
+  </nav>
+
+  <article id="content">
+    <h1 class="strata-type"><span class="w">API reference</span><span class="n">for Strata 0.9.</span></h1>
+    <p>Everything the interface does goes through this HTTP API, so a script can do it too: feed the map from an inventory, open proposals from a scanner, back up the history, run connectors on a schedule. This page lists every route. What stays stable from 1.0 on is in <a href="#compat">Compatibility</a>.</p>
+
+    <h2 id="basics" style="--edge:var(--s7)">Basics</h2>
+    <ul>
+      <li>All routes are under the server’s own address, for example <code>https://strata.example.lan/api/…</code>. Bodies and answers are JSON (UTF-8).</li>
+      <li><strong>Writes</strong> (every method but <code>GET</code> and <code>HEAD</code>) must send both headers <code>Content-Type: application/json</code> and <code>X-Requested-With: strata</code>, or they are refused with <code>400</code>. This is what stops another site from writing through a signed-in browser.</li>
+      <li><strong>Roles</strong>, from least to most: <code>viewer</code> (reads), <code>contributor</code> (proposes), <code>approver</code> (changes the map, reviews proposals, runs connectors), <code>admin</code> (accounts, tokens, connector settings, modules). A role can do everything the roles below it can. With <code>READ_ONLY=true</code> everybody is a viewer.</li>
+      <li><strong>Ids</strong> (IS, assets, proposals) are 1 to 120 characters among <code>A-Z a-z 0-9 _ . : @ + ~ -</code>.</li>
+      <li><strong>Batches</strong>: send <code>X-Batch: &lt;any id&gt;</code> on several writes to show them as one entry in the history, with <code>X-Batch-Label: &lt;URL-encoded label&gt;</code> as its title.</li>
+      <li><strong>Sizes</strong>: one IS or asset document is 512 KB at most; an import, a proposal or a file sent to a connector is <code>MAX_IMPORT_MB</code> (20 MB) at most. Bigger bodies answer <code>413</code>.</li>
+    </ul>
+
+    <h2 id="auth" style="--edge:var(--s1)">Authentication</h2>
+    <p>Every route but <code>/healthz</code> needs credentials, the same as the interface. Which ones work depends on how the server is set up (<a href="docs.html#accounts">Accounts and roles</a>).</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Method</th><th scope="col">How</th><th scope="col"><code>via</code></th></tr></thead>
+      <tbody>
+        <tr><td>Local account</td><td>HTTP Basic: <code>Authorization: Basic base64(name:password)</code>, as <code>curl -u name:password</code>. Refused when <code>LOCAL_LOGIN=off</code>, and for non-admins when <code>LOCAL_LOGIN=admins</code>.</td><td><code>local</code></td></tr>
+        <tr><td>API token</td><td><code>Authorization: Bearer stk_…</code>. Created by an admin (<a href="#admin">below</a>) with its own role and expiry. Not available on a server with no accounts.</td><td><code>token</code></td></tr>
+        <tr><td>Single sign-on session</td><td>The <code>strata_session</code> cookie (<code>__Host-strata_session</code> over HTTPS) set by <code>/auth/oidc/callback</code>. Meant for browsers.</td><td><code>sso</code></td></tr>
+        <tr><td>Trusted proxy header</td><td><code>SSO_HEADER_USER</code> (and <code>SSO_HEADER_GROUPS</code>), believed only from the addresses in <code>SSO_HEADER_TRUST</code>.</td><td><code>header</code></td></tr>
+        <tr><td>No accounts</td><td>When no account and no single sign-on is set up, every request is an admin (or a viewer with <code>READ_ONLY</code>). Use this on a laptop only.</td><td><code>open</code></td></tr>
+      </tbody>
+    </table></div>
+    <p>For scripts, use an API token with the lowest role that does the job: a <code>contributor</code> token for a tool that should only propose, an <code>approver</code> token for one that writes. Repeated failed sign-ins answer <code>429</code> with a <code>Retry-After</code> header.</p>
+
+    <h2 id="errors" style="--edge:var(--s2)">Answers and errors</h2>
+    <p>A write that changes the map answers <code>{"ok": true, "rev": N}</code>, the map’s new revision. Other writes answer <code>{"ok": true, …}</code> with what they made. A refused request answers a JSON object with an <code>error</code> text meant for people, sometimes with more keys:</p>
+    <div class="code"><pre><code>HTTP/1.1 409 Conflict
+{"error": "Some items changed on the map since this proposal was prepared.", "conflicts": [...]}</code></pre><button class="copy" type="button">Copy</button></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Status</th><th scope="col">Means</th></tr></thead>
+      <tbody>
+        <tr><td><code>400</code></td><td>Bad body or id, missing write headers, invalid JSON</td></tr>
+        <tr><td><code>401</code></td><td>No credentials, or wrong ones</td></tr>
+        <tr><td><code>403</code></td><td>Signed in, but the role is too low, or the action is someone else’s (the four-eyes rule)</td></tr>
+        <tr><td><code>404</code></td><td>Unknown item, or <code>{"error": "Unknown API route"}</code>; connector routes when connectors are off</td></tr>
+        <tr><td><code>409</code></td><td>The item is not in a state that allows it (a proposal not submitted, a connector already running), or a conflict</td></tr>
+        <tr><td><code>413</code></td><td>Body too large</td></tr>
+        <tr><td><code>429</code></td><td>Too many failed sign-ins: wait for <code>Retry-After</code> seconds</td></tr>
+      </tbody>
+    </table></div>
+    <p>Rely on the status and the keys, not on the wording of <code>error</code>, which can change.</p>
+
+    <h2 id="account" style="--edge:var(--s3)">Account</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/me</code></td><td>any</td><td>→ <code>{user, role, auth, via, signOut, sso, readOnly, allowSelfApproval, canWrite, canPropose, canReview, canAdmin, connectors, sourceUrl}</code>. <code>can…</code> say what the interface may offer; <code>connectors</code>: whether connectors are on.</td></tr>
+        <tr><td><code>PUT /api/me/password</code></td><td>any, local account</td><td><code>{current, next}</code> (10 characters at least) → <code>{ok}</code>. <code>403</code> if <code>current</code> is wrong; <code>400</code> for a single sign-on account.</td></tr>
+        <tr><td><code>GET /healthz</code></td><td>none</td><td>→ <code>ok</code> (text). For health checks.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="map" style="--edge:var(--s4)">The map</h2>
+    <p>The map is four parts: the IS documents (<code>si</code>, by id), the assets (by id), the links between IS (<code>wan</code>) and the shared Internet services (<code>services</code>). Their content is in <a href="#format">Data format</a>. Every change makes a new revision and an entry in the history.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/state</code></td><td>viewer</td><td>→ <code>{si, assets, wan, services, rev, updatedAt}</code></td></tr>
+        <tr><td><code>GET /api/state?at=REV</code></td><td>viewer</td><td>→ the same, as it was right after revision <code>REV</code></td></tr>
+        <tr><td><code>GET /api/export</code></td><td>viewer</td><td>→ an export file (<code>Content-Disposition: attachment</code>): <code>{format: "strata", version: 3, exportedAt, si, assets, wan, services}</code></td></tr>
+        <tr><td><code>GET /api/si/{id}</code>, <code>GET /api/assets/{id}</code></td><td>viewer</td><td>→ the document, or <code>404</code></td></tr>
+        <tr><td><code>PUT /api/si/{id}</code></td><td>approver</td><td>the IS document → <code>{ok, rev}</code>. Creates or replaces it whole.</td></tr>
+        <tr><td><code>DELETE /api/si/{id}</code></td><td>approver</td><td>→ <code>{ok, rev}</code>. Its assets stay.</td></tr>
+        <tr><td><code>PUT /api/assets/{id}</code></td><td>approver</td><td>the asset document → <code>{ok, rev}</code>. Creates or replaces it whole.</td></tr>
+        <tr><td><code>DELETE /api/assets/{id}</code></td><td>approver</td><td>→ <code>{ok, rev}</code></td></tr>
+        <tr><td><code>PUT /api/wan</code></td><td>approver</td><td><code>{links: [...]}</code> → <code>{ok, rev}</code>. Replaces all the links.</td></tr>
+        <tr><td><code>PUT /api/services</code></td><td>approver</td><td><code>{services: [...]}</code> → <code>{ok, rev}</code>. Replaces the shared catalogue.</td></tr>
+        <tr><td><code>POST /api/import</code></td><td>approver</td><td><code>{si, assets, wan?, services?}</code> (an export file works as is) → <code>{ok, rev}</code>. Replaces the whole map; a backup is taken first.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Documents are replaced whole: to change one field, read the document, change it, send it back. To add a flow or a VLAN, change the IS document (<code>si.flows</code>, <code>si.vlans</code>).</p>
+    <div class="code"><pre><code>curl -H "Authorization: Bearer $STRATA_TOKEN" \
+  -H 'Content-Type: application/json' -H 'X-Requested-With: strata' \
+  -X PUT https://strata.example.lan/api/assets/srv-erp-01 \
+  -d '{"site":"lyon","name":"srv-erp-01","type":"server","vlan":"v-lyo-20","ip":"10.20.0.20",
+       "os":"RHEL 8","role":"ERP","crit":3,
+       "vulns":[{"id":"CVE-2021-44228","title":"Log4Shell","cvss":10,"sev":"crit"}]}'</code></pre><button class="copy" type="button">Copy</button></div>
+
+    <h2 id="history" style="--edge:var(--s5)">History</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/history?before=REV&amp;limit=N</code></td><td>viewer</td><td>→ <code>{rev, oldest, entries}</code>, newest first, older than <code>before</code> if given; <code>limit</code> 120 by default, 500 at most. Each entry: <code>{rev, at, user, batch, label, kind, id, op, name, site}</code>; <code>kind</code>: <code>si</code>, <code>assets</code>, <code>wan</code>, <code>services</code> or <code>all</code>; <code>op</code>: <code>created</code>, <code>updated</code> or <code>deleted</code>. <code>oldest</code>: the oldest revision the history still holds.</td></tr>
+        <tr><td><code>GET /api/history/{rev}</code></td><td>viewer</td><td>→ <code>{rev, entries}</code>: the changes of that revision, each with its <code>before</code> and <code>after</code> document</td></tr>
+        <tr><td><code>POST /api/rollback</code></td><td>approver</td><td><code>{rev}</code> → <code>{ok, rev}</code>. Puts the map back as it was at <code>rev</code>, as a new revision (nothing is erased); a backup is taken first.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="proposals" style="--edge:var(--s6)">Proposals</h2>
+    <p>A proposal is a set of changes that an approver merges into the map, or not. Its <code>changes</code> are <code>{si: {id: doc}, assets: {id: doc}, wan?: [...], services?: [...]}</code>, where a document set to <code>null</code> deletes it. Its <code>status</code> goes <code>draft</code> → <code>submitted</code> → <code>approved</code> or <code>rejected</code>; a submitted proposal can be withdrawn back to <code>draft</code>, and editing a rejected one makes it a draft again.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/proposals</code></td><td>viewer</td><td>→ <code>{proposals}</code>, summaries, last changed first: <code>{id, title, description, author, siteId, status, createdAt, updatedAt, submittedAt, reviewedBy, reviewedAt, mergedRev, changes (a count), comments (a count), source, connector}</code></td></tr>
+        <tr><td><code>POST /api/proposals</code></td><td>contributor</td><td><code>{title, description?, siteId?, changes, source?}</code> → <code>{ok, proposal}</code>, a draft</td></tr>
+        <tr><td><code>GET /api/proposals/{id}</code></td><td>viewer</td><td>→ <code>{proposal, conflicts}</code>: the whole proposal (with <code>changes</code>, <code>base</code>, the documents as they were when it was prepared, and <code>comments</code>), and the items changed on the map since</td></tr>
+        <tr><td><code>PUT /api/proposals/{id}</code></td><td>contributor, author or admin</td><td><code>{title?, description?, changes?}</code> → <code>{ok, proposal}</code>. Drafts and rejected proposals only (<code>409</code> otherwise).</td></tr>
+        <tr><td><code>DELETE /api/proposals/{id}</code></td><td>author (draft, rejected, withdrawn) or admin</td><td>→ <code>{ok}</code></td></tr>
+        <tr><td><code>POST /api/proposals/{id}/comment</code></td><td>contributor</td><td><code>{text}</code> → <code>{ok, proposal}</code></td></tr>
+        <tr><td><code>POST /api/proposals/{id}/submit</code></td><td>contributor, author</td><td><code>{text?}</code> → <code>{ok, proposal}</code>. <code>400</code> if it changes nothing.</td></tr>
+        <tr><td><code>POST /api/proposals/{id}/withdraw</code></td><td>author or admin</td><td>→ <code>{ok, proposal}</code></td></tr>
+        <tr><td><code>POST /api/proposals/{id}/reject</code></td><td>approver</td><td><code>{text?}</code> → <code>{ok, proposal}</code></td></tr>
+        <tr><td><code>POST /api/proposals/{id}/approve</code></td><td>approver, not the author</td><td><code>{text?, force?}</code> → <code>{ok, rev, proposal}</code>. <code>409</code> with <code>{conflicts}</code> when the map changed under it, unless <code>force: true</code>. <code>403</code> for the author’s own proposal unless <code>ALLOW_SELF_APPROVAL=true</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="code"><pre><code># a scanner that proposes instead of writing (contributor token)
+curl -H "Authorization: Bearer $STRATA_TOKEN" \
+  -H 'Content-Type: application/json' -H 'X-Requested-With: strata' \
+  -X POST https://strata.example.lan/api/proposals \
+  -d '{"title":"Weekly scan, Lyon","siteId":"lyon",
+       "changes":{"assets":{"lyo-old-ftp":null}}}'</code></pre><button class="copy" type="button">Copy</button></div>
+
+    <h2 id="connectors" style="--edge:var(--s7)">Connectors</h2>
+    <p>Connector routes answer <code>404</code> when connectors are off (<code>CONNECTORS=false</code>). A connector’s <code>id</code> is <code>cyberwatch</code>, <code>glpi</code>, <code>phpipam</code>, <code>paloalto</code> or the id of an installed module.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/connectors</code></td><td>contributor</td><td>→ <code>{connectors, canConfigure, canRun, store, problems?}</code>: each connector with its fields, settings (secrets masked) and last run. A contributor sees only the file imports open to contributors.</td></tr>
+        <tr><td><code>PUT /api/connectors/{id}</code></td><td>admin</td><td>the settings → <code>{ok, connector}</code>. A masked secret sent back unchanged keeps the stored one.</td></tr>
+        <tr><td><code>POST /api/connectors/{id}/test</code></td><td>approver</td><td>→ <code>{ok, message}</code>. A failed test is <code>200</code> with <code>ok: false</code> and what to check.</td></tr>
+        <tr><td><code>POST /api/connectors/{id}/run</code></td><td>approver; contributor for a file import that allows it</td><td><code>{wait?, file?: {name, text}, overrides?}</code> → <code>202 {ok, started}</code>, or with <code>wait: true</code> <code>200 {ok, run}</code>. <code>file</code> imports a file instead of calling the tool; <code>overrides</code>: the settings the module lets one import change. <code>409</code> if already running. The older Palo Alto form <code>{xml, fileName}</code> still works.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A run never writes the map: it opens proposals (one per IS), which an approver reviews. <code>run</code> is <code>{id, at, by, file, ok, summary, error, proposals: [{id, title, siteId}], ms}</code>.</p>
+
+    <h2 id="modules" style="--edge:var(--s1)">Module store</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/modules?fresh=1</code></td><td>admin</td><td>→ <code>{store, uploads, registry, modules, error}</code>: whether the store and uploads are on, the registry address, what it offers and what is installed. <code>fresh=1</code> reads the registry again.</td></tr>
+        <tr><td><code>POST /api/modules/{id}/install</code></td><td>admin</td><td>→ <code>{ok, module}</code>. Installs or updates from the store; the package checksum is checked.</td></tr>
+        <tr><td><code>POST /api/modules/upload</code></td><td>admin</td><td><code>{data: "&lt;.tgz in base64&gt;"}</code> → <code>{ok, module}</code>. Only with <code>MODULE_UPLOAD=true</code>.</td></tr>
+        <tr><td><code>DELETE /api/modules/{id}</code></td><td>admin</td><td>→ <code>{ok}</code>. Removes a module installed from the store, and its settings.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="admin" style="--edge:var(--s2)">Accounts, tokens, sessions</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/users</code></td><td>admin</td><td>→ <code>{users: [{name, role, disabled, createdAt, passwordChangedAt}]}</code>, local accounts</td></tr>
+        <tr><td><code>PUT /api/users/{name}</code></td><td>admin</td><td><code>{role?, password?, disabled?}</code> → <code>{ok}</code>. Creates (a password is needed) or changes an account. You cannot remove your own admin access.</td></tr>
+        <tr><td><code>DELETE /api/users/{name}</code></td><td>admin</td><td>→ <code>{ok}</code></td></tr>
+        <tr><td><code>GET /api/tokens</code></td><td>admin</td><td>→ <code>{tokens: [{id, name, role, createdBy, createdAt, expiresAt, lastUsedAt}]}</code></td></tr>
+        <tr><td><code>POST /api/tokens</code></td><td>admin</td><td><code>{name, role, days}</code> (1 to 730, 90 by default) → <code>{ok, token, id, …}</code>. <code>token</code> is shown this once only; the server keeps a hash of it.</td></tr>
+        <tr><td><code>DELETE /api/tokens/{id}</code></td><td>admin</td><td>→ <code>{ok}</code>. The token stops working at once.</td></tr>
+        <tr><td><code>DELETE /api/sessions</code></td><td>admin</td><td>→ <code>{ok, ended}</code>. Ends every single sign-on session.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="events" style="--edge:var(--s3)">Live events</h2>
+    <p><code>GET /api/events</code> (viewer) is a <a href="https://html.spec.whatwg.org/multipage/server-sent-events.html">Server-Sent Events</a> stream. It sends the current revision on connection, then:</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Event</th><th scope="col">Data</th><th scope="col">When</th></tr></thead>
+      <tbody>
+        <tr><td><code>change</code></td><td><code>{rev}</code></td><td>The map changed: read <code>/api/state</code> again</td></tr>
+        <tr><td><code>proposals</code></td><td><code>{at}</code></td><td>A proposal was created, changed or reviewed: read <code>/api/proposals</code> again</td></tr>
+        <tr><td><code>connectors</code></td><td><code>{id, running?}</code></td><td>A connector or module changed, or a run started or ended</td></tr>
+      </tbody>
+    </table></div>
+    <div class="code"><pre><code>curl -N -H "Authorization: Bearer $STRATA_TOKEN" https://strata.example.lan/api/events</code></pre><button class="copy" type="button">Copy</button></div>
+    <p>Treat the events as a signal to read again, not as the data itself: their content may grow.</p>
+
+    <h2 id="pages" style="--edge:var(--s4)">Sign-in pages</h2>
+    <p>These are for browsers, not scripts.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Route</th><th scope="col">Does</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /auth/login</code></td><td>The sign-in page (with single sign-on)</td></tr>
+        <tr><td><code>GET /auth/oidc/start</code></td><td>Starts an OpenID Connect sign-in</td></tr>
+        <tr><td><code>GET /auth/oidc/callback</code></td><td>Where the provider sends the browser back; sets the session cookie</td></tr>
+        <tr><td><code>POST /auth/logout</code></td><td>Ends the session → <code>{ok, location}</code>: where to go next (the provider’s sign-out)</td></tr>
+        <tr><td><code>GET /?local</code></td><td>Asks for a local account’s password when single sign-on is on</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="format" style="--edge:var(--s5)">Data format</h2>
+    <p>An export file, <code>GET /api/export</code> and the body of <code>POST /api/import</code> share one format. Only <code>si</code> and <code>assets</code> are required; <code>format</code> and <code>version</code> say what wrote the file.</p>
+    <div class="code"><pre><code>{
+  "format": "strata", "version": 3, "exportedAt": "2026-10-26T09:00:00.000Z",
+  "si":       { "&lt;IS id&gt;": { IS document } },
+  "assets":   { "&lt;asset id&gt;": { asset document } },
+  "wan":      [ { link } ],
+  "services": [ { Internet service } ]
+}</code></pre><button class="copy" type="button">Copy</button></div>
+    <p>The export of a single IS (<em>Export this IS (JSON)</em>) adds <code>"scope": "si"</code> and holds that IS, its assets and the shared services. The interface imports it by replacing that IS only; <code>POST /api/import</code> always replaces the whole map, so to load one IS from a script, send its documents with <code>PUT /api/si/{id}</code> and <code>PUT /api/assets/{id}</code>.</p>
+
+    <h3>IS document</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Field</th><th scope="col">Content</th></tr></thead>
+      <tbody>
+        <tr><td><code>name</code>, <code>kind</code></td><td>Name, and a short description (<em>Head office</em>)</td></tr>
+        <tr><td><code>order</code></td><td>Position in the overview</td></tr>
+        <tr><td><code>zones</code></td><td><code>[{id, name}]</code>, the plates, from the bottom up</td></tr>
+        <tr><td><code>vlans</code></td><td><code>[{id, num, name, cidr, zone, pos?, place?, layout?, ext?}]</code>. <code>zone</code>: a zone id; <code>pos</code>: order in the zone; <code>place</code>: <code>[x, z]</code> on the plate; <code>layout</code>: <code>{assetId: [x, z]}</code> set by hand in the 2D diagram</td></tr>
+        <tr><td><code>flows</code></td><td><code>[{id, src, dst, port, vol, risk, note, via?, pan?}]</code>. <code>src</code>, <code>dst</code>: an asset id, <code>internet</code> or <code>svc:&lt;service id&gt;</code>; <code>port</code>: <code>tcp/443</code>; <code>vol</code>: a relative volume; <code>risk</code>: flagged as risky; <code>via</code>: the devices crossed, in order (<code>[]</code>: direct; missing: guessed); <code>pan</code>: <code>{rules, scope}</code> from Palo Alto</td></tr>
+        <tr><td><code>contacts</code></td><td><code>[{name, role, phone, email, dispo, src?}]</code>, who to call for the IS</td></tr>
+        <tr><td><code>business</code></td><td><code>[{id, name, crit, owner, notes, assets}]</code>: business services and the assets they run on</td></tr>
+        <tr><td><code>services</code></td><td>Internet services used by this IS only, as below</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Asset document</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Field</th><th scope="col">Content</th></tr></thead>
+      <tbody>
+        <tr><td><code>site</code></td><td>The IS id</td></tr>
+        <tr><td><code>name</code>, <code>ip</code>, <code>os</code>, <code>role</code>, <code>notes</code></td><td>Text</td></tr>
+        <tr><td><code>type</code></td><td><code>server</code>, <code>dc</code>, <code>db</code>, <code>hypervisor</code>, <code>firewall</code>, <code>gateway</code>, <code>router</code>, <code>switch</code>, <code>workstation</code>, <code>printer</code>, <code>phone</code>, <code>ap</code>, <code>camera</code>, <code>plc</code>, <code>iot</code></td></tr>
+        <tr><td><code>vlan</code></td><td>A VLAN id of its IS</td></tr>
+        <tr><td><code>crit</code></td><td>Criticality, 1 (low) to 3 (high)</td></tr>
+        <tr><td><code>vulns</code></td><td><code>[{id, title, cvss, sev, epss?, kev?, src?}]</code>; <code>sev</code>: <code>crit</code>, <code>high</code>, <code>med</code>, <code>low</code>, <code>none</code>; <code>epss</code>: 0 to 1; <code>kev</code>: on the CISA list</td></tr>
+        <tr><td><code>apps</code></td><td><code>[{name, version, ports, src?}]</code>, software and the ports it listens on</td></tr>
+        <tr><td><code>contacts</code></td><td>As for the IS</td></tr>
+        <tr><td><code>ext</code></td><td>Ids in connected tools: <code>{"glpi": "Computer/12", "cyberwatch": 101}</code></td></tr>
+      </tbody>
+    </table></div>
+    <p><code>src</code> on a vulnerability, application or contact names the connector it came from; entries without one were typed by hand.</p>
+
+    <h3>Links and Internet services</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Item</th><th scope="col">Fields</th></tr></thead>
+      <tbody>
+        <tr><td>Link between IS (<code>wan</code>)</td><td><code>{id, a, b, tech, vol, risk, note}</code>; <code>a</code>, <code>b</code>: IS ids; <code>tech</code>: <code>MPLS</code>, <code>VPN</code>…</td></tr>
+        <tr><td>Internet service</td><td><code>{id, name, category, hosts, ports, notes}</code>; <code>hosts</code>: names, wildcards allowed; <code>ports</code>: <code>["tcp/443"]</code></td></tr>
+      </tbody>
+    </table></div>
+    <p>The quickest way to see real documents is an <em>Export JSON</em> of the demo.</p>
+
+    <h2 id="module-api" style="--edge:var(--s6)">Module API</h2>
+    <p>Connector modules have their own contract, described in full in <a href="https://github.com/SolidGeeks/strata/blob/main/MODULES.md">MODULES.md</a>:</p>
+    <ul>
+      <li><strong>The manifest</strong>, <code>strata-module.json</code>, with <code>"strataModule": 1</code>: id, name, version, <code>main</code>, <code>minStrata</code>, <code>permissions</code>, <code>fields</code>, <code>live</code>, <code>file</code>.</li>
+      <li><strong>The code</strong> exports <code>test(cfg, ctx)</code> and <code>run(cfg, ctx)</code>; <code>ctx</code> holds <code>state</code>, <code>file</code>, <code>log</code> and <code>sdk</code>; <code>run</code> resolves with <code>{proposals, summary, report}</code>.</li>
+      <li><strong>The SDK</strong>, <code>ctx.sdk</code>: <code>request</code>, <code>expectOk</code>, <code>assetIndex</code>, <code>siteFor</code>, <code>vlanForIp</code>, the IP, XML and text helpers, <code>ConnectorError</code>.</li>
+      <li><strong>The store index</strong>, <code>index.json</code> with <code>"strataRegistry": 1</code>: each module’s manifest summary, its package <code>url</code> and <code>sha256</code>.</li>
+    </ul>
+
+    <h2 id="compat" style="--edge:var(--s7)">Compatibility</h2>
+    <p>Strata follows <a href="https://semver.org/">Semantic Versioning</a>. Before 1.0, a minor version (0.9 → 0.10) may still break things; the <a href="https://github.com/SolidGeeks/strata/blob/main/CHANGELOG.md">changelog</a> says how to upgrade each time. From <strong>1.0</strong> on, every 1.x version keeps the following working.</p>
+    <h3>What stays stable in 1.x</h3>
+    <ul>
+      <li><strong>The routes on this page</strong> under <code>/api/</code>, their methods, the roles they need, the request fields they accept and the answer fields they return.</li>
+      <li><strong>Authentication</strong>: Basic for local accounts, <code>Bearer stk_…</code> tokens, the write headers <code>Content-Type: application/json</code> and <code>X-Requested-With: strata</code>, <code>X-Batch</code> and <code>X-Batch-Label</code>.</li>
+      <li><strong>Status codes</strong> and the <code>error</code> key of refusals (not its wording).</li>
+      <li><strong>The data format</strong>: the fields listed in <a href="#format">Data format</a> keep their meaning. Every export file written by an earlier version (<code>version</code> 3 and below) keeps importing; a 1.x version may write a higher <code>version</code> number, and still reads the lower ones.</li>
+      <li><strong>The module API</strong>: a module written for <code>"strataModule": 1</code> keeps running, with the same <code>ctx</code> and SDK helpers; a store index with <code>"strataRegistry": 1</code> keeps being read.</li>
+      <li><strong>The event names</strong> <code>change</code>, <code>proposals</code>, <code>connectors</code>, and <code>rev</code> in <code>change</code>.</li>
+    </ul>
+    <h3>What may change in a minor version</h3>
+    <ul>
+      <li><strong>New</strong> routes, optional request fields, answer fields, document fields, event names, roles’ abilities, SDK helpers. Write clients that ignore fields they do not know, and send back the fields they did not change: the server keeps them.</li>
+      <li>The interface, the sign-in pages, the texts of <code>error</code>, log lines, files in <code>DATA_DIR</code> (use the API, not the files), anything not on this page.</li>
+      <li>Security fixes: if a behaviour is a security hole, it is closed in a patch version even if a script relied on it, and the changelog says so.</li>
+    </ul>
+    <h3>Deprecation</h3>
+    <ol>
+      <li>Something to be removed is first marked <em>Deprecated</em> in the changelog, with what to use instead.</li>
+      <li>It keeps working for at least one more minor version after that (deprecated in 1.3: still there in 1.4, removed in 1.5 at the earliest). Where it can, the server logs a warning when it is used.</li>
+      <li>Removal happens in a minor version, under <em>Removed</em> and <em>Upgrading</em> in the changelog. Only a major version (2.0) may remove something without deprecating it first.</li>
+    </ol>
+  </article>
+</div>
+
+<footer class="foot">
+  <div class="wrap made-by">
+    <a href="https://solidgeeks.github.io/SolidGeeks/"> <img src="https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/footer/solid-geeks-footer.gif" alt="Solid Geeks: open source the world." width="100%"> </a>
+  </div>
+  <div class="wrap">
+    <p>Strata 0.9 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a> · <a href="https://github.com/SolidGeeks/strata/blob/main/CHANGELOG.md">Changelog</a></p>
+    <p>Cyberwatch, GLPI, phpIPAM and Palo Alto Networks are trademarks of their owners; Strata is not affiliated with them.</p>
+  </div>
+</footer>
+<script src="assets/js/site.js" defer></script>
+</body>
+</html>
