@@ -35,13 +35,13 @@ pkgs.testers.runNixOSTest {
     machine.wait_for_unit("strata.service")
     machine.wait_for_open_port(8080)
 
+    # The health check is open; with a password set, everything else asks for it, the page included
     machine.succeed("curl -fsS http://127.0.0.1:8080/healthz")
-    machine.succeed("curl -fsS -o /dev/null http://127.0.0.1:8080/")
-    machine.succeed("curl -fsS -o /dev/null http://127.0.0.1:8080/vendor/three.min.js")
-
-    machine.succeed("curl -fsS -o /dev/null -u admin:test-pass-1234 http://127.0.0.1:8080/api/state")
-    status = machine.succeed("curl -s -o /dev/null -w '%{http_code}' -u admin:wrong-pass http://127.0.0.1:8080/api/state")
-    assert status == "401", f"a wrong password got {status}"
+    for path, user in [("/", ""), ("/api/state", "-u admin:wrong-pass")]:
+        status = machine.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {user} http://127.0.0.1:8080{path}")
+        assert status == "401", f"{path} {user or 'without a password'} got {status}"
+    for path in ["/", "/vendor/three.min.js", "/api/state"]:
+        machine.succeed(f"curl -fsS -o /dev/null -u admin:test-pass-1234 http://127.0.0.1:8080{path}")
 
     # The data lives in the state directory, owned by the service user
     machine.succeed("test \"$(stat -c %U /var/lib/strata/users.json)\" = strata")
