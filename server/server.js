@@ -356,6 +356,9 @@ const SEC_HEADERS = {
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  // no other site's window or page may hold a reference to the app, or load its responses
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
   'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
 };
 function send(res, status, body, headers = {}) {
@@ -413,7 +416,8 @@ async function api(req, res, parts, url, auth) {
   if (r1 === 'me' && id === 'password' && method === 'PUT') {
     if (auth.open) throw httpError(400, 'Accounts are not enabled on this server.');
     const b = await readBody(req, 4096), u = own(users, auth.user);
-    if (!u || hashPass(b?.current || '', u.salt) !== u.hash) throw httpError(403, 'Current password is wrong.');
+    const given = u ? Buffer.from(hashPass(b?.current || '', u.salt), 'hex') : null, stored = u ? Buffer.from(u.hash, 'hex') : null;
+    if (!u || given.length !== stored.length || !crypto.timingSafeEqual(given, stored)) throw httpError(403, 'Current password is wrong.');
     if (String(b?.next || '').length < 10) throw httpError(400, 'Use at least 10 characters.');
     setUser(auth.user, { password: b.next }); await saveUsers(); return send(res, 200, { ok: true });
   }
@@ -631,6 +635,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url !== '/healthz' && !req.url.startsWith('/api/events')) res.on('finish', () => log(req.method, req.url, res.statusCode, `${Date.now() - started}ms`));
   try {
     const url = new URL(req.url, 'http://localhost');
+    try { decodeURIComponent(url.pathname); } catch { return fail(res, 400, 'Malformed URL'); }
     if (url.pathname === '/healthz') return send(res, 200, 'ok');
     const auth = authenticate(req);
     if (auth && auth.retryAfter) {

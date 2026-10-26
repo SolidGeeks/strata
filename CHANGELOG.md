@@ -15,6 +15,9 @@ All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Ve
 - Both export as CSV.
 - **Architecture file**: one document per IS, from *Analysis › Architecture file* or the IS summary, in the order audits and security accreditation files follow: cover with classification, document control and sign-off table, summary (key figures, fixes first, critical assets reachable), scope (business services, links to other IS, Internet services), architecture (the 2D diagram, zones and VLANs, interconnection equipment, applications), asset inventory, flow matrix and the rules each firewall needs (with the flows between VLANs that cross no firewall), exposure, vulnerabilities and remediation order, attack paths and where to cut, plans of the internet-facing and critical assets, incident contacts, change history of the IS (self-hosted version), method and limits. Shown in the app and downloaded as a standalone HTML file that prints to A4 PDF.
 
+### Changed
+- Security review ([#14](https://github.com/SolidGeeks/strata/issues/14)), hardening: `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy: same-origin` on every response; a path with a malformed percent-encoding gets `400` instead of an internal error; the current password is compared in constant time when it is changed.
+
 ## [0.6.0] - 2026-10-26
 ### Added
 - Flows through interconnection equipment are readable: every flow that crosses a firewall, router, switch or gateway gets its own lane there, in the 3D model and in the 2D diagram, instead of all threads meeting at one point.

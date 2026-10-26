@@ -61,6 +61,13 @@ test('health check needs no account, and responses carry the security headers', 
   assert.equal(r.data, 'ok');
   assert.match(r.headers.get('content-security-policy'), /default-src 'self'/);
   assert.equal(r.headers.get('x-frame-options'), 'DENY');
+  assert.equal(r.headers.get('cross-origin-opener-policy'), 'same-origin');
+  assert.equal(r.headers.get('cross-origin-resource-policy'), 'same-origin');
+});
+
+test('a malformed percent-encoding in the path gets 400, not a server error', async () => {
+  for (const p of ['/%E0%A4%A', '/api/si/%E0%A4%A']) assert.equal((await as('admin').get(p)).status, 400, p);
+  assert.equal((await as('admin').get('/api/state')).status, 200);
 });
 
 test('auth: no credentials, wrong password and unknown user are refused', async () => {
