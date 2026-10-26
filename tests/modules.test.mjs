@@ -17,7 +17,7 @@ import { checkManifest, compareVersions } from '../server/connectors/modules.js'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = fs.mkdtempSync(join(tmpdir(), 'strata-mod-'));
 const dataDir = join(tmp, 'data'), modulesDir = join(tmp, 'provided');
-const port = 8800 + Math.floor(Math.random() * 300), simPort = port + 400, regPort = port + 800;
+const port = 11500 + Math.floor(Math.random() * 300), simPort = port + 400, regPort = port + 800;
 const base = `http://127.0.0.1:${port}`, sim = `http://127.0.0.1:${simPort}`;
 const PASS = { admin: 'admin-pass-123', alice: 'alice-pass-123', bob: 'bob-pass-1234' };
 const procs = [];

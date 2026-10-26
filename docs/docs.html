@@ -189,7 +189,10 @@ docker compose exec strata node scripts/users.mjs set alice contributor   # asks
 docker compose exec strata node scripts/users.mjs role alice approver
 docker compose exec strata node scripts/users.mjs disable alice</code></pre><button class="copy" type="button">Copy</button></div>
     <p>Repeated failed sign-ins are refused for a while (<code>429</code>), per account and per client address (see <a href="#config">Configuration</a>). Only different wrong passwords count, so a tab left open with an old password locks nobody out, and browsers already signed in keep working.</p>
-    <p>For single sign-on (Entra ID, LDAP…), put an authentication proxy in front and create the same account names.</p>
+    <h3>Single sign-on</h3>
+    <p><strong>OpenID Connect</strong> (Entra ID, Keycloak, Authentik, Google Workspace, Okta): register Strata at the provider with the redirect URI <code>https://strata.example.org/auth/oidc/callback</code>, then set <code>PUBLIC_URL</code>, <code>SSO_ISSUER</code>, <code>SSO_CLIENT_ID</code>, <code>SSO_CLIENT_SECRET</code> (or <code>_FILE</code>) and the groups that give each role (<code>SSO_ROLE_ADMIN</code>, <code>SSO_ROLE_APPROVER</code>, <code>SSO_ROLE_CONTRIBUTOR</code>, <code>SSO_ROLE_VIEWER</code>; <code>SSO_DEFAULT_ROLE</code> for everyone else). Opening Strata shows a sign-in page; the ID token’s signature, issuer, audience, expiry and nonce are checked, with PKCE.</p>
+    <p><strong>A sign-in proxy</strong> (Authelia, oauth2-proxy, Pomerium): <code>SSO_HEADER_USER</code> and <code>SSO_HEADER_GROUPS</code> name the headers it sets; they are believed only from a proxy listed in <code>TRUST_PROXY</code>.</p>
+    <p>Local accounts stay, for tests, small installations and as a way in when the provider is down: <code>LOCAL_LOGIN=admins</code> keeps them for administrators, <code>off</code> turns them off. <strong>API tokens</strong> for scripts: <em>Account › API tokens</em> (admin), shown once, sent as <code>Authorization: Bearer stk_…</code>.</p>
 
     <h2 id="map" style="--edge:var(--s1)">Building the map</h2>
     <h3>Sites, zones, VLANs</h3>
@@ -359,7 +362,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
     <h2 id="limits" style="--edge:var(--s6)">Known limits</h2>
     <ul>
       <li>Storage is a single JSON file, fine for a few thousand assets.</li>
-      <li>Authentication is HTTP Basic; for SSO, use an authentication proxy.</li>
+      <li>Single sign-on sessions live in memory: a restart signs SSO users out, and a group change applies at the next sign-in.</li>
       <li>Two approvers editing the same IS directly at the same moment: the last save wins (history lets you go back). Proposals detect conflicts.</li>
       <li>Connectors follow the public API documentation of each tool and were tested against simulators: test, sync, and read the first proposal carefully. GLPI 11’s new API (<code>/api.php/v2</code>) is not supported yet.</li>
       <li>Palo Alto: NAT rules, security profiles, dynamic address groups and the Panorama device-group hierarchy are not interpreted.</li>

@@ -35,7 +35,7 @@ Connectors are now **modules**: a folder with a manifest (`strata-module.json`: 
 - **Blast radius**: pick an asset (in the panel, or *Blast radius* on its sheet) and see everything an attacker holding it could reach, the most likely way to each asset, and the business services hit.
 - A step counts for the highest of: the vulnerabilities of the asset taken over (as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service; a path for the product of its steps. Both lists export as CSV.
 - **Architecture file**: one document per IS (*Analysis › Architecture file*, or the IS summary), in the shape audits and security accreditation expect: cover and sign-off table, summary, scope, network diagram, zones and VLANs, applications, asset inventory, flow matrix, the rules each firewall needs, exposure, vulnerabilities and remediation order, attack paths, plans of the exposed and critical assets, incident contacts, change history and method. *Download* saves it as one HTML file, with no outside resource, that prints to A4 PDF from the browser.
-- **Nix and NixOS**: the repository is a flake, with a package and a hardened `services.strata` module (section 5, *Nix and NixOS*).
+- **Nix and NixOS**: the repository is a flake, with a package and a hardened `services.strata` module (section 6, *Nix and NixOS*).
 - **Failed sign-ins are limited** per account and per client address (`429`), and passwords can be read from files (`EDIT_PASS_FILE`, `VIEW_PASS_FILE`): section 3.
 - **Moving around the 3D view**: drag with the left button to orbit, with the **middle** (or right) button to move the view left, right, up and down, and scroll to zoom; on a touch screen, two fingers zoom and move. The view stops at the edge of the model, and *Reset view* centres it again.
 - **Security fixes** from a review of the server and the connectors: a crafted Palo Alto configuration file could stall the server, and data files were readable by every local user on installs without Docker. Upgrade to 0.7.0 (CHANGELOG, *Security*).
@@ -152,7 +152,7 @@ One of these two options:
 
 - **Docker** with Docker Compose v2 (`docker compose version`), recommended;
 - **Node.js 20 or later** (`node --version`);
-- or **Nix** with flakes, or **NixOS** (section 5, *Nix and NixOS*).
+- or **Nix** with flakes, or **NixOS** (section 6, *Nix and NixOS*).
 
 The machine needs access to the npm registry **once**, during the build, to download three.js and the fonts. After that, the app runs without Internet access.
 
@@ -193,7 +193,7 @@ docker compose restart strata    # restart
 docker compose down             # stop (the data stays in the volume)
 ```
 
-By default, the port only listens on the machine itself (`127.0.0.1:8080`). To open it to your network, see section 4.
+By default, the port only listens on the machine itself (`127.0.0.1:8080`). To open it to your network, see section 5.
 
 ---
 
@@ -213,10 +213,11 @@ By default, the port only listens on the machine itself (`127.0.0.1:8080`). To o
 | `LOGIN_MAX_FAILS` | `10` | Different wrong passwords for one account before its sign-ins are refused (`429`) for `LOGIN_LOCK_MINUTES`. `0` turns it off. |
 | `LOGIN_MAX_FAILS_PER_ADDRESS` | `20` | The same, for all the accounts tried from one client address. `0` turns it off. |
 | `LOGIN_LOCK_MINUTES` | `15` | How long a lock lasts; failures are counted over the same time. |
-| `TRUST_PROXY` | — | Reverse proxies whose `X-Forwarded-For` gives the client address: addresses, IPv4 ranges (`10.0.0.0/8`), `loopback` or `private`, comma-separated. Unset: the address connecting to Strata is the client (section 4). |
+| `TRUST_PROXY` | — | Reverse proxies whose `X-Forwarded-For` gives the client address: addresses, IPv4 ranges (`10.0.0.0/8`), `loopback` or `private`, comma-separated. Unset: the address connecting to Strata is the client (section 5). |
+| `PUBLIC_URL`, `SSO_*`, `LOCAL_LOGIN`, `SESSION_HOURS` | — | Single sign-on (OpenID Connect or a sign-in proxy) and local accounts beside it: section 4. |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | Where the server listens. |
 | `DATA_DIR` | `/data` (Docker) | Folder for the data and the backups. |
-| `SITE_ADDRESS` | — | DNS name used by the HTTPS proxy (section 4). |
+| `SITE_ADDRESS` | — | DNS name used by the HTTPS proxy (section 5). |
 | `CONNECTORS` | on | `false` turns the connectors off (the built-in ones and the modules). |
 | `MODULE_REGISTRY` | `https://solidgeeks.github.io/strata/modules/index.json` | The module store administrators install from (read only when they open it). `off`: no store. |
 | `MODULE_UPLOAD` | `false` | `true` lets administrators install a module package from a file (no checksum: whoever uploads it vouches for it). |
@@ -228,7 +229,33 @@ After changing `.env`, apply it with `docker compose up -d`.
 
 ---
 
-## 4. Network access and HTTPS
+## 4. Single sign-on and API tokens
+
+Local accounts (`EDIT_PASS`, `scripts/users.mjs`, *Account*) keep working. Single sign-on comes next to them:
+
+**OpenID Connect** (Microsoft Entra ID, Keycloak, Authentik, Google Workspace, Okta…). Register Strata at your provider as a web application with the redirect URI `https://strata.example.org/auth/oidc/callback`, then:
+
+```bash
+PUBLIC_URL=https://strata.example.org        # the address users open; HTTPS
+SSO_ISSUER=https://login.microsoftonline.com/<tenant id>/v2.0
+SSO_CLIENT_ID=<application id>
+SSO_CLIENT_SECRET_FILE=/run/secrets/strata-sso   # or SSO_CLIENT_SECRET=
+SSO_NAME=Microsoft Entra ID
+SSO_ROLE_ADMIN=strata-admins                 # groups, comma-separated; the highest role wins
+SSO_ROLE_APPROVER=soc
+SSO_ROLE_CONTRIBUTOR=it-ops
+SSO_DEFAULT_ROLE=viewer                      # everyone else; empty: no access
+```
+
+Opening Strata then shows a sign-in page: *Sign in with Microsoft Entra ID*, and *Sign in with a local account* if local accounts are allowed. The groups come from the `groups` claim (`SSO_GROUPS_CLAIM`; for Entra ID, add the groups claim to the token, or use app roles with `SSO_GROUPS_CLAIM=roles`), the user name from `preferred_username` (`SSO_USER_CLAIM`). Strata checks the ID token's signature against the provider's keys, its issuer, audience, expiry and nonce, and uses PKCE. *Account › Sign out* ends the session at the provider too.
+
+**A sign-in proxy you already run** (Authelia, oauth2-proxy, Pomerium, Authentik outpost): `SSO_HEADER_USER=Remote-User` and `SSO_HEADER_GROUPS=Remote-Groups`, with the same `SSO_ROLE_*`. The headers are believed only from a proxy listed in `TRUST_PROXY`: list that proxy's own address (`TRUST_PROXY=10.0.0.5`, or `loopback` when it runs on the same machine), not a whole range, since anything in the range could send them. The proxy must set them itself and drop any coming from the browser.
+
+**Local accounts** stay: for the tests, small installations, and as a way in when the provider is down. `LOCAL_LOGIN=admins` keeps them for administrators only (break-glass), `LOCAL_LOGIN=off` turns them off. An SSO user with the same name as a local account is the same person in the history and the proposals: give local accounts the names your provider uses.
+
+**API tokens** for scripts and integrations: *Account › API tokens* (admin), with a name, a role and a validity of 1 to 730 days. The token (`stk_…`) is shown once and stored hashed; send it as `Authorization: Bearer stk_…`. Basic Auth with a local account keeps working for scripts.
+
+## 5. Network access and HTTPS
 
 Passwords travel with Basic Auth: **never expose the app over plain HTTP outside the machine**.
 
@@ -274,7 +301,7 @@ The app also works under a sub-path (for example `https://intranet/strata/`), be
 
 ---
 
-## 5. Install without Docker (systemd)
+## 6. Install without Docker (systemd)
 
 ```bash
 sudo mkdir -p /opt/strata && sudo cp -r strata/* /opt/strata/
@@ -340,7 +367,7 @@ On NixOS, the module runs it as a hardened systemd service (its own `strata` use
             };
             secretFiles.EDIT_PASS = "/run/secrets/strata-admin";   # kept out of the Nix store
             # environmentFile = "/run/secrets/strata.env";          # or KEY=value lines
-            openFirewall = false;      # keep it behind an HTTPS reverse proxy (section 4)
+            openFirewall = false;      # keep it behind an HTTPS reverse proxy (section 5)
           };
         }
       ];
@@ -355,7 +382,7 @@ The `Nix` workflow builds the package (which runs `npm test`) and runs a NixOS V
 
 ---
 
-## 6. Backups and restore
+## 7. Backups and restore
 
 To undo a mistake, the simplest is the history in the app (*Collaboration › History › Restore*). Backups are for losing the server.
 
@@ -377,7 +404,7 @@ Remember to include the backups folder or the `strata-data` Docker volume in you
 
 ---
 
-## 7. Taking over a map kept in the browser only
+## 8. Taking over a map kept in the browser only
 
 Opened without its server (as a local file, or copied to a static web page), the app keeps the map in that browser only: the *This browser only* badge shows at the top left. To move that map to your instance:
 
@@ -388,7 +415,7 @@ The format is the same: IS, zones, VLANs, assets, contacts, flows and links betw
 
 ---
 
-## 8. Upgrading
+## 9. Upgrading
 
 ```bash
 ./scripts/backup.sh
@@ -402,9 +429,9 @@ The data lives in the Docker volume and is not touched by the rebuild. Before up
 
 ---
 
-## 9. API (for automation)
+## 10. API (for automation)
 
-Every route needs the same credentials as the interface, with the rights of the account's role (direct writes need `approver`). Writes require the headers `Content-Type: application/json` and `X-Requested-With: strata`. A script can group several writes into a single history entry with the headers `X-Batch: <id>` and `X-Batch-Label: <URL-encoded label>`. To have a tool propose instead of write, give it a `contributor` account and use `POST /api/proposals` with `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (a document set to `null` = deletion).
+Every route needs the same credentials as the interface (a local account with Basic Auth, an API token as `Authorization: Bearer stk_…`, or the session of a signed-in browser), with the rights of the account's role (direct writes need `approver`). Writes require the headers `Content-Type: application/json` and `X-Requested-With: strata`. A script can group several writes into a single history entry with the headers `X-Batch: <id>` and `X-Batch-Label: <URL-encoded label>`. To have a tool propose instead of write, give it a `contributor` account and use `POST /api/proposals` with `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (a document set to `null` = deletion).
 
 | Method and route | What it does |
 |---|---|
@@ -421,7 +448,9 @@ Every route needs the same credentials as the interface, with the rights of the 
 | `GET /api/state?at=REV` | The map as it was right after version REV |
 | `POST /api/rollback` | `{"rev": N}`: puts the map back to version N (approver) |
 | `GET/POST /api/proposals`, `GET/PUT/DELETE /api/proposals/{id}` | Proposals; `POST …/{id}/submit`, `/withdraw`, `/comment`, `/approve` (`{"force": true}` on a conflict), `/reject` |
-| `GET /api/users`, `PUT/DELETE /api/users/{name}` | Accounts (admin); `PUT /api/me/password`: `{"current","next"}` |
+| `GET /api/users`, `PUT/DELETE /api/users/{name}` | Accounts (admin); `PUT /api/me/password`: `{"current","next"}` (local accounts) |
+| `GET/POST /api/tokens`, `DELETE /api/tokens/{id}` | API tokens (admin): `POST` `{"name", "role", "days"}` answers the token once |
+| `GET /auth/login`, `/auth/oidc/start`, `POST /auth/logout` | Sign-in page, single sign-on, sign-out (`{"location"}` to go to) |
 | `GET /api/connectors` | Connectors, settings (secrets masked) and latest syncs |
 | `PUT /api/connectors/{id}` | A connector's settings (admin); `id`: `cyberwatch`, `glpi`, `phpipam`, `paloalto`, or a module's id |
 | `POST /api/connectors/{id}/test` | Tests access (approver) |
@@ -468,7 +497,7 @@ Fields added since v0.2 (all optional):
 
 ---
 
-## 10. Security
+## 11. Security
 
 This map describes your weak spots precisely: treat it as sensitive data.
 
@@ -476,31 +505,32 @@ This map describes your weak spots precisely: treat it as sensitive data.
 - Give the `viewer` account to people who only need to look.
 - The server sends strict security headers (CSP with no external scripts, no framing, no referrer) and refuses cross-site writes.
 - Published Docker images are signed (Sigstore provenance attestation): check them with `gh attestation verify` (section 2).
-- These protections (authentication, roles, cross-site writes, four-eyes rule, access to the server's files) are checked by the automated tests on every code change (section 13).
+- These protections (authentication, roles, cross-site writes, four-eyes rule, access to the server's files) are checked by the automated tests on every code change (section 14).
 - Give everyone a named account with the lowest role that is enough: every change is attributed in the history.
-- Repeated failed sign-ins are refused for a while (`429`), per account and per client address (`LOGIN_MAX_FAILS`, `LOGIN_MAX_FAILS_PER_ADDRESS`, `LOGIN_LOCK_MINUTES`); browsers already signed in keep working. Behind a reverse proxy, set `TRUST_PROXY` (section 4).
+- With single sign-on, keep `LOCAL_LOGIN=admins` and one local admin with a long password, as the way in when the provider is down. Give scripts API tokens with the lowest role and a short validity, not a person's password.
+- Repeated failed sign-ins are refused for a while (`429`), per account and per client address (`LOGIN_MAX_FAILS`, `LOGIN_MAX_FAILS_PER_ADDRESS`, `LOGIN_LOCK_MINUTES`); browsers already signed in keep working. Behind a reverse proxy, set `TRUST_PROXY` (section 5).
 - Connectors: use **read-only** service accounts in Cyberwatch, GLPI, phpIPAM and PAN-OS, restricted to the Strata server's IP when the tool allows it. Their secrets are in `data/connectors.json`: protect the volume and the backup archives.
 - Connector modules run in their own process, which cannot read the data files or the other connectors' settings, but can use the network. Install only modules you trust: the store lists reviewed modules and checks their checksum; `MODULE_UPLOAD` is off by default and `MODULE_REGISTRY=off` turns the store off ([MODULES.md](MODULES.md#what-a-module-can-reach)).
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 | Symptom | Where to look |
 |---|---|
 | Blank page, nothing in 3D | `public/vendor/` is missing: run `docker compose up -d --build` or `npm run setup` again, and check access to the npm registry during the build. |
 | "This browser only" badge at the top left | The page cannot reach the API: it is opened as a local file, or the proxy blocks `/api/`. |
-| Other users only see changes after a reload | The proxy buffers `/api/events` (see section 4, option B). |
+| Other users only see changes after a reload | The proxy buffers `/api/events` (see section 5, option B). |
 | "You have read-only access" | You are signed in with the viewer account, or `READ_ONLY=true`. |
 | Switching accounts in the browser | The browser keeps Basic Auth credentials: open a private window or close the browser. |
 | Permission error on `/data` (Docker) | Keep the named volume from `docker-compose.yml`. If you mount a host folder, give it to UID 1000: `chown -R 1000:1000 ./data`. |
 
 ---
 
-## 12. Limits of v0.8
+## 13. Limits of v0.8
 
 - Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
-- Authentication is still Basic Auth (credentials asked by the browser). For SSO (Entra ID, LDAP…), put an authenticating proxy in front and create the same account names.
+- Sessions of single sign-on are kept in memory: restarting Strata signs SSO users out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 12 by default). LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).
 - Two approvers editing the same IS directly at the same time: the last save wins (the history lets you go back). Proposals, on the other hand, detect conflicts.
 - draw.io or Visio diagrams cannot be imported: only Strata JSON exports can become a proposal.
 - Opened without its server, the app keeps the map in the browser only: no accounts, history, proposals or connectors.
@@ -515,7 +545,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 - Attack paths follow the recorded flows only: a flow missing from the map is a path Strata does not see, and a flow recorded but blocked in practice is a path it shows. The likelihoods are a way to rank paths, not a measured probability. Paths below 0.1% or longer than 8 steps are left out of the lists (the most likely way to each asset is always given).
 - The risk score uses the EPSS and KEV values recorded on each vulnerability: Strata does not fetch the FIRST and CISA feeds, so keep them up to date through the Cyberwatch connector or an import. A vulnerability is not tied to a port, so any open flow to its asset counts as a way to reach it.
 
-## 13. Development and tests
+## 14. Development and tests
 
 ```bash
 npm test

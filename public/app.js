@@ -393,6 +393,8 @@ const Store={
     if(this.batch){h['x-batch']=this.batch.id;h['x-batch-label']=encodeURIComponent(this.batch.label);}
     const r=await fetch(url,{method,credentials:'same-origin',headers:h,body:body===undefined?undefined:JSON.stringify(body)});
     let j=null;try{j=await r.json();}catch(e){}
+    // a session that has ended (single sign-on): back to the sign-in page
+    if(r.status===401&&this.me&&this.me.via==='sso'){location.href='auth/login';}
     if(!r.ok){const err=new Error((j&&j.error)||('HTTP '+r.status));err.status=r.status;err.body=j;throw err;}
     if(j&&j.rev)this.rev=j.rev;
     return j;
@@ -2927,23 +2929,35 @@ async function restoreVersion(rev,btn){
   try{const j=await Store.api('POST','api/rollback',{rev});leaveMode(`Map restored to version ${rev} (new version ${j.rev}).`);await Store.pull();}catch(e){toast(e.message,true);}
 }
 /* ---- accounts ---- */
+const VIA_LBL={sso:'signed in with single sign-on',header:'signed in through the sign-in proxy',token:'API token',local:'local account'};
 async function showAccount(){
-  const me=Store.me||{};let users=[];
-  if(me.canAdmin&&Store.features.accounts){try{users=(await Store.api('GET','api/users')).users;}catch(e){}}
+  const me=Store.me||{};let users=[],tokens=[];
+  if(me.canAdmin&&Store.features.accounts){try{users=(await Store.api('GET','api/users')).users;}catch(e){}try{tokens=(await Store.api('GET','api/tokens')).tokens;}catch(e){}}
   const roleOpts=v=>['viewer','contributor','approver','admin'].map(r=>`<option${r===v?' selected':''}>${r}</option>`).join('');
-  openDet(`<div class="d-head"><div><span class="cap">Account</span><h2>${esc(me.user||'Open access')}</h2><p>${esc(me.role||'')} · ${{viewer:'reads the map',contributor:'reads, and proposes changes',approver:'edits the map, reviews proposals, restores versions',admin:'everything, and manages the accounts'}[me.role]||''}</p></div><button class="close" data-close aria-label="Close">×</button></div>
+  openDet(`<div class="d-head"><div><span class="cap">Account</span><h2>${esc(me.user||'Open access')}</h2><p>${esc(me.role||'')} · ${{viewer:'reads the map',contributor:'reads, and proposes changes',approver:'edits the map, reviews proposals, restores versions',admin:'everything, and manages the accounts'}[me.role]||''}${VIA_LBL[me.via]?' · '+VIA_LBL[me.via]:''}</p></div><button class="close" data-close aria-label="Close">×</button></div>
   <div class="d-body">
-  ${Store.features.accounts?`<h3 class="cap">Change my password</h3>
+  ${me.signOut?`<div class="c2" style="margin:0 0 14px"><button class="btn small" data-signout>Sign out</button></div>`:''}
+  ${Store.features.accounts&&me.via==='local'?`<h3 class="cap">Change my password</h3>
   <form class="frm" id="pwForm" style="padding:0" novalidate><div class="f"><label for="pwCur">Current password</label><input id="pwCur" type="password" autocomplete="current-password"></div>
   <div class="f2"><div class="f"><label for="pwNew">New password</label><input id="pwNew" type="password" autocomplete="new-password" minlength="10"></div><div class="f"><label for="pwNew2">Again</label><input id="pwNew2" type="password" autocomplete="new-password"></div></div>
-  <button class="btn small" type="submit">Change the password</button><p class="fhint">The browser will then ask you to sign in again with the new password.</p></form>`:'<p class="summary">No account is configured on this server: everyone who reaches it can edit. Set EDIT_PASS in .env, or create accounts with scripts/users.mjs.</p>'}
+  <button class="btn small" type="submit">Change the password</button><p class="fhint">The browser will then ask you to sign in again with the new password.</p></form>`:Store.features.accounts?'':'<p class="summary">No account is configured on this server: everyone who reaches it can edit. Set EDIT_PASS in .env, or create accounts with scripts/users.mjs.</p>'}
   ${me.canAdmin&&Store.features.accounts?`<h3 class="cap">Accounts · ${users.length}</h3>
   <ul class="list">${users.map(u=>`<li class="usr" data-user="${esc(u.name)}"><b>${esc(u.name)}</b><select data-urole aria-label="Role of ${esc(u.name)}" ${u.name===me.user?'disabled':''}>${roleOpts(u.role)}</select>
     <button class="ibtn" data-utoggle ${u.name===me.user?'disabled':''}>${u.disabled?'Enable':'Disable'}</button><button class="ibtn" data-upass>Password</button><button class="ibtn" data-udel ${u.name===me.user?'disabled':''}>Delete</button>${u.disabled?'<small>disabled</small>':''}</li>`).join('')}</ul>
   <h3 class="cap">New account</h3>
   <form class="frm" id="userForm" style="padding:0" novalidate><div class="f2"><div class="f"><label for="nuName">Name</label><input id="nuName" autocomplete="off" placeholder="e.g. alice.martin"></div><div class="f"><label for="nuRole">Role</label><select id="nuRole">${roleOpts('contributor')}</select></div></div>
-  <div class="f"><label for="nuPass">Password (10 characters or more)</label><input id="nuPass" type="password" autocomplete="new-password"></div><button class="btn small" type="submit">Create the account</button></form>`:''}
+  <div class="f"><label for="nuPass">Password (10 characters or more)</label><input id="nuPass" type="password" autocomplete="new-password"></div><button class="btn small" type="submit">Create the account</button></form>
+  <h3 class="cap">API tokens · ${tokens.length}</h3>
+  <p class="fhint">For scripts and integrations: <code>Authorization: Bearer stk_…</code>. A token is shown once, when it is created.</p>
+  ${tokens.length?`<ul class="list">${tokens.map(t=>`<li class="usr" data-token="${esc(t.id)}"><b>${esc(t.name)}</b><span>${esc(t.role)}</span><small>${Date.parse(t.expiresAt)<Date.now()?'expired':'until '+fmtDate(t.expiresAt)}${t.lastUsedAt?' · used '+fmtDate(t.lastUsedAt):' · never used'}</small><button class="ibtn" data-tdel>Revoke</button></li>`).join('')}</ul>`:''}
+  <form class="frm" id="tokenForm" style="padding:0" novalidate><div class="f2"><div class="f"><label for="ntName">Name</label><input id="ntName" autocomplete="off" placeholder="e.g. inventory-sync"></div><div class="f"><label for="ntRole">Role</label><select id="ntRole">${roleOpts('contributor')}</select></div></div>
+  <div class="f"><label for="ntDays">Valid for (days)</label><input id="ntDays" type="number" min="1" max="730" value="90"></div><button class="btn small" type="submit">Create the token</button></form>
+  <div id="tokenOut" hidden></div>`:''}
   </div>`,'account');
+  const tf=$('#tokenForm');if(tf)tf.addEventListener('submit',async e=>{e.preventDefault();e.stopPropagation();
+    try{const j=await Store.api('POST','api/tokens',{name:$('#ntName').value.trim(),role:$('#ntRole').value,days:+$('#ntDays').value});
+      const o=$('#tokenOut');o.hidden=false;o.innerHTML=`<p class="ctest ok">Token “${esc(j.name)}” created. Copy it now: it will not be shown again.</p><div class="code"><pre style="white-space:pre-wrap;word-break:break-all"><code>${esc(j.token)}</code></pre></div>`;tf.reset();}
+    catch(err){toast(err.message,true);}});
   const pf=$('#pwForm');if(pf)pf.addEventListener('submit',async e=>{e.preventDefault();e.stopPropagation();const n=$('#pwNew').value;
     if(n.length<10)return toast('Use at least 10 characters.',true);if(n!==$('#pwNew2').value)return toast('The two new passwords differ.',true);
     try{await Store.api('PUT','api/me/password',{current:$('#pwCur').value,next:n});toast('Password changed. Sign in again with the new one if the browser asks.');pf.reset();}catch(err){toast(err.message,true);}});
@@ -2955,6 +2969,9 @@ det.addEventListener('change',async e=>{const s=e.target.closest('[data-urole]')
 det.addEventListener('click',async e=>{
   const t=e.target,q=s=>t.closest(s);
   if(q('[data-new-prop]'))return proposalForm();
+  if(q('[data-signout]')){try{const j=await Store.api('POST','auth/logout',{});location.href=j.location||'auth/login';}catch(err){toast(err.message,true);}return;}
+  if(q('[data-tdel]')){const b=q('[data-tdel]');if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='Confirm';return;}
+    try{await Store.api('DELETE','api/tokens/'+encodeURIComponent(b.closest('[data-token]').dataset.token));toast('Token revoked.');showAccount();}catch(err){toast(err.message,true);}return;}
   if(q('[data-open-prop]'))return openProposal(q('[data-open-prop]').dataset.openProp);
   if(q('[data-leave-mode]'))return leaveMode();
   if(q('[data-prop-submit]'))return propAction('submit');

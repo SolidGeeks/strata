@@ -4,6 +4,14 @@ All notable changes to Strata. Versions follow [Semantic Versioning](https://sem
 
 ## [Unreleased]
 ### Added
+- **Single sign-on**, next to the local accounts:
+  - **OpenID Connect** (Entra ID, Keycloak, Authentik, Google Workspace, Okta…): a sign-in page, authorization code flow with PKCE, the ID token checked against the provider's keys (issuer, audience, expiry, nonce), then a session cookie (`HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS, `SESSION_HOURS`). Sign-out ends the session at the provider too.
+  - **Roles from the provider's groups**: `SSO_ROLE_ADMIN`, `_APPROVER`, `_CONTRIBUTOR`, `_VIEWER`; `SSO_DEFAULT_ROLE` for everyone else, or no access.
+  - **Trusted proxy headers** (`SSO_HEADER_USER`, `SSO_HEADER_GROUPS`) for a sign-in proxy listed in `TRUST_PROXY`.
+  - **`LOCAL_LOGIN`**: `all` (default), `admins` (break-glass) or `off`.
+  - Settings in `.env.example`; on NixOS, `secretFiles.SSO_CLIENT_SECRET`.
+- **API tokens** for scripts (*Account › API tokens*, admin): a name, a role and 1 to 730 days; shown once, stored hashed in `tokens.json` (mode 600), sent as `Authorization: Bearer stk_…`. API: `GET/POST /api/tokens`, `DELETE /api/tokens/{id}`.
+- `GET /api/me` says how the person signed in (`via`: `local`, `sso`, `header`, `token`).
 - **Release without typing a tag**: *Actions › Release › Run workflow* on `main` reads the version from `package.json`, creates the `vX.Y.Z` tag and publishes, after a maintainer's approval (the `release` environment). Tags pushed with git and releases published from the web page keep working.
 - **Pre-releases**: a version such as `1.0.0-rc.1` is published under its own version only, never as `latest`, and its GitHub release is marked as a pre-release. The README explains how to try a release candidate.
 

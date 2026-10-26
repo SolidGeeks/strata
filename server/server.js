@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { createConnectors } from './connectors/index.js';
 import { createStore } from './connectors/store.js';
 import { ID_RE as MODULE_ID_RE } from './connectors/modules.js';
+import { ssoConfig, createSso, loginPage } from './sso.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = process.env;
@@ -333,8 +334,17 @@ function recordFailure(kind, key, credential) {
 const authCache = new Map();
 // Returns the account and role, null when the credentials are missing or wrong, or {retryAfter} (ms)
 // while sign-ins are locked
+// Single sign-on and API tokens come first (sso.js); {denied} is a refusal to explain (403)
 function authenticate(req) {
-  if (!authEnabled()) return { user: '', role: CONFIG.readOnly ? 'viewer' : 'admin', open: true };
+  const other = sso.fromSession(req) || sso.fromToken(req) || sso.fromHeaders(req);
+  if (other) return other.denied ? other : { ...other, role: CONFIG.readOnly ? 'viewer' : other.role };
+  if (!authEnabled() && !sso.enabled()) return { user: '', role: CONFIG.readOnly ? 'viewer' : 'admin', open: true, via: 'open' };
+  const local = authenticateLocal(req);
+  if (!local || local.retryAfter || sso.localLogin === 'all') return local;
+  if (sso.localLogin === 'off') return { denied: 'Local accounts are turned off on this server (LOCAL_LOGIN=off): sign in with single sign-on.' };
+  return local.role === 'admin' ? local : { denied: 'Only administrators sign in with a local account on this server (LOCAL_LOGIN=admins): use single sign-on.' };
+}
+function authenticateLocal(req) {
   const h = req.headers.authorization || '';
   if (!h.startsWith('Basic ')) return null;
   const raw = Buffer.from(h.slice(6), 'base64').toString('utf8'), i = raw.indexOf(':');
@@ -356,7 +366,7 @@ function authenticate(req) {
   const u = own(users, name);
   if (!u || u.disabled) return null;
   const role = CONFIG.readOnly ? 'viewer' : (RANK[u.role] !== undefined ? u.role : 'viewer');
-  return { user: name, role };
+  return { user: name, role, via: 'local' };
 }
 const can = (auth, role) => RANK[auth.role] >= RANK[role];
 const need = (auth, role) => { if (!can(auth, role)) throw httpError(403, `This needs the ${role} role (you are ${auth.role}).`); };
@@ -439,11 +449,12 @@ async function api(req, res, parts, url, auth) {
   const ok = rev => send(res, 200, { ok: true, rev: rev ?? state.rev });
 
   if (r1 === 'me' && !id && method === 'GET') return send(res, 200, {
-    user: auth.user, role: auth.role, auth: !auth.open, readOnly: CONFIG.readOnly, allowSelfApproval: CONFIG.allowSelfApproval,
+    user: auth.user, role: auth.role, auth: !auth.open, via: auth.via, signOut: auth.via === 'sso', readOnly: CONFIG.readOnly, allowSelfApproval: CONFIG.allowSelfApproval,
     canWrite: can(auth, 'approver'), canPropose: can(auth, 'contributor'), canReview: can(auth, 'approver'), canAdmin: can(auth, 'admin'), connectors: !!connectors, sourceUrl: CONFIG.sourceUrl,
   });
   if (r1 === 'me' && id === 'password' && method === 'PUT') {
     if (auth.open) throw httpError(400, 'Accounts are not enabled on this server.');
+    if (auth.via !== 'local') throw httpError(400, 'Only a local account has a password here: change it with your identity provider.');
     const b = await readBody(req, 4096), u = own(users, auth.user);
     const given = u ? Buffer.from(hashPass(b?.current || '', u.salt), 'hex') : null, stored = u ? Buffer.from(u.hash, 'hex') : null;
     if (!u || given.length !== stored.length || !crypto.timingSafeEqual(given, stored)) throw httpError(403, 'Current password is wrong.');
@@ -668,6 +679,18 @@ async function api(req, res, parts, url, auth) {
     }
   }
 
+  /* ---- API tokens (admin) ---- */
+  if (r1 === 'tokens') {
+    need(auth, 'admin');
+    if (!id && method === 'GET') return send(res, 200, { tokens: sso.listTokens() });
+    if (!id && method === 'POST') {
+      const b = await readBody(req, 4096) || {};
+      try { return send(res, 200, { ok: true, ...(await sso.createToken({ name: b.name, role: b.role, days: b.days, by: auth.user || 'admin' })) }); }
+      catch (e) { throw e.status ? httpError(e.status, e.message) : e; }
+    }
+    if (id && method === 'DELETE') { if (!await sso.deleteToken(id, auth.user || 'admin')) throw httpError(404, 'Unknown token'); return send(res, 200, { ok: true }); }
+  }
+
   /* ---- accounts (admin) ---- */
   if (r1 === 'users') {
     need(auth, 'admin');
@@ -691,6 +714,29 @@ async function api(req, res, parts, url, auth) {
 }
 
 /* ---------------- Server ---------------- */
+/* ---------------- Sign-in routes (/auth/…) ---------------- */
+const localSignIn = () => sso.localLogin !== 'off' && authEnabled();
+const html = (res, status, body, headers = {}) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', ...headers });
+async function authRoute(req, res, url) {
+  const p = url.pathname, page = (status, message, extra) => html(res, status, loginPage({ ssoName: sso.name, oidc: sso.oidc, local: localSignIn(), message, out: url.searchParams.has('out') }), extra);
+  if (p === '/auth/login' && req.method === 'GET') return page(200);
+  if (p === '/auth/oidc/start' && req.method === 'GET' && sso.oidc) {
+    try { const s = await sso.start(); return send(res, 302, '', { Location: s.location, 'Set-Cookie': s.setCookie }); }
+    catch (e) { log('SSO:', e.message); return page(502, `The identity provider cannot be reached: ${e.message}`); }
+  }
+  if (p === '/auth/oidc/callback' && req.method === 'GET' && sso.oidc) {
+    try { const s = await sso.callback(req, url); return send(res, 302, '', { Location: `${sso.publicUrl}/`, 'Set-Cookie': s.setCookie }); }
+    catch (e) { log('SSO sign-in refused:', e.message); return page(e.denied ? 403 : 400, e.message); }
+  }
+  if (p === '/auth/logout' && req.method === 'POST') {
+    if (req.headers['x-requested-with'] !== 'strata') return fail(res, 400, 'Missing X-Requested-With header');
+    const a = sso.fromSession(req);
+    const out = await sso.logout(a ? a.sessionId : '');
+    return send(res, 200, { ok: true, location: out.location }, { 'Set-Cookie': out.setCookie });
+  }
+  return fail(res, 404, 'Not found');
+}
+
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
   if (req.url !== '/healthz' && !req.url.startsWith('/api/events')) res.on('finish', () => log(req.method, req.url, res.statusCode, `${Date.now() - started}ms`));
@@ -698,14 +744,22 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     try { decodeURIComponent(url.pathname); } catch { return fail(res, 400, 'Malformed URL'); }
     if (url.pathname === '/healthz') return send(res, 200, 'ok');
+    if (url.pathname.startsWith('/auth/')) return await authRoute(req, res, url);
     const auth = authenticate(req);
+    if (auth && auth.denied) return send(res, 403, url.pathname.startsWith('/api/') ? { error: auth.denied } : loginPage({ ssoName: sso.name, oidc: sso.oidc, local: localSignIn(), message: auth.denied }), url.pathname.startsWith('/api/') ? {} : { 'Content-Type': 'text/html; charset=utf-8' });
     if (auth && auth.retryAfter) {
       const s = Math.ceil(auth.retryAfter / 1000);
       res.writeHead(429, { ...SEC_HEADERS, 'Retry-After': String(s), 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
       return res.end(`Too many failed sign-ins. Try again in ${s >= 120 ? Math.ceil(s / 60) + ' minutes' : s + ' seconds'}.`);
     }
     if (!auth) {
-      res.writeHead(401, { ...SEC_HEADERS, 'WWW-Authenticate': 'Basic realm="Strata", charset="UTF-8"', 'Content-Type': 'text/plain; charset=utf-8' });
+      // with OpenID Connect, a page asks for the sign-in page, and the API answers 401 without a password prompt
+      // …except "/?local": the browser's password prompt for a local account, asked at the root so that
+      // the browser then sends the password with every request of the app
+      if (sso.oidc && url.pathname === '/' && url.searchParams.has('local') && localSignIn())
+        return send(res, 401, loginPage({ ssoName: sso.name, oidc: sso.oidc, local: true, message: 'Local sign-in cancelled or refused.' }), { 'Content-Type': 'text/html; charset=utf-8', 'WWW-Authenticate': 'Basic realm="Strata", charset="UTF-8"' });
+      if (sso.oidc && !url.pathname.startsWith('/api/') && (req.method === 'GET' || req.method === 'HEAD')) return send(res, 302, '', { Location: `${sso.publicUrl}/auth/login` });
+      res.writeHead(401, { ...SEC_HEADERS, ...(sso.oidc || !localSignIn() ? {} : { 'WWW-Authenticate': 'Basic realm="Strata", charset="UTF-8"' }), 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('Authentication required');
     }
     if (url.pathname.startsWith('/api/')) await api(req, res, url.pathname.slice(5).split('/').filter(Boolean).map(decodeURIComponent), url, auth);
@@ -717,6 +771,14 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+const sso = (() => {
+  try {
+    return createSso({
+      config: ssoConfig(env, secret), dataDir: CONFIG.dataDir, log, writeJson, userRe: USER_RE,
+      trustedPeer: req => CONFIG.trustProxy.length > 0 && trustedProxy(normAddr(req.socket.remoteAddress)),
+    });
+  } catch (e) { console.error(e.message); process.exit(1); }
+})();
 loadState();
 loadHistory();
 const STRATA_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -736,7 +798,9 @@ setInterval(() => { try { const m = fs.statSync(USERS_FILE).mtimeMs; if (m !== u
 server.listen(CONFIG.port, CONFIG.host, () => {
   log(`Strata listening on http://${CONFIG.host}:${CONFIG.port}`);
   log(`Data folder: ${CONFIG.dataDir}`);
-  if (!authEnabled()) log('WARNING: no account configured (EDIT_PASS empty, no data/users.json): anyone who can reach this port can read and edit the map.');
+  if (sso.oidc) log(`Single sign-on: ${sso.name} (OpenID Connect); local accounts: ${sso.localLogin}`);
+  if (sso.header) log(`Single sign-on: user from the trusted proxies' headers; local accounts: ${sso.localLogin}`);
+  if (!authEnabled() && !sso.enabled()) log('WARNING: no account configured (EDIT_PASS empty, no data/users.json): anyone who can reach this port can read and edit the map.');
   else log(`Accounts: ${Object.entries(users).filter(([, u]) => !u.disabled).map(([n, u]) => `${n} (${u.role})`).join(', ')}`);
   if (CONFIG.readOnly) log('READ_ONLY is on: nobody can edit.');
 });
