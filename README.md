@@ -15,11 +15,20 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 | Milestone | What it brings |
 |---|---|
 | [0.7.0](https://github.com/SolidGeeks/strata/milestone/1) ✅ | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface. Released on 2026-10-26 |
-| [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) | A modern three.js, or a documented decision to stay on 0.128 |
+| [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) | Connector modules and a module store (done, unreleased); a modern three.js, or a documented decision to stay on 0.128 |
 | [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) | The last breaking changes: IS Map compatibility, pre-releases, an API reference |
 | [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
 
 Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
+
+## Coming in v0.8: connector modules and the module store
+
+Connectors are now **modules**: a folder with a manifest (`strata-module.json`: name, settings, what it may reach) and its code. The four connectors that ship with Strata are modules like any other, and anyone can write a new one without touching Strata's code: see **[MODULES.md](MODULES.md)**.
+
+- **Module store** (*Collaboration › Connectors › Module store*, administrators): the modules a registry offers, with what each one reads, installed in one click. The store pins the SHA-256 of each package, so what gets installed is exactly what was reviewed. The first one is **CSV inventory**: assets of an IS from a spreadsheet saved as CSV, imported by any contributor as a proposal.
+- **Each module runs in its own process**, started for one test or run: it reads its own folder only (not the data files, not the accounts, not the other connectors' settings), cannot write files or start programs, sees none of the server's variables, and is stopped after `CONNECTOR_TIMEOUT_MINUTES`. Whatever it reads still arrives as a proposal an approver reviews.
+- **File imports for any module**: a module says it imports files, which settings can change for one import, and who may do it. The Palo Alto import is now one of them.
+- **Modules of your own**: a folder in `MODULES_DIR` (a Docker volume, or `services.strata.modules` on NixOS), or a package file when `MODULE_UPLOAD=true`. `scripts/pack-module.mjs` packs a module for the store.
 
 ## New in v0.7: attack paths, architecture files, Nix
 
@@ -218,7 +227,11 @@ By default, the port only listens on the machine itself (`127.0.0.1:8080`). To o
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | Where the server listens. |
 | `DATA_DIR` | `/data` (Docker) | Folder for the data and the backups. |
 | `SITE_ADDRESS` | — | DNS name used by the HTTPS proxy (section 4). |
-| `CONNECTORS` | on | `false` turns the connectors off (Cyberwatch, GLPI, phpIPAM, Palo Alto). |
+| `CONNECTORS` | on | `false` turns the connectors off (the built-in ones and the modules). |
+| `MODULE_REGISTRY` | `https://solidgeeks.github.io/strata/modules/index.json` | The module store administrators install from (read only when they open it). `off`: no store. |
+| `MODULE_UPLOAD` | `false` | `true` lets administrators install a module package from a file (no checksum: whoever uploads it vouches for it). |
+| `MODULES_DIR` | — | A folder of connector modules you provide yourself, one sub-folder each ([MODULES.md](MODULES.md)). |
+| `CONNECTOR_TIMEOUT_MINUTES` | `30` | Longest a connector run may take before it is stopped (2 minutes at most for a test). |
 | `SOURCE_URL` | `https://github.com/SolidGeeks/strata` | The app's *Source code* link (AGPL): point it at your fork if you modify the code. |
 | `DATA_VOLUME` | `strata-data` | Name of the Docker data volume (to take over an IS Map install, see above). |
 
@@ -347,7 +360,7 @@ On NixOS, the module runs it as a hardened systemd service (its own `strata` use
 }
 ```
 
-Files in `secretFiles` are read by systemd as root and handed to the service as credentials: they can stay readable by root only. Accounts from the command line: `sudo -u strata env DATA_DIR=/var/lib/strata strata-users set alice contributor`.
+Files in `secretFiles` are read by systemd as root and handed to the service as credentials: they can stay readable by root only. `modules = [ ./my-connector ]` provides connector modules ([MODULES.md](MODULES.md)); `settings.MODULE_REGISTRY = "off"` keeps to them. Accounts from the command line: `sudo -u strata env DATA_DIR=/var/lib/strata strata-users set alice contributor`.
 
 The `Nix` workflow builds the package (which runs `npm test`) and runs a NixOS VM test of the module on every change. When `package-lock.json` changes, `npmDepsHash` in `nix/package.nix` has to follow: the build fails and prints the new value. `nix flake update` moves nixpkgs forward.
 
@@ -419,9 +432,13 @@ Every route needs the same credentials as the interface, with the rights of the 
 | `GET/POST /api/proposals`, `GET/PUT/DELETE /api/proposals/{id}` | Proposals; `POST …/{id}/submit`, `/withdraw`, `/comment`, `/approve` (`{"force": true}` on a conflict), `/reject` |
 | `GET /api/users`, `PUT/DELETE /api/users/{name}` | Accounts (admin); `PUT /api/me/password`: `{"current","next"}` |
 | `GET /api/connectors` | Connectors, settings (secrets masked) and latest syncs |
-| `PUT /api/connectors/{id}` | A connector's settings (admin); `id`: `cyberwatch`, `glpi`, `phpipam`, `paloalto` |
+| `PUT /api/connectors/{id}` | A connector's settings (admin); `id`: `cyberwatch`, `glpi`, `phpipam`, `paloalto`, or a module's id |
 | `POST /api/connectors/{id}/test` | Tests access (approver) |
-| `POST /api/connectors/{id}/run` | Runs a sync (approver); `{"wait": true}` waits for the result. Palo Alto: `{"xml": "<config>…", "fileName": "…", "overrides": {"site", "firewall", "scope"}}` imports a file (contributor) |
+| `POST /api/connectors/{id}/run` | Runs a sync (approver); `{"wait": true}` waits for the result. `{"file": {"name", "text"}, "overrides": {…}}` imports a file, for the modules that do (Palo Alto, CSV inventory: contributor); `overrides`: the settings the module lets one import change. The older Palo Alto form `{"xml", "fileName"}` still works |
+| `GET /api/modules` | The module store: what the registry offers, and what is installed (admin; `?fresh=1` reads the registry again) |
+| `POST /api/modules/{id}/install` | Installs or updates a module from the store (admin) |
+| `POST /api/modules/upload` | Installs a package: `{"data": "<.tgz in base64>"}` (admin, with `MODULE_UPLOAD=true`) |
+| `DELETE /api/modules/{id}` | Removes a module installed from the store, and its settings (admin) |
 | `GET /api/events` | SSE stream: `event: change` with the new revision, `proposals`, `connectors` |
 | `GET /healthz` | Health check (no authentication) |
 
@@ -472,6 +489,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 - Give everyone a named account with the lowest role that is enough: every change is attributed in the history.
 - Repeated failed sign-ins are refused for a while (`429`), per account and per client address (`LOGIN_MAX_FAILS`, `LOGIN_MAX_FAILS_PER_ADDRESS`, `LOGIN_LOCK_MINUTES`); browsers already signed in keep working. Behind a reverse proxy, set `TRUST_PROXY` (section 4).
 - Connectors: use **read-only** service accounts in Cyberwatch, GLPI, phpIPAM and PAN-OS, restricted to the Strata server's IP when the tool allows it. Their secrets are in `data/connectors.json`: protect the volume and the backup archives.
+- Connector modules run in their own process, which cannot read the data files or the other connectors' settings, but can use the network. Install only modules you trust: the store lists reviewed modules and checks their checksum; `MODULE_UPLOAD` is off by default and `MODULE_REGISTRY=off` turns the store off ([MODULES.md](MODULES.md#what-a-module-can-reach)).
 
 ---
 
@@ -500,7 +518,8 @@ This map describes your weak spots precisely: treat it as sensitive data.
 - The connectors were written from the public API documentation (Cyberwatch v3, GLPI `apirest.php` 9.5/10, phpIPAM 1.4+, PAN-OS 10/11) and tested against simulators, not against your instances: run *Test the connection*, then a first sync, and review the proposal before publishing it. Fields specific to your version (Cyberwatch path, location rules) can be set without touching the code.
 - Palo Alto: NAT rules, security profiles, dynamic address groups and the Panorama device-group hierarchy are not interpreted; only *allow* security rules are. A rule that is too broad (internal `any`, large range) is flagged instead of drawn.
 - GLPI: one call per asset (plus one per technician and per unknown software, cached); allow a few minutes for several thousand assets. The new GLPI 11 API (`/api.php/v2`) is not supported yet.
-- NetBox and NetFlow are not connected yet.
+- NetBox and NetFlow are not connected yet: a module could do it ([MODULES.md](MODULES.md)).
+- A connector module's process is kept away from the data files and from the server's settings, but not from the network; the Node.js permission model it relies on guards against mistakes, not against code written to escape it. Review a module before installing it outside the store.
 - Business dependencies follow the recorded flows: a dependency with no flow on the map (a licence server reached through a proxy, a shared storage mounted by hand) is not seen. Log and monitoring flows (syslog, SNMP traps, NetFlow) are left out on purpose.
 - Attack paths follow the recorded flows only: a flow missing from the map is a path Strata does not see, and a flow recorded but blocked in practice is a path it shows. The likelihoods are a way to rank paths, not a measured probability. Paths below 0.1% or longer than 8 steps are left out of the lists (the most likely way to each asset is always given).
 - The risk score uses the EPSS and KEV values recorded on each vulnerability: Strata does not fetch the FIRST and CISA feeds, so keep them up to date through the Cyberwatch connector or an import. A vulnerability is not tied to a port, so any open flow to its asset counts as a way to reach it.

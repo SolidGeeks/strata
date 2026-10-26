@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseXml } from '../server/connectors/util.js';
+import { parseXml } from '../server/connectors/sdk.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 

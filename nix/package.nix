@@ -26,6 +26,9 @@ buildNpmPackage {
       ../server
       ../scripts
       ../tests
+      # the example module and its store package, which the tests compare
+      ../modules
+      ../docs/modules
     ];
   };
 
@@ -49,8 +52,8 @@ buildNpmPackage {
   installPhase = ''
     runHook preInstall
     mkdir -p $out/share/strata/scripts $out/bin
-    cp -r package.json server public $out/share/strata/
-    cp scripts/users.mjs scripts/connector-sim.mjs $out/share/strata/scripts/
+    cp -r package.json server public modules $out/share/strata/
+    cp scripts/users.mjs scripts/connector-sim.mjs scripts/pack-module.mjs $out/share/strata/scripts/
     # The store is read-only: unless DATA_DIR says otherwise, the data goes to ./data where the
     # command runs, and the server listens on this machine only (nix run)
     makeWrapper ${node} $out/bin/strata \
@@ -62,6 +65,8 @@ buildNpmPackage {
     makeWrapper ${node} $out/bin/strata-users \
       --add-flags $out/share/strata/scripts/users.mjs \
       --set-default DATA_DIR data
+    makeWrapper ${node} $out/bin/strata-pack-module \
+      --add-flags $out/share/strata/scripts/pack-module.mjs
     makeWrapper ${node} $out/bin/strata-connector-sim \
       --add-flags $out/share/strata/scripts/connector-sim.mjs
     runHook postInstall

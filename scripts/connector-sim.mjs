@@ -138,4 +138,5 @@ const srv = http.createServer((req, res) => {
   }
   j(res, 404, { error: 'nope' });
 });
-srv.listen(8099, () => console.log('mock on 8099'));
+const PORT = +(process.env.SIM_PORT || 8099);
+srv.listen(PORT, '127.0.0.1', () => console.log('mock on ' + PORT));

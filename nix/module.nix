@@ -21,6 +21,12 @@ let
   # Booleans as true/false, numbers as text
   toEnv = v: if builtins.isBool v then lib.boolToString v else toString v;
   secrets = lib.filterAttrs (_: file: file != null) cfg.secretFiles;
+  modulesDir = pkgs.linkFarm "strata-modules" (
+    lib.imap0 (i: m: {
+      name = "${toString i}-${baseNameOf m}";
+      path = m;
+    }) cfg.modules
+  );
   lowPort = cfg.settings.PORT < 1024;
   secretFile =
     what:
@@ -85,7 +91,7 @@ in
         EDIT_USER, VIEW_USER, ALLOW_SELF_APPROVAL, HISTORY_KEEP, READ_ONLY, BACKUP_KEEP,
         BACKUP_EVERY_HOURS, MAX_IMPORT_MB, LOGIN_MAX_FAILS, LOGIN_MAX_FAILS_PER_ADDRESS,
         LOGIN_LOCK_MINUTES, TRUST_PROXY (set it to "loopback" behind a reverse proxy on this
-        host), CONNECTORS, SOURCE_URL. The module sets DATA_DIR to
+        host), CONNECTORS, CONNECTOR_TIMEOUT_MINUTES, MODULE_REGISTRY, MODULE_UPLOAD, SOURCE_URL. The module sets DATA_DIR to
         /var/lib/strata. These values end up in the Nix store: put passwords in
         {option}`services.strata.secretFiles` or {option}`services.strata.environmentFile`.
       '';
@@ -104,6 +110,18 @@ in
         File of KEY=value lines added to the environment, read by systemd as root, for settings
         that must stay out of the Nix store (EDIT_PASS=…). Give it as a string: a Nix path would be
         copied into the store.
+      '';
+    };
+
+    modules = mkOption {
+      type = types.listOf types.path;
+      default = [ ];
+      example = literalExpression "[ (strata + \"/modules/csv-inventory\") ./my-connector ]";
+      description = ''
+        Connector modules to provide, each a folder holding a strata-module.json (MODULES.md in
+        the Strata repository). They are listed as "provided by the server" and cannot be removed
+        from the web. Modules installed from the module store go to /var/lib/strata/modules; set
+        {option}`services.strata.settings.MODULE_REGISTRY` to "off" to keep to these.
       '';
     };
 
@@ -149,6 +167,7 @@ in
       environment =
         lib.mapAttrs (_: toEnv) cfg.settings
         // lib.mapAttrs' (name: _: lib.nameValuePair "${name}_FILE" "%d/${name}") secrets
+        // lib.optionalAttrs (cfg.modules != [ ]) { MODULES_DIR = "${modulesDir}"; }
         // {
           DATA_DIR = "/var/lib/strata";
           NODE_ENV = "production";

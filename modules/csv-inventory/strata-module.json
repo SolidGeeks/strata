@@ -1,0 +1,26 @@
+{
+  "strataModule": 1,
+  "id": "csv-inventory",
+  "name": "CSV inventory",
+  "version": "1.0.0",
+  "description": "Assets from a spreadsheet saved as CSV: name, IP, type, system, role, VLAN, criticality",
+  "author": "Solid Geeks",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/SolidGeeks/strata/tree/main/modules/csv-inventory",
+  "badge": "CSV",
+  "main": "index.mjs",
+  "permissions": { "map": true, "network": false },
+  "live": false,
+  "file": {
+    "label": "Import a CSV file",
+    "accept": ".csv,.txt,text/csv",
+    "role": "contributor",
+    "fields": ["site", "updateExisting"],
+    "help": "One asset per line, with a header line. Columns (any order, any case): name (required), ip, type, os, role, vlan (number or name), criticality (1 to 3, or low, medium, high), notes. Separated by commas, semicolons or tabs, as your spreadsheet saves it."
+  },
+  "fields": [
+    { "k": "site", "label": "IS the assets belong to", "type": "site", "required": true },
+    { "k": "updateExisting", "label": "Update the assets already on the map (same name or IP)", "type": "bool", "default": true },
+    { "k": "defaultType", "label": "Type when the file gives none", "type": "select", "default": "server", "options": [["server", "Server"], ["workstation", "Workstation"], ["switch", "Switch / load balancer"], ["router", "Router / L3 core"], ["firewall", "Firewall"], ["printer", "Printer"], ["iot", "IoT device"]] }
+  ]
+}

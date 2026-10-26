@@ -1,0 +1,111 @@
+{
+  "strataModule": 1,
+  "id": "glpi",
+  "name": "GLPI",
+  "version": "0.8.0",
+  "description": "Inventory, installed software, technical contacts and locations",
+  "author": "Solid Geeks",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/SolidGeeks/strata",
+  "main": "index.js",
+  "badge": "INV",
+  "permissions": {
+    "map": true,
+    "network": true
+  },
+  "fields": [
+    {
+      "k": "url",
+      "label": "GLPI API URL",
+      "placeholder": "https://glpi.example.internal/apirest.php",
+      "required": true
+    },
+    {
+      "k": "appToken",
+      "label": "App-Token (API client)",
+      "secret": true
+    },
+    {
+      "k": "userToken",
+      "label": "User token (remote access key)",
+      "secret": true,
+      "help": "Or a login and password below."
+    },
+    {
+      "k": "login",
+      "label": "Login (instead of a user token)",
+      "advanced": true
+    },
+    {
+      "k": "password",
+      "label": "Password",
+      "secret": true,
+      "advanced": true
+    },
+    {
+      "k": "itemtypes",
+      "label": "What to read",
+      "type": "multi",
+      "options": [
+        [
+          "Computer",
+          "Computers"
+        ],
+        [
+          "NetworkEquipment",
+          "Network devices"
+        ],
+        [
+          "Printer",
+          "Printers"
+        ],
+        [
+          "Phone",
+          "Phones"
+        ]
+      ],
+      "default": [
+        "Computer",
+        "NetworkEquipment",
+        "Printer"
+      ]
+    },
+    {
+      "k": "locationRules",
+      "label": "Location → IS",
+      "type": "rules",
+      "placeholder": "Lyon = lyon\nParis > Siège = paris\n/^DC-?West/ = dcw",
+      "help": "One rule per line: text found in the GLPI location (or /regex/) = IS id. Without a rule, the IS whose name appears in the location is used."
+    },
+    {
+      "k": "createAssets",
+      "label": "Create the assets missing from the map",
+      "type": "bool",
+      "default": true
+    },
+    {
+      "k": "importSoftware",
+      "label": "Installed software → applications",
+      "type": "bool",
+      "default": true
+    },
+    {
+      "k": "maxApps",
+      "label": "At most applications per asset",
+      "type": "number",
+      "default": 40
+    },
+    {
+      "k": "softwareExclude",
+      "label": "Software to leave out (regex)",
+      "default": "^(KB\\d+|Security Update|Update for|Microsoft Visual C\\+\\+|Microsoft \\.NET|Intel\\(R\\)|NVIDIA|Realtek|lib|python3-|fonts-|gir1\\.2)",
+      "advanced": true
+    },
+    {
+      "k": "importContacts",
+      "label": "Technician and group in charge → incident contacts",
+      "type": "bool",
+      "default": true
+    }
+  ]
+}

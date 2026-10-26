@@ -1,0 +1,21 @@
+{
+  "strataRegistry": 1,
+  "modules": [
+    {
+      "id": "csv-inventory",
+      "name": "CSV inventory",
+      "version": "1.0.0",
+      "description": "Assets from a spreadsheet saved as CSV: name, IP, type, system, role, VLAN, criticality",
+      "author": "Solid Geeks",
+      "license": "AGPL-3.0-or-later",
+      "homepage": "https://github.com/SolidGeeks/strata/tree/main/modules/csv-inventory",
+      "badge": "CSV",
+      "permissions": {
+        "map": true,
+        "network": false
+      },
+      "url": "csv-inventory-1.0.0.tgz",
+      "sha256": "a2c1bb73afd5102c7e91ce84046e4b9d96e1931bfdf2856af73f885708642fab"
+    }
+  ]
+}

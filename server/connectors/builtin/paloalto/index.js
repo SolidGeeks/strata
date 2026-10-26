@@ -5,23 +5,7 @@
 // Each "allow" security rule becomes flows: source address objects → assets of the IS (by IP) or the
 // Internet / an Internet service (public addresses, FQDN), destination likewise, services → ports, and the
 // firewall as the device the flows cross.
-import { request, expectOk, ConnectorError, stripTags, parseXml, kids, kid, path, txt, members, parseRange, isPrivateRange, inRange, isIp, slug, hash, norm } from './util.js';
-
-export const meta = {
-  id: 'paloalto', name: 'Palo Alto', what: 'Security rules of a PAN-OS firewall or Panorama, turned into flows',
-  fields: [
-    { k: 'url', label: 'Firewall or Panorama URL (XML API)', placeholder: 'https://fw01.example.internal', help: 'Leave empty to only import configuration files.' },
-    { k: 'apiKey', label: 'API key (read-only admin role)', secret: true, help: 'Or give a user name and password below: the key is then generated at each run.' },
-    { k: 'user', label: 'API user (instead of a key)', advanced: true },
-    { k: 'password', label: 'API password', secret: true, advanced: true },
-    { k: 'site', label: 'IS the rules apply to', type: 'site', required: true },
-    { k: 'firewall', label: 'Firewall asset the flows cross', type: 'asset', help: 'Usually the firewall itself; suggested from the IS.' },
-    { k: 'scope', label: 'Only this vsys or device group', placeholder: 'vsys1, or the Panorama device group (empty = all)' },
-    { k: 'internetZones', label: 'Zones that mean “Internet” for “any”', placeholder: 'untrust, internet, outside, wan', default: 'untrust, internet, outside, wan' },
-    { k: 'maxExpand', label: 'Largest address range expanded into its assets', type: 'number', default: 12, help: 'A range holding more assets than this is reported instead of drawn.' },
-    { k: 'removeStale', label: 'Remove flows imported earlier whose rule is gone', type: 'bool', default: true },
-  ],
-};
+import { request, expectOk, ConnectorError, stripTags, parseXml, kids, kid, path, txt, members, parseRange, isPrivateRange, inRange, isIp, slug, hash, norm } from '../../sdk.js';
 
 // Ports of the most common App-IDs, for rules set to "application-default"
 const APP_PORTS = {
@@ -266,7 +250,7 @@ export function rulesToChanges(parsed, cfg, state) {
 }
 
 export async function run(cfg, ctx) {
-  const xml = ctx.xml || await fetchConfig(cfg);
+  const xml = ctx.file ? ctx.file.text : await fetchConfig(cfg);
   const parsed = parseConfig(xml);
   const res = rulesToChanges(parsed, cfg, ctx.state);
   const siName = ctx.state.si[cfg.site]?.name || cfg.site;
@@ -275,7 +259,7 @@ export async function run(cfg, ctx) {
   return {
     proposals: res.changes ? [{
       siteId: cfg.site,
-      title: `Palo Alto: rules of ${ctx.fileName || cfg.url || 'the firewall'} → ${siName}`,
+      title: `Palo Alto: rules of ${ctx.file?.name || cfg.url || 'the firewall'} → ${siName}`,
       description: `${summary}\n${res.skipped.length ? `\nNot drawn:\n- ${res.skipped.slice(0, 25).join('\n- ')}` : ''}${res.warnings.length ? `\n\nWarnings:\n- ${res.warnings.slice(0, 15).join('\n- ')}` : ''}`.slice(0, 4000),
       changes: res.changes,
     }] : [],

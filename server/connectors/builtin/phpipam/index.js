@@ -3,24 +3,7 @@
 // API: /api/{app_id}/sections/, sections/{id}/subnets/, vlan/, tools/locations/, subnets/{id}/addresses/
 // Authentication: the app code of an API application with "SSL with App code token" security (header
 // "token"), or a user (POST /api/{app_id}/user/ returns a token).
-import { request, ConnectorError, assetIndex, siteFor, parseRange, inRange, vlanForIp, isIp, pool } from './util.js';
-import { parseRules } from './glpi.js';
-
-export const meta = {
-  id: 'phpipam', name: 'phpIPAM', what: 'Subnets and VLANs of each IS, addresses of the assets',
-  fields: [
-    { k: 'url', label: 'phpIPAM API URL', placeholder: 'https://ipam.example.internal/api', required: true },
-    { k: 'appId', label: 'API application id', placeholder: 'strata', required: true },
-    { k: 'token', label: 'App code (token)', secret: true, help: 'Or a user name and password below.' },
-    { k: 'user', label: 'User (instead of the app code)', advanced: true },
-    { k: 'password', label: 'Password', secret: true, advanced: true },
-    { k: 'sectionRules', label: 'Section or location → IS', type: 'rules', placeholder: 'Lyon = lyon\nDatacenter West = dcw', help: 'One rule per line: text found in the phpIPAM section, location or subnet description (or /regex/) = IS id. A subnet whose range is already a VLAN of an IS goes to that IS; otherwise the IS whose name appears is used.' },
-    { k: 'createVlans', label: 'Create the VLANs missing from the map', type: 'bool', default: true },
-    { k: 'updateNames', label: 'Rename the VLANs after phpIPAM', type: 'bool', default: false },
-    { k: 'moveAssets', label: 'Move an asset to the VLAN of its subnet', type: 'bool', default: true },
-    { k: 'createAssets', label: 'Create assets for named addresses missing from the map', type: 'bool', default: false },
-  ],
-};
+import { request, ConnectorError, assetIndex, siteFor, parseRange, inRange, vlanForIp, isIp, pool, parseRules } from '../../sdk.js';
 
 function client(cfg) {
   const base = String(cfg.url || '').replace(/\/+$/, '');

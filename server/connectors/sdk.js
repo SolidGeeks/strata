@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Shared helpers for the connectors: an HTTP client (self-signed certificates, custom CA, timeouts),
-// IPv4 arithmetic, a small XML parser (for PAN-OS) and the rules that match outside records to assets.
+// The connector SDK: helpers every module gets as ctx.sdk (built-in modules import this file). An HTTP
+// client (self-signed certificates, custom CA, timeouts), IPv4 arithmetic, a small XML parser (for
+// PAN-OS) and the rules that match outside records to assets. See MODULES.md.
 import http from 'node:http';
 import https from 'node:https';
 import crypto from 'node:crypto';
 
 export class ConnectorError extends Error {
-  constructor(message, extra) { super(message); this.extra = extra; }
+  constructor(message, extra) { super(message); this.name = 'ConnectorError'; this.extra = extra; }
 }
 
 /* ---------------- HTTP ---------------- */
 // opts: {method, headers, body (string|Buffer|object → JSON), timeoutMs, tls: {insecure, ca}, maxBytes}
+// Resolves with {status, headers, text, body (Buffer), json()}; redirects are not followed
 export function request(url, opts = {}) {
   const u = new URL(url);
   const lib = u.protocol === 'https:' ? https : u.protocol === 'http:' ? http : null;
@@ -33,8 +35,8 @@ export function request(url, opts = {}) {
       const chunks = []; let size = 0;
       res.on('data', c => { size += c.length; if (size > maxBytes) { req.destroy(new ConnectorError('Response too large')); return; } chunks.push(c); });
       res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf8');
-        resolve({ status: res.statusCode, headers: res.headers, text, json() { try { return JSON.parse(text); } catch { throw new ConnectorError(`${u.host} did not answer JSON (HTTP ${res.statusCode}): ${text.slice(0, 160)}`); } } });
+        const raw = Buffer.concat(chunks), text = raw.toString('utf8');
+        resolve({ status: res.statusCode, headers: res.headers, text, body: raw, json() { try { return JSON.parse(text); } catch { throw new ConnectorError(`${u.host} did not answer JSON (HTTP ${res.statusCode}): ${text.slice(0, 160)}`); } } });
       });
       res.on('error', reject);
     });
@@ -134,6 +136,10 @@ export function siteFor(label, rules, state) {
   for (const [id, s] of sites) { const sn = norm(s.name); if (sn && (` ${n} `).includes(` ${sn} `)) return id; }
   for (const [id] of sites) if ((` ${n} `).includes(` ${norm(id)} `)) return id;
   return null;
+}
+// Rules typed in a settings box, one per line: "text found in the label = IS id" (# starts a comment)
+export function parseRules(text) {
+  return String(text || '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(l => { const i = l.lastIndexOf('='); return i > 0 ? { match: l.slice(0, i).trim(), si: l.slice(i + 1).trim() } : null; }).filter(Boolean);
 }
 // A VLAN (and its zone) where assets that match no range can wait to be sorted by hand
 export function holdingVlan(si, siteId, label) {

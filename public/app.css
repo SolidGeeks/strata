@@ -371,6 +371,10 @@ body[data-mode="preview"] #scene canvas{outline-color:var(--med)}
 .conn .c1>div{flex:1;min-width:0}
 .conn .c1 b{display:block;font-size:14px}
 .conn .c1 small{display:block;color:var(--muted);font-size:12px;line-height:1.35}
+.conn .c1 small.cmeta,.conn .c1 small.cperm{margin-top:3px;font-size:11.5px}
+.conn .c1 small.cperm{color:var(--fg)}
+.ctabs{margin-bottom:6px}
+.ibtn.danger.armed,.btn.armed{color:var(--crit)}
 .cico{flex:none;width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--line);border-radius:3px;font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--accent)}
 .conn .c2{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
 .crun{margin-top:8px;padding:8px 10px;border-left:2px solid var(--low);background:var(--panel-2);border-radius:0 3px 3px 0}

@@ -237,8 +237,8 @@ test('reserved keys: __proto__ and friends cannot reach the object prototype', a
 });
 
 test('reserved keys: connectors cope with prototype names in their input', async () => {
-  const { parseConfig, rulesToChanges } = await import('../server/connectors/paloalto.js');
-  const { assetIndex } = await import('../server/connectors/util.js');
+  const { parseConfig, rulesToChanges } = await import('../server/connectors/builtin/paloalto/index.js');
+  const { assetIndex } = await import('../server/connectors/sdk.js');
   const state = { si: { s1: { name: 'S1' } }, assets: { a1: { site: 's1', name: 'constructor', ip: '10.0.0.1' }, a2: { site: 's1', name: '__proto__', ip: '10.0.0.2' } } };
   assert.equal(assetIndex(state).find({ name: 'toString' }), null);
   assert.equal(assetIndex(state).find({ name: 'constructor' }), 'a1');

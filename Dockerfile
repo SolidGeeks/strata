@@ -17,7 +17,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server ./server
-COPY scripts/users.mjs scripts/connector-sim.mjs ./scripts/
+COPY scripts/users.mjs scripts/connector-sim.mjs scripts/pack-module.mjs ./scripts/
 COPY --from=vendor /build/public ./public
 RUN mkdir -p /data && chown node:node /data
 USER node

@@ -92,7 +92,11 @@ docker compose down               # stop (data stays in the volume)</code></pre>
         <tr><td><code>LOGIN_MAX_FAILS_PER_ADDRESS</code></td><td><code>20</code></td><td>The same, for all accounts tried from one client address.</td></tr>
         <tr><td><code>LOGIN_LOCK_MINUTES</code></td><td><code>15</code></td><td>How long a lock lasts; failures are counted over the same time.</td></tr>
         <tr><td><code>TRUST_PROXY</code></td><td>none</td><td>Reverse proxies whose <code>X-Forwarded-For</code> gives the client address: addresses, IPv4 ranges, <code>loopback</code> or <code>private</code>. See <a href="#https">HTTPS and network</a>.</td></tr>
-        <tr><td><code>CONNECTORS</code></td><td><code>true</code></td><td><code>false</code> turns the connectors off entirely.</td></tr>
+        <tr><td><code>CONNECTORS</code></td><td><code>true</code></td><td><code>false</code> turns the connectors off entirely, modules included.</td></tr>
+        <tr><td><code>MODULE_REGISTRY</code></td><td>Solid Geeks store</td><td>Index of the module store (read only when an admin opens it). <code>off</code>: no store.</td></tr>
+        <tr><td><code>MODULE_UPLOAD</code></td><td><code>false</code></td><td><code>true</code> lets admins install a module package from a file.</td></tr>
+        <tr><td><code>MODULES_DIR</code></td><td>none</td><td>A folder of modules you provide yourself, one sub-folder each.</td></tr>
+        <tr><td><code>CONNECTOR_TIMEOUT_MINUTES</code></td><td><code>30</code></td><td>Longest a connector run may take before it is stopped.</td></tr>
         <tr><td><code>SOURCE_URL</code></td><td>this repository</td><td>The <em>Source code</em> link in the app. Point it at your fork if you modify Strata (AGPL, section 13).</td></tr>
         <tr><td><code>DATA_VOLUME</code></td><td><code>strata-data</code></td><td>Docker volume holding the data. Set it to an older volume name to keep its data (see <a href="#upgrade">Upgrading</a>).</td></tr>
         <tr><td><code>PORT</code> / <code>HOST</code></td><td><code>8080</code> / <code>0.0.0.0</code></td><td>Where the server listens.</td></tr>
@@ -168,7 +172,7 @@ sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable --now strata</code
     };
   };
 }</code></pre><button class="copy" type="button">Copy</button></div>
-    <p>Files in <code>secretFiles</code> are read by systemd as root and handed to the service as credentials, so they can stay root-only. <code>environmentFile</code> takes <code>KEY=value</code> lines the same way. Accounts from the command line: <code>sudo -u strata env DATA_DIR=/var/lib/strata strata-users set alice contributor</code>. The flake also has <code>overlays.default</code>, and its checks build the package (with the tests) and run a NixOS VM test of the module.</p>
+    <p>Files in <code>secretFiles</code> are read by systemd as root and handed to the service as credentials, so they can stay root-only. <code>environmentFile</code> takes <code>KEY=value</code> lines the same way. Accounts from the command line: <code>sudo -u strata env DATA_DIR=/var/lib/strata strata-users set alice contributor</code>. <code>modules = [ ./my-connector ]</code> provides connector modules; <code>settings.MODULE_REGISTRY = "off"</code> keeps to them. The flake also has <code>overlays.default</code>, and its checks build the package (with the tests) and run a NixOS VM test of the module.</p>
 
     <h2 id="accounts" style="--edge:var(--s4)">Accounts and roles</h2>
     <div class="tablewrap"><table>
@@ -266,6 +270,9 @@ docker compose exec strata node scripts/users.mjs disable alice</code></pre><but
       <li>the chosen firewall as the device crossed; Internet-to-admin or database ports flagged as risky.</li>
     </ul>
     <p>What cannot be drawn (internal <code>any</code>→<code>any</code>, dynamic groups, negations, addresses with no asset) is listed in the proposal. Flows from a rule that disappeared are removed; flows drawn by hand are never touched. A proposal from a file counts as the importer’s own for the four-eyes rule.</p>
+    <h3>Modules and the module store</h3>
+    <p>Each connector is a module: a folder with a manifest (its settings, whether it imports files, what it may reach) and its code. The four above ship with Strata. Administrators add others from <em>Connectors › Module store</em>: each module shows what it reads (the map, the network) before you install it, and the store checks each package against the checksum it publishes. The first one, <strong>CSV inventory</strong>, imports the assets of an IS from a spreadsheet saved as CSV (columns <code>name</code>, <code>ip</code>, <code>type</code>, <code>os</code>, <code>role</code>, <code>vlan</code>, <code>criticality</code>, <code>notes</code>), as a proposal, open to contributors.</p>
+    <p>Every test or run starts the module in its own process: it reads its own folder only, not the data files, the accounts or the other connectors’ settings; it cannot write files or start programs; it sees none of the server’s variables; it is stopped after <code>CONNECTOR_TIMEOUT_MINUTES</code>. It can use the network, so install only modules you trust. Modules installed from the store can be removed from their card; modules you provide yourself go in <code>MODULES_DIR</code> (or <code>services.strata.modules</code> on NixOS). Writing one, and publishing it in the store: <a href="https://github.com/SolidGeeks/strata/blob/main/MODULES.md">MODULES.md</a>.</p>
     <h3>Try them without your tools</h3>
     <p>Load the demo, then start the simulator (fake Cyberwatch, GLPI, phpIPAM and PAN-OS on port 8099, with data matching the Lyon site) and use the addresses and credentials listed at the top of the script:</p>
     <div class="code"><pre><code>docker compose exec -d strata node scripts/connector-sim.mjs</code></pre><button class="copy" type="button">Copy</button></div>
@@ -307,7 +314,8 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
         <tr><td><code>GET /api/history</code>, <code>POST /api/rollback</code></td><td>History; restore a version</td></tr>
         <tr><td><code>/api/proposals…</code></td><td>Create, edit, submit, comment, approve, reject</td></tr>
         <tr><td><code>GET /api/connectors</code>, <code>PUT /api/connectors/{id}</code></td><td>Connector settings (secrets masked; writing is admin only)</td></tr>
-        <tr><td><code>POST /api/connectors/{id}/test</code>, <code>/run</code></td><td>Test, or run (<code>{"wait": true}</code> waits for the result)</td></tr>
+        <tr><td><code>POST /api/connectors/{id}/test</code>, <code>/run</code></td><td>Test, or run (<code>{"wait": true}</code> waits for the result; <code>{"file": {"name", "text"}, "overrides": {…}}</code> imports a file)</td></tr>
+        <tr><td><code>GET /api/modules</code>, <code>POST /api/modules/{id}/install</code>, <code>DELETE /api/modules/{id}</code></td><td>The module store (admin)</td></tr>
         <tr><td><code>GET /api/users</code>, <code>PUT/DELETE /api/users/{name}</code></td><td>Accounts (admin)</td></tr>
         <tr><td><code>GET /api/events</code></td><td>Server-Sent Events: <code>change</code>, <code>proposals</code>, <code>connectors</code></td></tr>
         <tr><td><code>GET /healthz</code></td><td>Health check, no authentication</td></tr>
@@ -327,6 +335,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
       <li>Give everyone a named account with the lowest role that does the job: every change is attributed in the history.</li>
       <li>The server sends strict security headers (CSP with no external script, no framing, no referrer) and refuses cross-site writes.</li>
       <li>Connectors: use read-only service accounts, limited to the Strata server’s IP where the tool allows it.</li>
+      <li>Connector modules run in their own restricted process, but can use the network: install only modules you trust. The store checks each package’s checksum; uploading packages is off by default.</li>
       <li>Repeated failed sign-ins are refused for a while; behind a reverse proxy, set <code>TRUST_PROXY</code>.</li>
       <li>Data files are readable by the server’s own user only. Passwords can come from files (<code>EDIT_PASS_FILE</code>), out of the environment.</li>
       <li>Published Docker images are signed: check them with <code>gh attestation verify</code> (see <a href="#install">Install</a>).</li>

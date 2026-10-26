@@ -2970,111 +2970,171 @@ det.addEventListener('click',async e=>{
     if(q('[data-upass]')){const p=window.prompt(`New password for ${name} (10 characters or more):`);if(p){await Store.api('PUT','api/users/'+encodeURIComponent(name),{password:p});toast('Password set.');}}
   }catch(err){toast(err.message,true);}
 });
-/* ---- connectors: Cyberwatch, GLPI, phpIPAM, Palo Alto (self-hosted only) ---- */
-let CONN=null;
-const CONN_ICON={cyberwatch:'CVE',glpi:'INV',phpipam:'IP',paloalto:'FW'};
-async function loadConnectors(){try{CONN=await Store.api('GET','api/connectors');}catch(e){CONN=null;toast(e.message,true);}return CONN;}
+/* ---- connectors: built-in modules (Cyberwatch, GLPI, phpIPAM, Palo Alto) and those from the store (self-hosted only) ---- */
+let CONN=null,CONN_TAB='installed';
+const ORIGIN_LBL={builtin:'Built-in',provided:'Provided by the server',installed:'From the store'};
+const permText=p=>[p.map?'reads the map':'',p.network?'connects to your tool over the network':''].filter(Boolean).join(' and ')||'needs neither the map nor the network';
+async function loadConnectors(){try{CONN=await Store.api('GET','api/connectors');const b=$('#connBtn .mono');if(b&&CONN.connectors.length)b.textContent=CONN.connectors.map(c=>c.badge).slice(0,5).join(' · ');}catch(e){CONN=null;toast(e.message,true);}return CONN;}
 function connStatus(c){
   if(c.running)return `<span class="st running">Running…</span>`;
-  if(!c.configured)return `<span class="st withdrawn">Not set up</span>`;
+  if(!c.configured&&c.live!==false&&!(c.file&&!c.fields.some(f=>f.required)))return `<span class="st withdrawn">Not set up</span>`;
   if(c.lastRun&&!c.lastRun.ok)return `<span class="st rejected">Last run failed</span>`;
-  if(c.settings.enabled&&+c.settings.everyHours)return `<span class="st approved">Every ${+c.settings.everyHours} h</span>`;
-  return `<span class="st draft">By hand</span>`;
+  if(c.settings.enabled&&+c.settings.everyHours&&c.live)return `<span class="st approved">Every ${+c.settings.everyHours} h</span>`;
+  return `<span class="st draft">${c.live?'By hand':c.file?'Files':'By hand'}</span>`;
 }
 function connRun(r){
   if(!r)return '<p class="fhint">Never run.</p>';
   const props=(r.proposals||[]).map(p=>`<button class="ibtn" data-open-prop="${esc(p.id)}">${esc(p.title)}${p.unchanged?' · unchanged':p.refreshed?' · refreshed':''}</button>`).join('');
   return `<div class="crun ${r.ok?'ok':'ko'}"><small>${fmtDate(r.at)} · ${esc(r.by||'')}${r.file?' · '+esc(r.file):''} · ${(r.ms/1000).toFixed(1)} s</small>
     <p>${esc(r.ok?r.summary:r.error)}</p>${props?`<div class="cprops">${props}</div>`:''}
-    ${r.report&&(r.report.unmatchedSample||r.report.noSiteSample||r.report.skipped||[]).length?`<details><summary>Details</summary><ul>${[...(r.report.unmatchedSample||[]).map(x=>'Not on the map: '+x),...(r.report.noSiteSample||[]).map(x=>'No IS for: '+x),...(r.report.skipped||[]),...(r.report.warnings||[])].slice(0,40).map(x=>`<li>${esc(x)}</li>`).join('')}</ul></details>`:''}</div>`;
+    ${r.report&&(r.report.unmatchedSample||r.report.noSiteSample||r.report.skipped||[]).length?`<details><summary>Details</summary><ul>${[...(r.report.unmatchedSample||[]).map(x=>'Not on the map: '+x),...(r.report.noSiteSample||[]).map(x=>'No IS for: '+x),...(r.report.skipped||[]),...(r.report.warnings||[])].slice(0,40).map(x=>`<li>${esc(String(x))}</li>`).join('')}</ul></details>`:''}</div>`;
 }
+const connTabs=C=>C.store?`<div class="seg two ctabs" role="tablist"><button data-ctab="installed" aria-pressed="${CONN_TAB==='installed'}">Installed</button><button data-ctab="store" aria-pressed="${CONN_TAB==='store'}">Module store</button></div>`:'';
+const connHead=`<div class="d-head"><div><span class="cap">Collaboration</span><h2>Connectors</h2><p>Data read from your tools arrives as proposals to review, never straight onto the map</p></div><button class="close" data-close aria-label="Close">×</button></div>`;
 async function showConnectors(){
   if(!await loadConnectors())return;
   const C=CONN;
+  if(CONN_TAB==='store'&&C.store)return showModuleStore();
   const card=c=>{
-    const live=c.id!=='paloalto'||c.settings.url;
-    return `<li class="conn" data-conn="${esc(c.id)}"><div class="c1"><span class="cico mono">${CONN_ICON[c.id]}</span><div><b>${esc(c.name)}</b><small>${esc(c.what)}</small></div>${C.canRun?connStatus(c):''}</div>
+    const canFile=c.file&&(c.file.role==='contributor'?Store.me.canPropose:C.canRun);
+    const meta=[c.origin!=='builtin'?ORIGIN_LBL[c.origin]:'',c.origin!=='builtin'?'v'+c.version:'',c.origin!=='builtin'&&c.author?c.author:''].filter(Boolean).join(' · ');
+    return `<li class="conn" data-conn="${esc(c.id)}"><div class="c1"><span class="cico mono">${esc(c.badge)}</span><div><b>${esc(c.name)}</b><small>${esc(c.what)}</small>${meta?`<small class="cmeta">${esc(meta)}${c.origin!=='builtin'?` · ${esc(permText(c.permissions))}`:''}</small>`:''}</div>${C.canRun?connStatus(c):''}</div>
     ${C.canRun?connRun(c.lastRun):''}
     <div class="c2">
-      ${C.canRun&&c.configured&&live?`<button class="btn small primary" data-conn-run ${c.running?'disabled':''}>${c.running?'Running…':'Sync now'}</button><button class="ibtn" data-conn-test>Test the connection</button>`:''}
-      ${c.id==='paloalto'&&Store.me.canPropose?`<button class="btn small${C.canRun&&c.configured&&live?'':' primary'}" data-conn-file>Import a configuration file</button>`:''}
-      ${C.canConfigure?`<button class="ibtn" data-conn-edit>Settings</button>`:''}
+      ${C.canRun&&c.live?`<button class="btn small primary" data-conn-run ${c.running?'disabled':''}>${c.running?'Running…':'Sync now'}</button><button class="ibtn" data-conn-test>Test the connection</button>`:''}
+      ${canFile?`<button class="btn small${C.canRun&&c.live?'':' primary'}" data-conn-file>${esc(c.file.label)}</button>`:''}
+      ${C.canConfigure&&c.fields.length?`<button class="ibtn" data-conn-edit>Settings</button>`:''}
+      ${C.canConfigure&&c.origin==='installed'?`<button class="ibtn danger" data-mod-remove>Remove</button>`:''}
     </div><p class="ctest" hidden></p></li>`;};
-  openDet(`<div class="d-head"><div><span class="cap">Collaboration</span><h2>Connectors</h2><p>Data read from your tools arrives as proposals to review, never straight onto the map</p></div><button class="close" data-close aria-label="Close">×</button></div>
+  openDet(`${connHead}
   <div class="d-body">
-  <ul class="list conns">${C.connectors.map(card).join('')}</ul>
+  ${connTabs(C)}
+  ${C.connectors.length?`<ul class="list conns">${C.connectors.map(card).join('')}</ul>`:'<p class="fhint">No connector you can use here.</p>'}
+  ${C.canConfigure&&C.problems&&C.problems.length?`<details class="adv"><summary>${plural(C.problems.length,'module folder')} left out</summary><ul class="fhint">${C.problems.map(p=>`<li>${esc(ORIGIN_LBL[p.origin]||p.origin)} · ${esc(p.folder)}: ${esc(p.error)}</li>`).join('')}</ul></details>`:''}
   ${C.canRun&&C.runs.length?`<h3 class="cap">Recent runs</h3><ul class="list runs">${C.runs.slice(0,12).map(r=>`<li><b>${esc((C.connectors.find(c=>c.id===r.id)||{}).name||r.id)}</b><small>${fmtDate(r.at)} · ${esc(r.by)}</small><span class="${r.ok?'':'bad'}">${esc(r.ok?r.summary:r.error)}</span></li>`).join('')}</ul>`:''}
   ${!C.canConfigure?'<p class="fhint">An administrator sets the connectors up.</p>':''}
   </div>`,'connectors');
 }
-function onConnectorsChanged(){if(state.panel==='connectors')showConnectors();}
-// Settings form, built from the field list the server sends (secrets are never sent back: “unchanged” keeps them)
-function connectorForm(c){
-  const S=c.settings,siteOpts=SITES.map(s=>[s.id,s.name]);
-  const assetOpts=sid=>{const s=siteById[sid];if(!s)return [['','—']];const fw=s.assets.filter(a=>INTERCO.has(a.type)),rest=s.assets.filter(a=>!INTERCO.has(a.type));
-    return [['','None (direct)'],{group:'Firewalls, routers, gateways',items:fw.map(a=>[a.id,`${a.name} · ${a.ip||''}`])},{group:'Other assets',items:rest.map(a=>[a.id,a.name])}];};
-  const field=f=>{
-    const id='cf_'+f.k,v=S[f.k],hint=f.help?`<span class="hint">${esc(f.help)}</span>`:'';
-    if(f.type==='bool')return `<label class="chk plain"><input type="checkbox" id="${esc(id)}" data-ck="${esc(f.k)}"${v?' checked':''}> ${esc(f.label)}</label>${hint}`;
-    if(f.type==='select')return fSel(id,esc(f.label),f.options,v||f.default).replace('<select ','<select data-ck="'+f.k+'" ');
-    if(f.type==='site')return fSel(id,esc(f.label)+(f.required?' *':''),[['','Choose…'],...siteOpts],v).replace('<select ','<select data-ck="'+f.k+'" ');
-    if(f.type==='asset')return `<div data-asset-wrap="${esc(f.k)}">${fSel(id,esc(f.label),assetOpts(S.site||state.siteId),v).replace('<select ','<select data-ck="'+f.k+'" ')}${hint}</div>`;
-    if(f.type==='multi'||f.type==='sites'){const opts=f.type==='sites'?siteOpts:f.options,cur=Array.isArray(v)?v:[];
-      return `<fieldset data-multi="${esc(f.k)}"><legend>${esc(f.label)}</legend>${opts.map(([k,t])=>`<label class="chk plain"><input type="checkbox" value="${esc(k)}"${cur.includes(k)?' checked':''}> ${esc(t)}</label>`).join('')}${hint}</fieldset>`;}
-    if(f.type==='rules'||f.type==='text')return `<div class="f"><label for="${esc(id)}">${esc(f.label)}</label><textarea id="${esc(id)}" data-ck="${esc(f.k)}" class="mono" spellcheck="false" placeholder="${esc(f.placeholder||'')}">${esc(v||'')}</textarea>${hint}</div>`;
-    if(f.secret)return fIn(id,esc(f.label)+(f.required?' *':''),'',`type="password" autocomplete="new-password" data-ck="${esc(f.k)}" data-secret="${v?1:0}" placeholder="${v?'Saved: leave empty to keep it':esc(f.placeholder||'')}"`,f.help?esc(f.help):'')+(v?`<label class="chk plain small"><input type="checkbox" data-clear="${esc(f.k)}"> Forget the saved value</label>`:'');
-    return fIn(id,esc(f.label)+(f.required?' *':''),v==null?'':v,`data-ck="${esc(f.k)}" ${f.type==='number'?'type="number" min="0" step="1"':''} placeholder="${esc(f.placeholder||'')}" autocomplete="off"`,f.help?esc(f.help):'');
-  };
-  const main=c.fields.filter(f=>!f.advanced),adv=c.fields.filter(f=>f.advanced);
-  openForm(`${c.name} settings`,'Connector',`<p class="fhint" style="margin:0">${esc(c.what)}. Each run prepares one proposal per IS; an approver reviews it.</p>
-    ${main.map(field).join('')}
-    <details class="adv"><summary>More settings</summary>${adv.map(field).join('')}</details>`,
-  async()=>{
-    const body={};
-    det.querySelectorAll('[data-ck]').forEach(el=>{const k=el.dataset.ck;if(el.type==='checkbox')body[k]=el.checked;else if(el.dataset.secret!==undefined){if(el.value)body[k]=el.value;}else body[k]=el.value;});
-    det.querySelectorAll('[data-clear]').forEach(el=>{if(el.checked)body[el.dataset.clear]='';});
-    det.querySelectorAll('[data-multi]').forEach(fs=>{body[fs.dataset.multi]=[...fs.querySelectorAll('input:checked')].map(i=>i.value);});
-    const miss=c.fields.find(f=>f.required&&!f.secret&&!String(body[f.k]||'').trim());if(miss)return formErr(`Fill in “${miss.label}”.`,'cf_'+miss.k);
-    try{await Store.api('PUT','api/connectors/'+c.id,body);onSave=null;toast(`${c.name} settings saved.`);showConnectors();}catch(e){formErr(e.message);}
-  },{cancel:()=>showConnectors()});
+// The module store: what the registry offers, with what each module may do; installing needs an administrator
+async function showModuleStore(fresh){
+  const C=CONN;let S;
+  openDet(`${connHead}<div class="d-body">${connTabs(C)}<p class="fhint">Reading the module store…</p></div>`,'connectors');
+  try{S=await Store.api('GET','api/modules'+(fresh?'?fresh=1':''));}catch(e){S={error:e.message,modules:[]};}
+  if(state.panel!=='connectors'||CONN_TAB!=='store')return;
+  const card=m=>{
+    const btn=!m.compatible?`<span class="fhint">Needs Strata ${esc(m.minStrata)}</span>`
+      :m.update?`<button class="btn small primary" data-mod-install>Update to ${esc(m.version)}</button>`
+      :m.installed?`<span class="st approved">Installed${m.installed.origin!=='installed'?' ('+esc(ORIGIN_LBL[m.installed.origin].toLowerCase())+')':''}</span>`
+      :`<button class="btn small primary" data-mod-install>Install</button>`;
+    return `<li class="conn" data-mod="${esc(m.id)}"><div class="c1"><span class="cico mono">${esc(m.badge||m.name.slice(0,3).toUpperCase())}</span><div><b>${esc(m.name)}</b><small>${esc(m.description)}</small>
+      <small class="cmeta">v${esc(m.version)}${m.author?' · '+esc(m.author):''}${m.license?' · '+esc(m.license):''}${m.homepage?` · <a href="${esc(m.homepage)}" target="_blank" rel="noopener noreferrer">source</a>`:''}</small>
+      <small class="cperm">It ${esc(permText(m.permissions))}.</small></div></div>
+      <div class="c2">${btn}</div><p class="ctest" hidden></p></li>`;};
+  det.querySelector('.d-body').innerHTML=`${connTabs(C)}
+    ${S.error?`<p class="ctest ko">${esc(S.error)}</p>`:''}
+    ${S.store&&!S.error?(S.modules.length?`<ul class="list conns">${S.modules.map(card).join('')}</ul>`:'<p class="fhint">The store lists no module yet.</p>'):''}
+    ${!S.store?'<p class="fhint">The module store is off on this server (MODULE_REGISTRY).</p>':''}
+    <p class="fhint">Modules run on the server, each in its own process that cannot read the data files or the other connectors’ settings. The store only lists modules whose code was reviewed, and checks each package against the checksum it publishes. Installed modules prepare proposals, like the built-in connectors: nothing reaches the map unless an approver accepts it.</p>
+    <div class="c2">${S.store?'<button class="ibtn" data-mod-refresh>Check the store again</button>':''}${S.uploads?'<button class="ibtn" data-mod-upload>Install a package file…</button><input type="file" id="modFile" accept=".tgz,.tar.gz,application/gzip" hidden>':''}</div>`;
+}
+function onConnectorsChanged(){if(state.panel==='connectors'&&CONN_TAB==='installed')showConnectors();}
+// One setting field, built from the description the server sends (secrets are never sent back: “unchanged” keeps them)
+function connField(f,S){
+  const id='cf_'+f.k,v=S[f.k],hint=f.help?`<span class="hint">${esc(f.help)}</span>`:'',siteOpts=SITES.map(s=>[s.id,s.name]);
+  if(f.type==='bool')return `<label class="chk plain"><input type="checkbox" id="${esc(id)}" data-ck="${esc(f.k)}"${v?' checked':''}> ${esc(f.label)}</label>${hint}`;
+  if(f.type==='select')return fSel(id,esc(f.label),f.options,v||f.default).replace('<select ','<select data-ck="'+esc(f.k)+'" ');
+  if(f.type==='site')return fSel(id,esc(f.label)+(f.required?' *':''),[['','Choose…'],...siteOpts],v).replace('<select ','<select data-ck="'+esc(f.k)+'" ');
+  if(f.type==='asset')return `<div data-asset-wrap="${esc(f.k)}">${fSel(id,esc(f.label),connAssetOpts(S.site||state.siteId),v).replace('<select ','<select data-ck="'+esc(f.k)+'" ')}${hint}</div>`;
+  if(f.type==='multi'||f.type==='sites'){const opts=f.type==='sites'?siteOpts:f.options,cur=Array.isArray(v)?v:[];
+    return `<fieldset data-multi="${esc(f.k)}"><legend>${esc(f.label)}</legend>${opts.map(([k,t])=>`<label class="chk plain"><input type="checkbox" value="${esc(k)}"${cur.includes(k)?' checked':''}> ${esc(t)}</label>`).join('')}${hint}</fieldset>`;}
+  if(f.type==='rules'||f.type==='text')return `<div class="f"><label for="${esc(id)}">${esc(f.label)}</label><textarea id="${esc(id)}" data-ck="${esc(f.k)}" class="mono" spellcheck="false" placeholder="${esc(f.placeholder||'')}">${esc(v||'')}</textarea>${hint}</div>`;
+  if(f.secret)return fIn(id,esc(f.label)+(f.required?' *':''),'',`type="password" autocomplete="new-password" data-ck="${esc(f.k)}" data-secret="${v?1:0}" placeholder="${v?'Saved: leave empty to keep it':esc(f.placeholder||'')}"`,f.help?esc(f.help):'')+(v?`<label class="chk plain small"><input type="checkbox" data-clear="${esc(f.k)}"> Forget the saved value</label>`:'');
+  return fIn(id,esc(f.label)+(f.required?' *':''),v==null?'':v,`data-ck="${esc(f.k)}" ${f.type==='number'?'type="number" min="0" step="1"':''} placeholder="${esc(f.placeholder||'')}" autocomplete="off"`,f.help?esc(f.help):'');
+}
+function connAssetOpts(sid){const s=siteById[sid];if(!s)return [['','—']];const fw=s.assets.filter(a=>INTERCO.has(a.type)),rest=s.assets.filter(a=>!INTERCO.has(a.type));
+  return [['','None (direct)'],{group:'Firewalls, routers, gateways',items:fw.map(a=>[a.id,`${a.name} · ${a.ip||''}`])},{group:'Other assets',items:rest.map(a=>[a.id,a.name])}];}
+// An "asset" setting follows the "site" one: its list shows that IS, the firewall picked first
+function connWireSite(c){
   const siteSel=det.querySelector('[data-ck="site"]');
   if(siteSel)siteSel.addEventListener('change',()=>{const w=det.querySelector('[data-asset-wrap]');if(!w)return;const k=w.dataset.assetWrap,f=c.fields.find(x=>x.k===k);
     const s=siteById[siteSel.value];const fw=s?s.assets.find(a=>a.type==='firewall'):null;
-    w.innerHTML=fSel('cf_'+k,esc(f.label),assetOpts(siteSel.value),fw?fw.id:'').replace('<select ','<select data-ck="'+k+'" ');});
+    w.innerHTML=fSel('cf_'+k,esc(f.label),connAssetOpts(siteSel.value),fw?fw.id:'').replace('<select ','<select data-ck="'+esc(k)+'" ');});
 }
-// Palo Alto: a configuration file exported from the firewall or Panorama, imported as a proposal
-function paloAltoFileForm(c){
-  const S=c.settings||{},sid=S.site||state.siteId||(SITES[0]&&SITES[0].id),siteOpts=SITES.map(s=>[s.id,s.name]);
-  const fwOpts=id=>{const s=siteById[id];if(!s)return [['','—']];return [['','None (direct)'],...s.assets.filter(a=>INTERCO.has(a.type)).map(a=>[a.id,`${a.name} · ${TYPE_LABEL[a.type]}`])];};
-  const fwDefault=id=>{const s=siteById[id];if(!s)return '';if(S.firewall&&s.byId[S.firewall])return S.firewall;const f=s.assets.find(a=>a.type==='firewall');return f?f.id:'';};
-  openForm('Import Palo Alto rules','Connector',`
-    <p class="fhint" style="margin:0">On the firewall: Device › Setup › Operations › Export named configuration snapshot (running-config.xml). On Panorama: Panorama › Setup › Operations, same export; then give the device group below.</p>
-    <div class="f"><label for="paFile">Configuration file (.xml) *</label><input type="file" id="paFile" accept=".xml,application/xml,text/xml"></div>
-    ${fSel('paSite','IS the rules apply to *',siteOpts,sid)}
-    <div id="paFwWrap">${fSel('paFw','Firewall asset the flows cross',fwOpts(sid),fwDefault(sid))}</div>
-    ${fIn('paScope','Only this vsys or device group',S.scope||'','placeholder="empty = all"')}
-    <p class="fhint">Allow rules become flows: address objects are matched to the assets of the IS by IP, public addresses and FQDNs to Internet services. The result is a proposal: nothing changes on the map until it is approved.</p>`,
+function connValues(){
+  const body={};
+  det.querySelectorAll('[data-ck]').forEach(el=>{const k=el.dataset.ck;if(el.type==='checkbox')body[k]=el.checked;else if(el.dataset.secret!==undefined){if(el.value)body[k]=el.value;}else body[k]=el.value;});
+  det.querySelectorAll('[data-clear]').forEach(el=>{if(el.checked)body[el.dataset.clear]='';});
+  det.querySelectorAll('[data-multi]').forEach(fs=>{body[fs.dataset.multi]=[...fs.querySelectorAll('input:checked')].map(i=>i.value);});
+  return body;
+}
+function connectorForm(c){
+  const main=c.fields.filter(f=>!f.advanced),adv=c.fields.filter(f=>f.advanced);
+  openForm(`${c.name} settings`,'Connector',`<p class="fhint" style="margin:0">${esc(c.what)}. Each run prepares one proposal per IS; an approver reviews it.</p>
+    ${main.map(f=>connField(f,c.settings)).join('')}
+    ${adv.length?`<details class="adv"><summary>More settings</summary>${adv.map(f=>connField(f,c.settings)).join('')}</details>`:''}`,
   async()=>{
-    const f=$('#paFile').files[0];if(!f)return formErr('Choose the configuration file.','paFile');
+    const body=connValues();
+    const miss=c.fields.find(f=>f.required&&!f.secret&&!String(body[f.k]||'').trim());if(miss)return formErr(`Fill in “${miss.label}”.`,'cf_'+miss.k);
+    try{await Store.api('PUT','api/connectors/'+c.id,body);onSave=null;toast(`${c.name} settings saved.`);showConnectors();}catch(e){formErr(e.message);}
+  },{cancel:()=>showConnectors()});
+  connWireSite(c);
+}
+// A file imported through a module (a firewall configuration, a CSV inventory…), as a proposal
+function fileImportForm(c){
+  const S={...c.settings};
+  if(!S.site)S.site=state.siteId||(SITES[0]&&SITES[0].id);
+  const ff=c.fields.filter(f=>c.file.fields.includes(f.k));
+  if(ff.some(f=>f.type==='asset')&&!S.firewall){const s=siteById[S.site],fw=s&&s.assets.find(a=>a.type==='firewall');if(fw)S.firewall=fw.id;}
+  openForm(c.file.label,c.name,`
+    ${c.file.help?`<p class="fhint" style="margin:0">${esc(c.file.help)}</p>`:''}
+    <div class="f"><label for="cfFile">File *</label><input type="file" id="cfFile" accept="${esc(c.file.accept||'')}"></div>
+    ${ff.map(f=>connField(f,S)).join('')}
+    <p class="fhint">The result is a proposal: nothing changes on the map until it is approved.</p>`,
+  async()=>{
+    const f=$('#cfFile').files[0];if(!f)return formErr('Choose the file.','cfFile');
     if(f.size>18*1024*1024)return formErr('This file is larger than 18 MB.');
-    const xml=await f.text();if(!/<config[\s>]/.test(xml))return formErr('This is not a PAN-OS configuration file (no <config> element).');
-    const btn=det.querySelector('.form-foot [type=submit]');btn.disabled=true;btn.textContent='Reading the rules…';
-    try{const j=await Store.api('POST','api/connectors/paloalto/run',{xml,fileName:f.name,wait:true,overrides:{site:$('#paSite').value,firewall:$('#paFw').value,scope:$('#paScope').value.trim()}});
+    const overrides=connValues(),miss=ff.find(x=>x.required&&!String(overrides[x.k]||'').trim());if(miss)return formErr(`Fill in “${miss.label}”.`,'cf_'+miss.k);
+    const text=await f.text();
+    const btn=det.querySelector('.form-foot [type=submit]');btn.disabled=true;btn.textContent='Reading the file…';
+    try{const j=await Store.api('POST',`api/connectors/${c.id}/run`,{file:{name:f.name,text},wait:true,overrides});
       onSave=null;const r=j.run;
-      if(!r.ok){btn.disabled=false;btn.textContent='Save';return formErr(r.error);}
-      toast(r.proposals.length?'Rules imported: review the proposal.':'Nothing new: the map already has these flows.');
+      if(!r.ok){btn.disabled=false;btn.textContent='Import';return formErr(r.error);}
+      toast(r.proposals.length?'Imported: review the proposal.':'Nothing new: the map already matches this file.');
       if(r.proposals.length)openProposal(r.proposals[0].id);else showConnectors();
-    }catch(e){btn.disabled=false;btn.textContent='Save';formErr(e.message);}
+    }catch(e){btn.disabled=false;btn.textContent='Import';formErr(e.message);}
   },{cancel:()=>showConnectors()});
   det.querySelector('.form-foot [type=submit]').textContent='Import';
-  $('#paSite').addEventListener('change',e=>{$('#paFwWrap').innerHTML=fSel('paFw','Firewall asset the flows cross',fwOpts(e.target.value),fwDefault(e.target.value));});
+  connWireSite(c);
 }
+det.addEventListener('change',async e=>{
+  if(e.target.id!=='modFile'||!e.target.files[0])return;
+  const f=e.target.files[0];
+  if(f.size>20*1024*1024)return toast('This package is larger than 20 MB.',true);
+  const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]||'');r.onerror=()=>rej(r.error);r.readAsDataURL(f);});
+  try{const j=await Store.api('POST','api/modules/upload',{data:b64});toast(`${j.module.name} ${j.module.version} installed.`);CONN_TAB='installed';showConnectors();}
+  catch(err){toast(err.message,true);}
+});
 det.addEventListener('click',async e=>{
+  const tab=e.target.closest('[data-ctab]');if(tab&&CONN){CONN_TAB=tab.dataset.ctab;return showConnectors();}
+  if(e.target.closest('[data-mod-refresh]'))return showModuleStore(true);
+  if(e.target.closest('[data-mod-upload]')){const i=$('#modFile');if(i){i.value='';i.click();}return;}
+  const mcard=e.target.closest('[data-mod]');
+  if(mcard&&e.target.closest('[data-mod-install]')){
+    const b=e.target.closest('[data-mod-install]'),out=mcard.querySelector('.ctest');
+    if(!b.classList.contains('armed')){b.classList.add('armed');b.dataset.label=b.textContent;b.textContent='Confirm: it will run on the server';return;}
+    b.disabled=true;b.textContent='Installing…';
+    try{const j=await Store.api('POST',`api/modules/${encodeURIComponent(mcard.dataset.mod)}/install`,{});toast(`${j.module.name} ${j.module.version} installed. Set it up under Installed.`);showModuleStore();}
+    catch(err){out.hidden=false;out.className='ctest ko';out.textContent=err.message;b.disabled=false;b.classList.remove('armed');b.textContent=b.dataset.label;}
+    return;
+  }
   const card=e.target.closest('[data-conn]');if(!card||!CONN)return;
   const c=CONN.connectors.find(x=>x.id===card.dataset.conn);if(!c)return;
   const out=card.querySelector('.ctest');
   if(e.target.closest('[data-conn-edit]'))return connectorForm(c);
-  if(e.target.closest('[data-conn-file]'))return paloAltoFileForm(c);
+  if(e.target.closest('[data-conn-file]'))return fileImportForm(c);
+  if(e.target.closest('[data-mod-remove]')){const b=e.target.closest('[data-mod-remove]');
+    if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='Confirm: remove it and its settings';return;}
+    try{await Store.api('DELETE','api/modules/'+encodeURIComponent(c.id));toast(`${c.name} removed.`);showConnectors();}catch(err){toast(err.message,true);}return;}
   if(e.target.closest('[data-conn-test]')){out.hidden=false;out.className='ctest';out.textContent='Testing…';
     try{const j=await Store.api('POST',`api/connectors/${c.id}/test`,{});out.textContent=j.message;out.classList.add(j.ok?'ok':'ko');}catch(err){out.textContent=err.message;out.classList.add('ko');}return;}
   if(e.target.closest('[data-conn-run]')){const b=e.target.closest('[data-conn-run]');b.disabled=true;b.textContent='Running…';

@@ -1,18 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Connector manager: settings (data/connectors.json, secrets never sent back to browsers), runs (by hand or
-// on a schedule) and their outcome. A run never writes the map: it prepares proposals that an approver
-// reviews like any other (one per IS, refreshed in place while still open).
+// Connector manager: the modules (modules.js), their settings (data/connectors.json, secrets never sent
+// back to browsers), runs (by hand, on a schedule or from an imported file) and their outcome. Each test
+// or run happens in a separate process (runner.js). A run never writes the map: it prepares proposals
+// that an approver reviews like any other (one per IS, refreshed in place while still open).
 import fs from 'node:fs';
 import path from 'node:path';
-import * as cyberwatch from './cyberwatch.js';
-import * as paloalto from './paloalto.js';
-import * as glpi from './glpi.js';
-import * as phpipam from './phpipam.js';
-import { ConnectorError } from './util.js';
+import { ConnectorError } from './sdk.js';
+import { discover } from './modules.js';
+import { runModule } from './runner.js';
 
-const MODULES = { cyberwatch, glpi, phpipam, paloalto };
-// A connector id comes from the URL: only the four above, never an inherited property (__proto__, toString…)
-const known = id => Object.hasOwn(MODULES, id);
 const MASK = '••••••••';
 const COMMON = [
   { k: 'enabled', label: 'Enabled', type: 'bool', default: false },
@@ -30,14 +26,25 @@ function dropLinkOnly(changes, state) {
   }
 }
 
-export function createConnectors({ dataDir, getState, upsertProposal, log, writeJson, broadcast }) {
+// opts: dataDir, providedDir (MODULES_DIR), installedDir (DATA_DIR/modules), strataVersion, timeoutMs,
+// and the server's getState, upsertProposal, log, writeJson, broadcast
+export function createConnectors({ dataDir, providedDir, installedDir, strataVersion, timeoutMs, getState, upsertProposal, log, writeJson, broadcast }) {
   const FILE = path.join(dataDir, 'connectors.json');
   let store = { connectors: {}, runs: [] };
   try { if (fs.existsSync(FILE)) { const p = JSON.parse(fs.readFileSync(FILE, 'utf8')); store = { connectors: p.connectors || {}, runs: Array.isArray(p.runs) ? p.runs : [] }; } } catch (e) { log('connectors.json unreadable, starting empty:', e.message); }
+  let MODULES = new Map(), problems = [];
+  function reload() {
+    ({ modules: MODULES, problems } = discover({ providedDir, installedDir, strataVersion }));
+    for (const p of problems) log(`Connector module ${p.origin}/${p.folder} left out: ${p.error}`);
+  }
+  reload();
+  const known = id => typeof id === 'string' && MODULES.has(id);
+  const mod = id => MODULES.get(id);
   const running = new Map();
   const save = () => writeJson(FILE, JSON.stringify(store, null, 2)).then(() => { try { fs.chmodSync(FILE, 0o600); } catch { } });
-  const fieldsOf = id => [...MODULES[id].meta.fields, ...COMMON];
-  const cfgOf = id => store.connectors[id] = store.connectors[id] || { settings: {}, lastRun: null };
+  // the IS filter is common, except for a module that works on one IS it names itself (a "site" setting)
+  const fieldsOf = id => { const f = mod(id).fields; return [...f, ...COMMON.filter(c => c.k !== 'sites' || !f.some(x => x.type === 'site'))]; };
+  const cfgOf = id => (Object.hasOwn(store.connectors, id) ? store.connectors[id] : (store.connectors[id] = { settings: {}, lastRun: null }));
 
   // Settings as a module sees them (defaults filled in, TLS options grouped)
   function effective(id, overrides = {}) {
@@ -47,15 +54,17 @@ export function createConnectors({ dataDir, getState, upsertProposal, log, write
     out.tls = { insecure: !!out.tlsInsecure, ca: out.tlsCa && /BEGIN CERTIFICATE/.test(out.tlsCa) ? out.tlsCa : undefined };
     return out;
   }
+  const isConfigured = id => { const s = cfgOf(id).settings; return mod(id).fields.filter(f => f.required).every(f => s[f.k] !== undefined && s[f.k] !== '' && !(Array.isArray(s[f.k]) && !s[f.k].length)); };
+  // a sync with the tool (rather than a file import) is possible
+  const isLive = id => { const m = mod(id); return m.live !== false && isConfigured(id) && m.live.every(k => cfgOf(id).settings[k]); };
   function publicView(id) {
-    const c = cfgOf(id), m = MODULES[id].meta, settings = {};
+    const c = cfgOf(id), m = mod(id), settings = {};
     for (const f of fieldsOf(id)) { const v = c.settings[f.k]; settings[f.k] = f.secret ? (v ? MASK : '') : (v === undefined ? (f.default ?? '') : v); }
-    return { id, name: m.name, what: m.what, fields: fieldsOf(id), settings, configured: isConfigured(id), lastRun: c.lastRun, running: running.has(id) ? running.get(id).info : null };
-  }
-  function isConfigured(id) {
-    const s = cfgOf(id).settings;
-    if (id === 'paloalto') return !!s.site;
-    return MODULES[id].meta.fields.filter(f => f.required).every(f => s[f.k]);
+    return {
+      id, name: m.name, what: m.description, badge: m.badge, version: m.version, origin: m.origin, author: m.author, homepage: m.homepage,
+      permissions: m.permissions, file: m.file, fields: fieldsOf(id), settings,
+      configured: isConfigured(id), live: isLive(id), lastRun: c.lastRun, running: running.has(id) ? running.get(id).info : null,
+    };
   }
   function update(id, body) {
     if (!known(id)) throw new ConnectorError('Unknown connector');
@@ -72,34 +81,63 @@ export function createConnectors({ dataDir, getState, upsertProposal, log, write
     }
     return save();
   }
+  // Values of the settings a file import may change for one import (file.fields of the manifest)
+  function fileOverrides(id, o) {
+    const m = mod(id), out = {}, state = getState();
+    if (!m.file || !o || typeof o !== 'object') return out;
+    for (const k of m.file.fields) {
+      if (!Object.hasOwn(o, k)) continue;
+      const f = m.fields.find(x => x.k === k), v = o[k];
+      if (f.type === 'site') { if (typeof v === 'string' && Object.hasOwn(state.si, v)) out[k] = v; }
+      else if (f.type === 'asset') { if (v === '' || (typeof v === 'string' && Object.hasOwn(state.assets, v))) out[k] = v; }
+      else if (f.type === 'select') { if (f.options.some(x => x[0] === v)) out[k] = v; }
+      else if (f.type === 'bool') out[k] = !!v;
+      else if (f.type === 'number') out[k] = Math.max(0, Math.min(100000, parseFloat(v) || 0));
+      else if (f.type === 'multi' || f.type === 'sites') out[k] = Array.isArray(v) ? v.map(String).slice(0, 200) : [];
+      else if (typeof v === 'string' || typeof v === 'number') out[k] = String(v).slice(0, 2000).trim();
+    }
+    return out;
+  }
   async function test(id) {
     if (!known(id)) throw new ConnectorError('Unknown connector');
-    return MODULES[id].test(effective(id));
+    if (!isLive(id)) throw new ConnectorError(mod(id).live === false ? `${mod(id).name} only imports files.` : 'Fill in its settings first.');
+    const r = await runModule(mod(id), 'test', { cfg: effective(id) }, { timeoutMs: Math.min(timeoutMs, 120000), log });
+    return typeof r === 'string' ? r : r && typeof r.message === 'string' ? r.message : 'Connected.';
   }
-  // Starts a run; resolves when it is finished. opts: {by, xml, fileName, overrides}
+  // Starts a run; resolves when it is finished. opts: {by, file: {name, text}, overrides}
   async function run(id, opts = {}) {
     if (!known(id)) throw new ConnectorError('Unknown connector');
-    if (running.has(id)) throw new ConnectorError(`${MODULES[id].meta.name} is already running.`);
+    const m = mod(id);
+    if (running.has(id)) throw new ConnectorError(`${m.name} is already running.`);
+    if (opts.file && !m.file) throw new ConnectorError(`${m.name} does not import files.`);
+    if (!opts.file && !isLive(id)) throw new ConnectorError(m.live === false ? `${m.name} only imports files.` : 'Fill in its settings first.');
     const started = new Date().toISOString();
-    const info = { startedAt: started, by: opts.by || '', file: opts.fileName || null };
+    const fileName = opts.file ? String(opts.file.name || 'file').slice(0, 120) : null;
+    const info = { startedAt: started, by: opts.by || '', file: fileName };
     running.set(id, { info });
     broadcast('connectors', { id, running: true });
-    const rec = { id, at: started, by: opts.by || '', file: opts.fileName || null, ok: false, summary: '', error: null, proposals: [], ms: 0 };
+    const rec = { id, at: started, by: opts.by || '', file: fileName, ok: false, summary: '', error: null, proposals: [], ms: 0 };
     const t0 = Date.now();
     try {
-      const cfg = effective(id, opts.overrides || {});
+      const cfg = effective(id, opts.file ? fileOverrides(id, opts.overrides) : {});
       const state = JSON.parse(JSON.stringify(getState()));
-      const res = await MODULES[id].run(cfg, { state, xml: opts.xml, fileName: opts.fileName, log });
-      const sites = cfg.sites && cfg.sites.length && id !== 'paloalto' ? new Set(cfg.sites) : null;
-      for (const p of res.proposals || []) {
+      const res = await runModule(m, 'run', {
+        cfg, state: m.permissions.map ? state : null,
+        file: opts.file ? { name: fileName, text: String(opts.file.text) } : null,
+      }, { timeoutMs, log }) || {};
+      if (res.proposals !== undefined && !Array.isArray(res.proposals)) throw new Error('the module answered without a list of proposals');
+      const sites = Array.isArray(cfg.sites) && cfg.sites.length ? new Set(cfg.sites) : null;
+      for (const p of (res.proposals || []).slice(0, 500)) {
+        if (!p || typeof p !== 'object' || typeof p.siteId !== 'string' || !Object.hasOwn(state.si, p.siteId)) continue;
         if (sites && !sites.has(p.siteId)) continue;
+        if (!p.changes || typeof p.changes !== 'object') continue;
         dropLinkOnly(p.changes, state);
-        const out = await upsertProposal({ connector: id, connectorName: MODULES[id].meta.name, by: opts.by, uploadedBy: opts.xml ? opts.by : null, ...p });
+        const out = await upsertProposal({ connector: id, connectorName: m.name, by: opts.by, uploadedBy: opts.file ? opts.by : null, siteId: p.siteId, title: String(p.title || `${m.name}: ${state.si[p.siteId].name || p.siteId}`), description: String(p.description || ''), changes: p.changes });
         if (out) rec.proposals.push({ id: out.id, title: out.title, siteId: p.siteId, refreshed: out.refreshed, unchanged: out.unchanged });
       }
       rec.ok = true;
-      rec.summary = res.summary || '';
-      rec.report = res.report || null;
+      rec.summary = typeof res.summary === 'string' ? res.summary.slice(0, 2000) : '';
+      rec.report = res.report && typeof res.report === 'object' ? res.report : null;
       if (!rec.proposals.length) rec.summary += (rec.summary ? ' ' : '') + 'The map already matches: no proposal.';
       log(`Connector ${id}: ${rec.summary}`);
     } catch (e) {
@@ -117,23 +155,25 @@ export function createConnectors({ dataDir, getState, upsertProposal, log, write
     }
     return rec;
   }
+  // Forgets a module's settings and secrets (when it is uninstalled)
+  function forget(id) { delete store.connectors[id]; return save(); }
   // Scheduler: checks once a minute which enabled connector is due
   setInterval(() => {
     const now = Date.now();
-    for (const id of Object.keys(MODULES)) {
+    for (const id of MODULES.keys()) {
       const c = cfgOf(id), h = +c.settings.everyHours || 0;
-      if (!c.settings.enabled || !h || running.has(id) || !isConfigured(id)) continue;
-      if (id === 'paloalto' && !c.settings.url) continue;
+      if (!c.settings.enabled || !h || running.has(id) || !isLive(id)) continue;
       const last = c.lastRun ? Date.parse(c.lastRun.at) : 0;
       if (now - last >= h * 3600000) run(id, { by: 'schedule' }).catch(() => { });
     }
   }, 60000).unref();
 
   return {
-    ids: Object.keys(MODULES),
-    list: () => ({ connectors: Object.keys(MODULES).map(publicView), runs: store.runs.slice(0, 30) }),
+    ids: () => [...MODULES.keys()],
+    list: () => ({ connectors: [...MODULES.keys()].map(publicView), runs: store.runs.slice(0, 30), problems }),
     get: id => (known(id) ? publicView(id) : null),
-    update, test, run,
+    module: id => (known(id) ? mod(id) : null),
+    update, test, run, reload, forget,
     isRunning: id => running.has(id),
     exists: known,
   };

@@ -10,6 +10,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createConnectors } from './connectors/index.js';
+import { createStore } from './connectors/store.js';
+import { ID_RE as MODULE_ID_RE } from './connectors/modules.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = process.env;
@@ -44,6 +46,12 @@ const CONFIG = {
   loginMaxFailsPerAddress: Math.max(0, parseInt(env.LOGIN_MAX_FAILS_PER_ADDRESS ?? '20', 10) || 0),
   loginLockMs: Math.max(1000, (parseFloat(env.LOGIN_LOCK_MINUTES || '15') || 15) * 60000),
   trustProxy: String(env.TRUST_PROXY || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  // Connector modules: a folder of modules set up by the machine's administrator, the module store
+  // (empty or "off": none), installing a package by hand, and how long one run may take
+  modulesDir: env.MODULES_DIR ? path.resolve(env.MODULES_DIR) : '',
+  moduleRegistry: /^(0|false|no|off|)$/i.test(env.MODULE_REGISTRY ?? 'x') ? '' : (env.MODULE_REGISTRY || 'https://solidgeeks.github.io/strata/modules/index.json'),
+  moduleUpload: /^(1|true|yes)$/i.test(env.MODULE_UPLOAD || ''),
+  connectorTimeoutMs: Math.max(2000, (parseFloat(env.CONNECTOR_TIMEOUT_MINUTES || '30') || 30) * 60000),
   // AGPL-3.0 section 13: users of a modified version must be offered its source. Point this at your fork.
   sourceUrl: /^https?:\/\//.test(env.SOURCE_URL || '') ? env.SOURCE_URL : 'https://github.com/SolidGeeks/strata',
 };
@@ -598,30 +606,62 @@ async function api(req, res, parts, url, auth) {
     }
   }
 
-  /* ---- connectors (Cyberwatch, GLPI, phpIPAM, Palo Alto) ---- */
+  /* ---- connector modules: the store (admin) ---- */
+  if (r1 === 'modules') {
+    if (!connectors) throw httpError(404, 'Connectors are off on this server.');
+    need(auth, 'admin');
+    if (!id && method === 'GET') {
+      const out = { store: modStore.enabled, uploads: modStore.uploads, registry: CONFIG.moduleRegistry, modules: [], error: null };
+      if (modStore.enabled) { try { out.modules = await modStore.list(url.searchParams.get('fresh') === '1'); } catch (e) { out.error = e.message; } }
+      return send(res, 200, out);
+    }
+    try {
+      if (id === 'upload' && !r3 && method === 'POST') {
+        const b = await readBody(req, 28 * 1024 * 1024);
+        if (typeof b?.data !== 'string') throw httpError(400, 'Send {"data": "<the .tgz in base64>"}.');
+        const m = await modStore.upload(Buffer.from(b.data, 'base64'));
+        log(`Module ${m.id} ${m.version} uploaded by ${auth.user || 'admin'}`);
+        broadcast('connectors', { id: m.id }); return send(res, 200, { ok: true, module: m });
+      }
+      if (!MODULE_ID_RE.test(id || '')) throw httpError(404, 'Unknown module');
+      if (r3 === 'install' && method === 'POST') { const m = await modStore.install(id); log(`Module ${m.id} ${m.version} installed by ${auth.user || 'admin'}`); broadcast('connectors', { id }); return send(res, 200, { ok: true, module: m }); }
+      if (!r3 && method === 'DELETE') { await modStore.remove(id); log(`Module ${id} removed by ${auth.user || 'admin'}`); broadcast('connectors', { id }); return send(res, 200, { ok: true }); }
+    } catch (e) {
+      if (e.constructor.name === 'ConnectorError') throw httpError(400, e.message);
+      throw e;
+    }
+  }
+
+  /* ---- connectors: the built-in modules (Cyberwatch, GLPI, phpIPAM, Palo Alto) and installed ones ---- */
   if (r1 === 'connectors') {
     if (!connectors) throw httpError(404, 'Connectors are off on this server.');
-    if (!id && method === 'GET') { need(auth, 'contributor'); const l = connectors.list(); if (!can(auth, 'approver')) l.connectors = l.connectors.filter(c => c.id === 'paloalto').map(c => ({ ...c, settings: { site: c.settings.site, firewall: c.settings.firewall, scope: c.settings.scope } })); return send(res, 200, { ...l, canConfigure: can(auth, 'admin'), canRun: can(auth, 'approver') }); }
+    if (!id && method === 'GET') {
+      need(auth, 'contributor');
+      const l = connectors.list();
+      // without the approver role: only the file imports open to contributors, and only the settings they choose
+      if (!can(auth, 'approver')) l.connectors = l.connectors.filter(c => c.file && c.file.role === 'contributor').map(c => ({ ...c, lastRun: null, fields: c.fields.filter(f => c.file.fields.includes(f.k)), settings: Object.fromEntries(c.file.fields.map(k => [k, c.settings[k]])) }));
+      if (!can(auth, 'admin')) delete l.problems;
+      return send(res, 200, { ...l, canConfigure: can(auth, 'admin'), canRun: can(auth, 'approver'), store: can(auth, 'admin') && (modStore.enabled || modStore.uploads) });
+    }
     if (!connectors.exists(id)) throw httpError(404, 'Unknown connector');
     if (!r3 && method === 'PUT') { need(auth, 'admin'); await connectors.update(id, await readBody(req, 128 * 1024)); return send(res, 200, { ok: true, connector: connectors.get(id) }); }
     if (r3 === 'test' && method === 'POST') {
       need(auth, 'approver');
       try { return send(res, 200, { ok: true, message: await connectors.test(id) }); }
-      catch (e) { return send(res, 200, { ok: false, message: e.extra !== undefined || e.constructor.name === 'ConnectorError' ? e.message : `Unexpected error: ${e.message}` }); }
+      catch (e) { return send(res, 200, { ok: false, message: e.constructor.name === 'ConnectorError' ? e.message : `Unexpected error: ${e.message}` }); }
     }
     if (r3 === 'run' && method === 'POST') {
       const b = await readBody(req, CONFIG.maxImportBytes) || {};
-      const file = typeof b.xml === 'string' && b.xml.length > 0;
-      // importing a firewall configuration file only needs the right to propose; live syncs need an approver
-      need(auth, file && id === 'paloalto' ? 'contributor' : 'approver');
-      if (file && id !== 'paloalto') throw httpError(400, 'Only the Palo Alto connector imports files.');
+      // {file: {name, text}}; the Palo Alto import also took {xml, fileName}, kept for scripts written for it
+      const f = isObj(b.file) && typeof b.file.text === 'string' && b.file.text.length ? { name: b.file.name, text: b.file.text }
+        : typeof b.xml === 'string' && b.xml.length ? { name: b.fileName || 'configuration.xml', text: b.xml } : null;
+      const m = connectors.module(id);
+      if (f && !m.file) throw httpError(400, `${m.name} does not import files.`);
+      // a file import may only need the right to propose (the module says so); syncs with a tool need an approver
+      need(auth, f && m.file.role === 'contributor' ? 'contributor' : 'approver');
       if (connectors.isRunning(id)) throw httpError(409, 'This connector is already running.');
-      const o = isObj(b.overrides) ? b.overrides : {};
-      const overrides = {};
-      if (o.site && ID_RE.test(o.site)) overrides.site = o.site;
-      if (o.firewall !== undefined && (o.firewall === '' || ID_RE.test(o.firewall))) overrides.firewall = o.firewall;
-      if (typeof o.scope === 'string') overrides.scope = o.scope.slice(0, 120);
-      const p = connectors.run(id, { by: auth.user || 'admin', xml: file ? b.xml : undefined, fileName: file ? String(b.fileName || 'configuration.xml').slice(0, 120) : undefined, overrides });
+      if (!f && !connectors.get(id).live) throw httpError(400, m.live === false ? `${m.name} only imports files.` : 'Fill in its settings first.');
+      const p = connectors.run(id, { by: auth.user || 'admin', file: f || undefined, overrides: isObj(b.overrides) ? b.overrides : {} });
       if (b.wait) return send(res, 200, { ok: true, run: await p });
       p.catch(() => { });
       return send(res, 202, { ok: true, started: true });
@@ -679,7 +719,13 @@ const server = http.createServer(async (req, res) => {
 
 loadState();
 loadHistory();
-const connectors = /^(0|false|no|off)$/i.test(env.CONNECTORS || '') ? null : createConnectors({ dataDir: CONFIG.dataDir, getState: () => state, upsertProposal, log, writeJson, broadcast });
+const STRATA_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+const MODULES_INSTALLED = path.join(CONFIG.dataDir, 'modules');
+const connectors = /^(0|false|no|off)$/i.test(env.CONNECTORS || '') ? null : createConnectors({
+  dataDir: CONFIG.dataDir, providedDir: CONFIG.modulesDir, installedDir: MODULES_INSTALLED, strataVersion: STRATA_VERSION, timeoutMs: CONFIG.connectorTimeoutMs,
+  getState: () => state, upsertProposal, log, writeJson, broadcast,
+});
+const modStore = connectors ? createStore({ registryUrl: CONFIG.moduleRegistry, uploads: CONFIG.moduleUpload, installedDir: MODULES_INSTALLED, strataVersion: STRATA_VERSION, connectors, log }) : null;
 loadProposals();
 bootstrapUsers();
 await backup('startup');

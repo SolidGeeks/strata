@@ -2,6 +2,20 @@
 
 All notable changes to Strata (formerly IS Map 3D). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+### Added
+- **Connector modules**: a connector is a folder with a manifest (`strata-module.json`: name, version, settings, file import, the permissions it needs) and its code, `test()` and `run()` returning proposals. The four built-in connectors are now modules too (`server/connectors/builtin`), and new ones need no change to Strata. Guide: `MODULES.md`.
+- **Module store** (*Connectors › Module store*, admin): lists the modules of a registry (`MODULE_REGISTRY`, by default `docs/modules/index.json` of this repository, published on the project site), with what each one reads; installs, updates and removes them in `DATA_DIR/modules`. Each package is checked against the SHA-256 the registry gives. `MODULE_UPLOAD=true` lets admins install a package file; `MODULES_DIR` holds modules provided by the machine's administrator; on NixOS, `services.strata.modules`.
+- **CSV inventory**, the first module of the store: assets of an IS from a spreadsheet saved as CSV, imported as a proposal by any contributor.
+- `scripts/pack-module.mjs` packs a module for the store (the same files always give the same bytes) and updates a registry index; `strata-pack-module` in the Nix package.
+- API: `GET /api/modules`, `POST /api/modules/{id}/install`, `POST /api/modules/upload`, `DELETE /api/modules/{id}`; `POST /api/connectors/{id}/run` takes `{"file": {"name", "text"}, "overrides"}` for any module that imports files.
+- Tests for the modules: the built-in ones against the simulator, what a module process can reach, time limit, store install, checksum, upload, removal; the NixOS VM test runs a provided module under the hardened service.
+
+### Changed
+- Each connector test or run happens in a separate Node.js process with the permission model: it reads its module folder and the SDK only, cannot write files or start programs, gets none of the server's environment, its own settings only, and the map only if its manifest asks for it; it is stopped after `CONNECTOR_TIMEOUT_MINUTES` (30) and limited to 512 MB.
+- The Palo Alto configuration import is a generic file import: the same form for every module that imports files. Scripts posting `{"xml", "fileName"}` keep working.
+- `scripts/connector-sim.mjs` listens on 127.0.0.1 only, on `SIM_PORT` (8099 by default).
+
 ## [0.7.0] - 2026-10-26
 ### Added
 - **Attack paths** (Analysis): the critical assets an attacker coming from the Internet could reach (criticality High, of their own or through a business service they would hit), every path to each one along the allowed flows, most likely first, and **where to cut**: the assets and the equipment that every path to a critical asset goes through. The rest of the model fades, and hovering a path picks it out, in 3D and in 2D.

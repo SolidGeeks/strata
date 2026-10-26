@@ -12,7 +12,7 @@
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
     "start": "node server/server.js",
-    "test": "node --test tests/api.test.mjs tests/analysis.test.mjs tests/secrets.test.mjs tests/signin.test.mjs tests/hardening.test.mjs tests/readonly.test.mjs",
+    "test": "node --test tests/api.test.mjs tests/analysis.test.mjs tests/secrets.test.mjs tests/signin.test.mjs tests/hardening.test.mjs tests/readonly.test.mjs tests/modules.test.mjs",
     "test:e2e": "node --test tests/e2e.mjs",
     "setup": "npm ci && npm run vendor"
   },

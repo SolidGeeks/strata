@@ -5,21 +5,8 @@
 // Authentication: HTTP Basic with the API access key and secret key (current Cyberwatch documentation), or
 // the older "API Auth" HMAC-SHA256 signature for instances that still need it.
 import crypto from 'node:crypto';
-import { request, expectOk, pool, ConnectorError, assetIndex, isIp, firstIp } from './util.js';
+import { request, expectOk, pool, ConnectorError, assetIndex, isIp, firstIp } from '../../sdk.js';
 
-export const meta = {
-  id: 'cyberwatch', name: 'Cyberwatch', what: 'Vulnerabilities (CVE) of the assets, matched by host name or IP address',
-  fields: [
-    { k: 'url', label: 'Cyberwatch URL', placeholder: 'https://cyberwatch.example.internal', required: true },
-    { k: 'accessKey', label: 'API access key', required: true },
-    { k: 'secretKey', label: 'API secret key', secret: true, required: true },
-    { k: 'auth', label: 'Authentication', type: 'select', options: [['basic', 'Basic (access key : secret key)'], ['hmac', 'API Auth HMAC-SHA256 (older instances)']], default: 'basic' },
-    { k: 'minLevel', label: 'Lowest severity to import', type: 'select', options: [['low', 'Low and above'], ['med', 'Medium and above'], ['high', 'High and above'], ['crit', 'Critical only']], default: 'med' },
-    { k: 'maxPerAsset', label: 'At most per asset (worst first)', type: 'number', default: 40 },
-    { k: 'includeIgnored', label: 'Also import the CVEs ignored in Cyberwatch', type: 'bool', default: false },
-    { k: 'serversPath', label: 'API path of the server list', placeholder: '/api/v3/vulnerabilities/servers', advanced: true },
-  ],
-};
 const SEV_RANK = { none: 0, low: 1, med: 2, high: 3, crit: 4 };
 const sevFromCvss = s => s >= 9 ? 'crit' : s >= 7 ? 'high' : s >= 4 ? 'med' : s > 0 ? 'low' : 'none';
 function sevOf(c, score) {

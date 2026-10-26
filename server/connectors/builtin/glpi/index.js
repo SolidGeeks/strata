@@ -3,25 +3,7 @@
 // installed software (→ applications), technician in charge and technical group (→ incident contacts),
 // location (→ which IS). Works with GLPI 9.5 and 10 (the "API" setting must be on, with an App-Token if the
 // API client asks for one, and a user token: Preferences > Remote access keys).
-import { request, expectOk, pool, ConnectorError, assetIndex, siteFor, vlanForIp, holdingVlan, isIp } from './util.js';
-
-export const meta = {
-  id: 'glpi', name: 'GLPI', what: 'Inventory, installed software, technical contacts and locations',
-  fields: [
-    { k: 'url', label: 'GLPI API URL', placeholder: 'https://glpi.example.internal/apirest.php', required: true },
-    { k: 'appToken', label: 'App-Token (API client)', secret: true },
-    { k: 'userToken', label: 'User token (remote access key)', secret: true, help: 'Or a login and password below.' },
-    { k: 'login', label: 'Login (instead of a user token)', advanced: true },
-    { k: 'password', label: 'Password', secret: true, advanced: true },
-    { k: 'itemtypes', label: 'What to read', type: 'multi', options: [['Computer', 'Computers'], ['NetworkEquipment', 'Network devices'], ['Printer', 'Printers'], ['Phone', 'Phones']], default: ['Computer', 'NetworkEquipment', 'Printer'] },
-    { k: 'locationRules', label: 'Location → IS', type: 'rules', placeholder: 'Lyon = lyon\nParis > Siège = paris\n/^DC-?West/ = dcw', help: 'One rule per line: text found in the GLPI location (or /regex/) = IS id. Without a rule, the IS whose name appears in the location is used.' },
-    { k: 'createAssets', label: 'Create the assets missing from the map', type: 'bool', default: true },
-    { k: 'importSoftware', label: 'Installed software → applications', type: 'bool', default: true },
-    { k: 'maxApps', label: 'At most applications per asset', type: 'number', default: 40 },
-    { k: 'softwareExclude', label: 'Software to leave out (regex)', default: '^(KB\\d+|Security Update|Update for|Microsoft Visual C\\+\\+|Microsoft \\.NET|Intel\\(R\\)|NVIDIA|Realtek|lib|python3-|fonts-|gir1\\.2)', advanced: true },
-    { k: 'importContacts', label: 'Technician and group in charge → incident contacts', type: 'bool', default: true },
-  ],
-};
+import { request, expectOk, pool, ConnectorError, assetIndex, siteFor, vlanForIp, holdingVlan, isIp, parseRules } from '../../sdk.js';
 
 function client(cfg) {
   const base = String(cfg.url || '').replace(/\/+$/, '');
@@ -215,8 +197,4 @@ export async function run(cfg, ctx) {
     }
     return { proposals, report, summary: `${report.read} item(s) read in GLPI: ${report.matched} matched, ${report.created} new, ${report.noSite} with a location that matches no IS.` };
   } finally { await c.close(); }
-}
-
-export function parseRules(text) {
-  return String(text || '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(l => { const i = l.lastIndexOf('='); return i > 0 ? { match: l.slice(0, i).trim(), si: l.slice(i + 1).trim() } : null; }).filter(Boolean);
 }
