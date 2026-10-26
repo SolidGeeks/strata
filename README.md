@@ -298,9 +298,11 @@ Remember to include the backups folder or the `strata-data` Docker volume in you
 
 ---
 
-## 7. Taking over the data entered in the Claude version
+## 7. Taking over a map kept in the browser only
 
-1. In the version published on Claude, on the overview, click **Export JSON** and save the file.
+Opened without its server (as a local file, or copied to a static web page), the app keeps the map in that browser only: the *This browser only* badge shows at the top left. To move that map to your instance:
+
+1. In that browser, on the overview, click **Export JSON** and save the file.
 2. In your instance, signed in as an editor, click **Import JSON** and pick that file.
 
 The format is the same: IS, zones, VLANs, assets, contacts, flows and links between IS are taken over as they are. A v0.1 export imports unchanged into v0.2: flow paths are then suggested automatically.
@@ -414,7 +416,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 - Authentication is still Basic Auth (credentials asked by the browser). For SSO (Entra ID, LDAP…), put an authenticating proxy in front and create the same account names.
 - Two approvers editing the same IS directly at the same time: the last save wins (the history lets you go back). Proposals, on the other hand, detect conflicts.
 - draw.io or Visio diagrams cannot be imported: only Strata JSON exports can become a proposal.
-- The Claude version (artifact) keeps the map in the browser only: no accounts, history, proposals or connectors.
+- Opened without its server, the app keeps the map in the browser only: no accounts, history, proposals or connectors.
 - The path suggested for flows follows a simple rule (edge firewall, then internal firewall or core router). Check it for architectures with several firewalls in a row, and correct it flow by flow if needed.
 - Exported firewall rules are a generic table, not a configuration ready to paste: your firewalls' interface and object names still have to be mapped.
 - The connectors were written from the public API documentation (Cyberwatch v3, GLPI `apirest.php` 9.5/10, phpIPAM 1.4+, PAN-OS 10/11) and tested against simulators, not against your instances: run *Test the connection*, then a first sync, and review the proposal before publishing it. Fields specific to your version (Cyberwatch path, location rules) can be set without touching the code.
