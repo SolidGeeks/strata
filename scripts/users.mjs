@@ -17,7 +17,7 @@ const ROLES = ['viewer', 'contributor', 'approver', 'admin'];
 // Same rule as the server's USER_RE: account names become object keys, so the names that reach Object.prototype are refused
 const USER_RE = /^(?!(?:__proto__|constructor|prototype)$)[A-Za-z0-9_.@-]{1,64}$/;
 const load = () => { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')).users || {}; } catch { return {}; } };
-const save = u => { fs.mkdirSync(path.dirname(FILE), { recursive: true }); fs.writeFileSync(FILE + '.tmp', JSON.stringify({ users: u }, null, 2)); fs.renameSync(FILE + '.tmp', FILE); };
+const save = u => { fs.mkdirSync(path.dirname(FILE), { recursive: true }); fs.writeFileSync(FILE + '.tmp', JSON.stringify({ users: u }, null, 2), { mode: 0o600 }); fs.renameSync(FILE + '.tmp', FILE); };
 const die = m => { console.error(m); process.exit(1); };
 async function askPassword() {
   if (process.env.NEW_PASSWORD_FILE) { try { return fs.readFileSync(process.env.NEW_PASSWORD_FILE, 'utf8').replace(/\r?\n$/, ''); } catch (e) { die(`NEW_PASSWORD_FILE: ${e.message}`); } }

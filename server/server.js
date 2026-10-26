@@ -69,8 +69,16 @@ const httpError = (status, message, extra) => Object.assign(new Error(message), 
 /* ---------------- Storage ---------------- */
 let state = { si: {}, assets: {}, wan: [], services: [], rev: 0, updatedAt: null };
 
+// The data files describe the weak spots of the network, the accounts and the connector secrets: readable by
+// the server's own user only. Files written by older versions with the default mode are tightened at start.
+function protectDataFiles() {
+  const files = [DB_FILE, USERS_FILE, HISTORY_FILE, PROPOSALS_FILE, path.join(CONFIG.dataDir, 'connectors.json')];
+  try { for (const f of fs.readdirSync(BACKUP_DIR)) files.push(path.join(BACKUP_DIR, f)); } catch { }
+  for (const f of files) { try { if ((fs.statSync(f).mode & 0o077) !== 0) fs.chmodSync(f, 0o600); } catch { } }
+}
 function loadState() {
-  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
+  protectDataFiles();
   if (!fs.existsSync(DB_FILE)) { log(`No data yet, starting empty (${DB_FILE})`); return; }
   const p = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
   state = {
@@ -86,7 +94,7 @@ function writeJson(file, data) {
   const text = typeof data === 'string' ? data : JSON.stringify(data);
   writeChain = writeChain.then(async () => {
     const tmp = file + '.tmp';
-    await fsp.writeFile(tmp, text, 'utf8');
+    await fsp.writeFile(tmp, text, { encoding: 'utf8', mode: 0o600 });
     await fsp.rename(tmp, file);
   }).catch(err => log('ERROR writing', path.basename(file), err.message));
   return writeChain;
@@ -137,7 +145,7 @@ async function commitChanges(changes, auth, meta = {}) {
   history.push(...lines);
   await writeJson(DB_FILE, state);
   const text = lines.map(l => JSON.stringify(l)).join('\n') + '\n';
-  writeChain = writeChain.then(() => fsp.appendFile(HISTORY_FILE, text)).catch(e => log('ERROR history', e.message));
+  writeChain = writeChain.then(() => fsp.appendFile(HISTORY_FILE, text, { mode: 0o600 })).catch(e => log('ERROR history', e.message));
   await writeChain;
   trimHistory(false);
   broadcast('change', { rev: state.rev });

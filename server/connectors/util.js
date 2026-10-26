@@ -178,11 +178,33 @@ export function parseXml(src) {
     const m = /^([^\s/>]+)/.exec(inner);
     if (!m) continue;
     const el = { name: m[1], attrs: {}, children: [], text: '' };
-    inner.slice(m[1].length).replace(/([^\s=]+)\s*=\s*("([^"]*)"|'([^']*)')/g, (_, k, __, a, b) => { el.attrs[k] = ent(a ?? b ?? ''); return ''; });
+    readAttrs(inner, m[1].length, el.attrs, ent);
     stack[stack.length - 1].children.push(el);
     if (!selfClose) stack.push(el);
   }
   return root;
+}
+// The attributes of a start tag (name="value" or name='value'), in one pass. A regular expression did this
+// before, and took quadratic time on a long tag without "=": a large crafted file stalled the server.
+function readAttrs(src, from, out, ent) {
+  const n = src.length, space = c => c === ' ' || c === '\t' || c === '\n' || c === '\r';
+  let k = from;
+  while (k < n) {
+    while (k < n && space(src[k])) k++;
+    const start = k;
+    while (k < n && !space(src[k]) && src[k] !== '=') k++;
+    const name = src.slice(start, k);
+    while (k < n && space(src[k])) k++;
+    if (src[k] !== '=') continue;
+    k++;
+    while (k < n && space(src[k])) k++;
+    const q = src[k];
+    if (q !== '"' && q !== "'") continue;
+    const end = src.indexOf(q, k + 1);
+    if (end < 0) break;
+    if (name) out[name] = ent(src.slice(k + 1, end));
+    k = end + 1;
+  }
 }
 function findTagEnd(s, from) {
   let q = null;
