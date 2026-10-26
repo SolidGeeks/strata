@@ -1,4 +1,4 @@
-# Strata — v0.6
+# Strata — v0.7
 
 [![Release](https://img.shields.io/github/v/release/SolidGeeks/strata)](https://github.com/SolidGeeks/strata/releases) [![License AGPL-3.0](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/license-agpl.svg)](LICENSE) [![Signed releases](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/signed-releases.svg)](#2-quick-start-with-docker) [![Tests](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml)
 
@@ -14,22 +14,24 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 
 | Milestone | What it brings |
 |---|---|
-| [0.7.0](https://github.com/SolidGeeks/strata/milestone/1) | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface |
+| [0.7.0](https://github.com/SolidGeeks/strata/milestone/1) ✅ | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface. Released on 2026-10-26 |
 | [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) | A modern three.js, or a documented decision to stay on 0.128 |
 | [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) | The last breaking changes: IS Map compatibility, pre-releases, an API reference |
 | [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
 
 Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
 
-## Next: attack paths and blast radius
-
-- **Moving around the 3D view**: drag with the left button to orbit, with the **middle** (or right) button to move the view left, right, up and down, and scroll to zoom; on a touch screen, two fingers zoom and move. The view stops at the edge of the model, and *Reset view* centres it again.
+## New in v0.7: attack paths, architecture files, Nix
 
 - **Attack paths** (*Analysis*): which critical assets an attacker could reach from the Internet, every path to each one along the allowed flows, most likely first, and **where to cut** (the assets to harden and the equipment whose rules to tighten, that every path to a critical asset goes through). Hover a path to pick it out on the model, in 3D or in 2D.
 - **Blast radius**: pick an asset (in the panel, or *Blast radius* on its sheet) and see everything an attacker holding it could reach, the most likely way to each asset, and the business services hit.
 - A step counts for the highest of: the vulnerabilities of the asset taken over (as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service; a path for the product of its steps. Both lists export as CSV.
-
 - **Architecture file**: one document per IS (*Analysis › Architecture file*, or the IS summary), in the shape audits and security accreditation expect: cover and sign-off table, summary, scope, network diagram, zones and VLANs, applications, asset inventory, flow matrix, the rules each firewall needs, exposure, vulnerabilities and remediation order, attack paths, plans of the exposed and critical assets, incident contacts, change history and method. *Download* saves it as one HTML file, with no outside resource, that prints to A4 PDF from the browser.
+- **Nix and NixOS**: the repository is a flake, with a package and a hardened `services.strata` module (section 5, *Nix and NixOS*).
+- **Failed sign-ins are limited** per account and per client address (`429`), and passwords can be read from files (`EDIT_PASS_FILE`, `VIEW_PASS_FILE`): section 3.
+- **Moving around the 3D view**: drag with the left button to orbit, with the **middle** (or right) button to move the view left, right, up and down, and scroll to zoom; on a touch screen, two fingers zoom and move. The view stops at the edge of the model, and *Reset view* centres it again.
+- **Security fixes** from a review of the server and the connectors: a crafted Palo Alto configuration file could stall the server, and data files were readable by every local user on installs without Docker. Upgrade to 0.7.0 (CHANGELOG, *Security*).
+- **A browser walk-through test** of the interface runs in CI, with the API tests.
 
 ## New in v0.6: business views and risk priorities
 
@@ -175,7 +177,7 @@ Or use the prebuilt image published with each release (tag `vX.Y.Z`, see the `Re
 Every published image is **signed**: an attestation proves it was built by this repository's `Release` workflow, from the code of the tag. To check it before deploying (you need the [GitHub CLI](https://cli.github.com/)):
 
 ```bash
-gh attestation verify oci://ghcr.io/solidgeeks/strata:0.6.0 --owner SolidGeeks
+gh attestation verify oci://ghcr.io/solidgeeks/strata:0.7.0 --owner SolidGeeks
 ```
 
 The command must print `Verification succeeded!`. If it fails, do not use the image, and report it (see [SECURITY.md](SECURITY.md)). Images older than 0.5.4 are not signed.
@@ -486,7 +488,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 
 ---
 
-## 12. Limits of v0.6
+## 12. Limits of v0.7
 
 - Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
 - Authentication is still Basic Auth (credentials asked by the browser). For SSO (Entra ID, LDAP…), put an authenticating proxy in front and create the same account names.

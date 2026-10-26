@@ -79,10 +79,10 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
       <li>
         <h3>Start it</h3>
         <div class="code"><pre><code>docker compose up -d --build</code></pre><button class="copy" type="button">Copy</button></div>
-        <p>Open <code>http://localhost:8080</code>, sign in, then <em>Load demo</em> to explore five sample sites. Releases also publish a ready-made image, <code>ghcr.io/solidgeeks/strata</code>: <code>docker compose pull &amp;&amp; docker compose up -d</code>.</p>
+        <p>Open <code>http://localhost:8080</code>, sign in, then <em>Load demo</em> to explore five sample sites. Releases also publish a ready-made image, <code>ghcr.io/solidgeeks/strata</code>: <code>docker compose pull &amp;&amp; docker compose up -d</code>. On Nix: <code>EDIT_PASS=test nix run github:SolidGeeks/strata</code>, and a NixOS module, <code>services.strata</code>.</p>
       </li>
     </ol>
-    <p class="more"><a href="docs.html#install">HTTPS, systemd install, backups and upgrades are in the documentation.</a></p>
+    <p class="more"><a href="docs.html#install">HTTPS, systemd and NixOS installs, backups and upgrades are in the documentation.</a></p>
   </div>
 </section>
 
@@ -94,7 +94,7 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
   <article class="layer" style="--edge:var(--s7)">
     <div class="txt">
       <h3>A model you can walk around, and a diagram you can draw</h3>
-      <p>Each information system is a stack of plates: one per zone, one colour per VLAN, an object per asset. Orbit, zoom, filter by severity or exposure. Switch to the 2D diagram to add assets, draw flows and arrange plates; both views share the same positions, so what you draw flat is what you see in 3D.</p>
+      <p>Each information system is a stack of plates: one per zone, one colour per VLAN, an object per asset. Orbit, move across with the middle button, zoom, filter by severity or exposure. Switch to the 2D diagram to add assets, draw flows and arrange plates; both views share the same positions, so what you draw flat is what you see in 3D.</p>
       <ul class="facts"><li>Flows routed through the firewalls, routers and switches they cross, each in its own lane</li><li>One colour per flow, on demand</li><li>Plates movable anywhere on their level</li><li>Five sites in the demo, linked by WAN</li></ul>
     </div>
     <figure class="shot"><img src="assets/img/diagram-1200.webp" srcset="assets/img/diagram-1200.webp 1200w, assets/img/diagram.webp 2400w" sizes="(min-width: 1000px) 60vw, 100vw" width="2400" height="1500" alt="The 2D diagram of the Lyon site: four levels of VLAN plates with asset cards and flows" loading="lazy"><figcaption>2D diagram of the demo’s Lyon site.</figcaption></figure>
@@ -122,7 +122,7 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
     <div class="txt">
       <h3>What to fix first</h3>
       <p>One risk score per asset, from CVSS, EPSS, the CISA list of known exploited vulnerabilities, exposure, reachability from the Internet and criticality. The result is a remediation list in the right order, exported as CSV, and a “Why?” on every asset that shows how its score was made.</p>
-      <ul class="facts"><li>EPSS and KEV from the Cyberwatch connector</li><li>Works offline: no feed to download</li></ul>
+      <ul class="facts"><li>EPSS and KEV from the Cyberwatch connector</li><li>Works offline: no feed to download</li><li>Attack paths from the Internet to the critical assets, and where to cut them</li><li>Blast radius: everything an attacker holding one asset could reach</li></ul>
     </div>
     <figure class="shot"><img src="assets/img/risk-1200.webp" srcset="assets/img/risk-1200.webp 1200w, assets/img/risk.webp 2400w" sizes="(min-width: 1000px) 60vw, 100vw" width="2400" height="1500" alt="Risk priorities of the Lyon site: the fixes in order, each with its KEV, EPSS, CVSS and exposure" loading="lazy"><figcaption>Risk priorities: a firewall flaw known to be exploited comes first.</figcaption></figure>
   </article>
@@ -131,7 +131,7 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
     <div class="txt">
       <h3>Documents that write themselves</h3>
       <p>Pick an asset and get its architecture plan, ready for a PNG or SVG in your documentation. Every flow is drawn as its own numbered line, with the table of its flows and of the firewall rules the asset needs. Filter by direction or by kind of flow. Export its flow matrix and firewall rules as CSV.</p>
-      <ul class="facts"><li>Plans stay light, whatever the theme</li><li>Whole map or one site as JSON</li></ul>
+      <ul class="facts"><li>An architecture file per IS for audits and security accreditation: diagrams, flow matrix, exposure, vulnerabilities, contacts, history, ready to print</li><li>Plans stay light, whatever the theme</li><li>Whole map or one site as JSON</li></ul>
     </div>
     <figure class="shot"><img src="assets/img/plan-1200.webp" srcset="assets/img/plan-1200.webp 1200w, assets/img/plan.webp 2400w" sizes="(min-width: 1000px) 60vw, 100vw" width="2400" height="1500" alt="Architecture plan of the ERP server: one numbered line per flow through the edge and internal firewalls, coloured per flow" loading="lazy"><figcaption>Architecture plan generated for app-erp, one colour per flow.</figcaption></figure>
   </article>
@@ -191,7 +191,7 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
   <div class="wrap">
     <h2 id="own-h" class="strata-type"><span class="w">Your map stays</span><span class="n">on your network.</span></h2>
     <div class="cols">
-      <div><h3>Small to run</h3><p>One Node.js process with no dependencies, one JSON file for data, automatic backups. It runs on a 1 GB VM and works offline once built.</p></div>
+      <div><h3>Small to run</h3><p>One Node.js process with no dependencies, one JSON file for data, automatic backups. It runs on a 1 GB VM and works offline once built. Docker image, systemd unit or NixOS module.</p></div>
       <div><h3>Careful with secrets</h3><p>Named accounts with hashed passwords, strict security headers, connector credentials kept server-side with file mode 600, never sent to browsers.</p></div>
       <div><h3>Free software</h3><p>Released under the GNU AGPL v3: use it, change it, share it. If you offer a modified version over a network, offer its source too.</p></div>
     </div>
@@ -208,7 +208,7 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
     <a href="https://solidgeeks.github.io/SolidGeeks/"> <img src="https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/footer/solid-geeks-footer.gif" alt="Solid Geeks: open source the world." width="100%"> </a>
   </div>
   <div class="wrap">
-    <p>Strata 0.6.0 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a></p>
+    <p>Strata 0.7.0 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a></p>
     <p>Formerly IS Map 3D. Cyberwatch, GLPI, phpIPAM and Palo Alto Networks are trademarks of their owners; Strata is not affiliated with them.</p>
   </div>
 </footer>

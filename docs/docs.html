@@ -37,10 +37,12 @@
       <li><a href="#config">Configuration</a></li>
       <li><a href="#https">HTTPS and network</a></li>
       <li><a href="#systemd">Without Docker</a></li>
+      <li><a href="#nix">Nix and NixOS</a></li>
       <li><a href="#accounts">Accounts and roles</a></li>
       <li><a href="#map">Building the map</a></li>
       <li><a href="#views">Views and business services</a></li>
       <li><a href="#risk">Risk priorities</a></li>
+      <li><a href="#attack">Attack paths and blast radius</a></li>
       <li><a href="#proposals">Proposals and history</a></li>
       <li><a href="#services">Internet services</a></li>
       <li><a href="#connectors">Connectors</a></li>
@@ -55,7 +57,7 @@
   </nav>
 
   <article id="content">
-    <h1 class="strata-type"><span class="w">Documentation</span><span class="n">for Strata 0.6.</span></h1>
+    <h1 class="strata-type"><span class="w">Documentation</span><span class="n">for Strata 0.7.</span></h1>
     <p>Strata maps your information systems in 3D: each site is a stack of plates (zones), coloured by VLAN, holding its assets, the flows between them, what they expose, their vulnerabilities and the people to call. It runs on your own server.</p>
 
     <h2 id="install" style="--edge:var(--s7)">Install with Docker</h2>
@@ -66,7 +68,7 @@ cp .env.example .env
 nano .env                         # set EDIT_PASS
 docker compose up -d --build      # builds the image here</code></pre><button class="copy" type="button">Copy</button></div>
     <p>On Windows: <code>copy .env.example .env</code> then <code>notepad .env</code>.</p>
-    <p>Once a release is published, <code>docker compose pull &amp;&amp; docker compose up -d</code> fetches the ready-made image <code>ghcr.io/solidgeeks/strata</code> instead of building it. Before the first release, <code>pull</code> answers <code>denied</code>: the image does not exist yet.</p>
+    <p>Or skip the build: <code>docker compose pull &amp;&amp; docker compose up -d</code> fetches the ready-made image <code>ghcr.io/solidgeeks/strata</code> of the release. Every image is signed; check it before deploying with <code>gh attestation verify oci://ghcr.io/solidgeeks/strata:0.7.0 --owner SolidGeeks</code>, which must print <em>Verification succeeded!</em></p>
     <p>Open <code>http://localhost:8080</code> and sign in with <code>EDIT_USER</code> / <code>EDIT_PASS</code>. The map starts empty: <em>Load demo (5 IS)</em> fills it with five sample sites, <em>Delete everything</em> clears it.</p>
     <div class="code"><pre><code>docker compose logs -f strata     # logs
 docker compose restart strata     # restart
@@ -80,11 +82,16 @@ docker compose down               # stop (data stays in the volume)</code></pre>
       <tbody>
         <tr><td><code>EDIT_USER</code> / <code>EDIT_PASS</code></td><td><code>admin</code> / empty</td><td>First admin account, created or reset at every start. <strong>With no <code>EDIT_PASS</code> and no account in <code>data/users.json</code>, there is no authentication at all.</strong></td></tr>
         <tr><td><code>VIEW_USER</code> / <code>VIEW_PASS</code></td><td><code>viewer</code> / empty</td><td>Optional shared read-only account.</td></tr>
+        <tr><td><code>EDIT_PASS_FILE</code> / <code>VIEW_PASS_FILE</code></td><td>none</td><td>Read the password from this file instead (Docker secrets, systemd credentials, sops-nix, agenix). The file wins; a trailing newline is ignored; an unreadable file stops the server.</td></tr>
         <tr><td><code>ALLOW_SELF_APPROVAL</code></td><td><code>false</code></td><td><code>true</code> lets an approver approve their own proposals.</td></tr>
         <tr><td><code>HISTORY_KEEP</code></td><td><code>5000</code></td><td>How many document changes the history keeps.</td></tr>
         <tr><td><code>READ_ONLY</code></td><td><code>false</code></td><td>Freezes the map for everyone (an audit, a migration).</td></tr>
         <tr><td><code>BACKUP_KEEP</code> / <code>BACKUP_EVERY_HOURS</code></td><td><code>14</code> / <code>24</code></td><td>Automatic backups: how many to keep, how often.</td></tr>
         <tr><td><code>MAX_IMPORT_MB</code></td><td><code>20</code></td><td>Largest JSON or firewall configuration file accepted.</td></tr>
+        <tr><td><code>LOGIN_MAX_FAILS</code></td><td><code>10</code></td><td>Different wrong passwords for one account before its sign-ins are refused (<code>429</code>) for <code>LOGIN_LOCK_MINUTES</code>. <code>0</code> turns it off.</td></tr>
+        <tr><td><code>LOGIN_MAX_FAILS_PER_ADDRESS</code></td><td><code>20</code></td><td>The same, for all accounts tried from one client address.</td></tr>
+        <tr><td><code>LOGIN_LOCK_MINUTES</code></td><td><code>15</code></td><td>How long a lock lasts; failures are counted over the same time.</td></tr>
+        <tr><td><code>TRUST_PROXY</code></td><td>none</td><td>Reverse proxies whose <code>X-Forwarded-For</code> gives the client address: addresses, IPv4 ranges, <code>loopback</code> or <code>private</code>. See <a href="#https">HTTPS and network</a>.</td></tr>
         <tr><td><code>CONNECTORS</code></td><td><code>true</code></td><td><code>false</code> turns the connectors off entirely.</td></tr>
         <tr><td><code>SOURCE_URL</code></td><td>this repository</td><td>The <em>Source code</em> link in the app. Point it at your fork if you modify Strata (AGPL, section 13).</td></tr>
         <tr><td><code>DATA_VOLUME</code></td><td><code>strata-data</code></td><td>Docker volume holding the data. Set it to an older volume name to keep its data (see <a href="#upgrade">Upgrading</a>).</td></tr>
@@ -103,6 +110,7 @@ docker compose down               # stop (data stays in the volume)</code></pre>
       <li>Start with the HTTPS profile:</li>
     </ol>
     <div class="code"><pre><code>docker compose --profile https up -d</code></pre><button class="copy" type="button">Copy</button></div>
+    <p>Add <code>TRUST_PROXY=private</code> to <code>.env</code>, so that failed sign-ins are counted per user rather than for Caddy as a whole.</p>
     <p>The Caddyfile uses <code>tls internal</code>: Caddy signs the certificate with its own local authority, which suits an internal network or a VPN. Install that authority on your workstations to remove the browser warning:</p>
     <div class="code"><pre><code>docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt</code></pre><button class="copy" type="button">Copy</button></div>
     <p>For a public name reachable on ports 80 and 443, delete the <code>tls internal</code> line and Caddy gets a Let’s Encrypt certificate itself.</p>
@@ -111,12 +119,14 @@ docker compose down               # stop (data stays in the volume)</code></pre>
     <div class="code"><pre><code>location / {
     proxy_pass http://127.0.0.1:8080;
     proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }
 location /api/events {
     proxy_pass http://127.0.0.1:8080;
     proxy_buffering off;
     proxy_read_timeout 1h;
 }</code></pre><button class="copy" type="button">Copy</button></div>
+    <p>Set <code>TRUST_PROXY=loopback</code> so that Strata reads the client address from <code>X-Forwarded-For</code>. Only trust a proxy that sets this header itself.</p>
     <p>Strata also works under a sub-path (<code>https://intranet/strata/</code>): it only uses relative URLs.</p>
 
     <h2 id="systemd" style="--edge:var(--s5)">Without Docker (systemd)</h2>
@@ -130,6 +140,35 @@ sudo cp .env.example /etc/strata.env &amp;&amp; sudo chmod 600 /etc/strata.env
 sudo cp deploy/strata.service /etc/systemd/system/
 sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable --now strata</code></pre><button class="copy" type="button">Copy</button></div>
     <p>The service listens on <code>127.0.0.1:8080</code>: put an HTTPS reverse proxy in front. For a quick try on a workstation: <code>npm run setup &amp;&amp; EDIT_PASS=test npm start</code>.</p>
+    <p>Building from source elsewhere: <code>npm ci</code> (the lockfile pins three.js 0.128 and the fonts), <code>npm run vendor</code> (copies them into <code>public/vendor</code>), <code>npm test</code>, then ship <code>package.json</code>, <code>server/</code>, <code>public/</code> and <code>scripts/users.mjs</code> and run <code>node server/server.js</code>. Nothing is downloaded at run time, and nothing is written outside <code>DATA_DIR</code>; data files are readable by the server’s own user only.</p>
+
+    <h2 id="nix" style="--edge:var(--s8)">Nix and NixOS</h2>
+    <p>The repository is a flake. To try Strata (data in <code>./data</code>, listening on <code>127.0.0.1:8080</code>):</p>
+    <div class="code"><pre><code>EDIT_PASS=test nix run github:SolidGeeks/strata</code></pre><button class="copy" type="button">Copy</button></div>
+    <p>On NixOS, the module runs it as a hardened systemd service: its own <code>strata</code> user, data in <code>/var/lib/strata</code>, read-only system, no capabilities, restricted system calls.</p>
+    <div class="code"><pre><code>{
+  inputs.strata.url = "github:SolidGeeks/strata";
+
+  outputs = { nixpkgs, strata, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      modules = [
+        strata.nixosModules.default
+        {
+          services.strata = {
+            enable = true;
+            settings = {               # the variables of Configuration
+              EDIT_USER = "admin";
+              TRUST_PROXY = "loopback";
+            };
+            secretFiles.EDIT_PASS = "/run/secrets/strata-admin";  # out of the Nix store
+            openFirewall = false;      # keep it behind an HTTPS reverse proxy
+          };
+        }
+      ];
+    };
+  };
+}</code></pre><button class="copy" type="button">Copy</button></div>
+    <p>Files in <code>secretFiles</code> are read by systemd as root and handed to the service as credentials, so they can stay root-only. <code>environmentFile</code> takes <code>KEY=value</code> lines the same way. Accounts from the command line: <code>sudo -u strata env DATA_DIR=/var/lib/strata strata-users set alice contributor</code>. The flake also has <code>overlays.default</code>, and its checks build the package (with the tests) and run a NixOS VM test of the module.</p>
 
     <h2 id="accounts" style="--edge:var(--s4)">Accounts and roles</h2>
     <div class="tablewrap"><table>
@@ -146,6 +185,7 @@ sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable --now strata</code
 docker compose exec strata node scripts/users.mjs set alice contributor   # asks for a password
 docker compose exec strata node scripts/users.mjs role alice approver
 docker compose exec strata node scripts/users.mjs disable alice</code></pre><button class="copy" type="button">Copy</button></div>
+    <p>Repeated failed sign-ins are refused for a while (<code>429</code>), per account and per client address (see <a href="#config">Configuration</a>). Only different wrong passwords count, so a tab left open with an old password locks nobody out, and browsers already signed in keep working.</p>
     <p>For single sign-on (Entra ID, LDAP…), put an authentication proxy in front and create the same account names.</p>
 
     <h2 id="map" style="--edge:var(--s1)">Building the map</h2>
@@ -156,6 +196,8 @@ docker compose exec strata node scripts/users.mjs disable alice</code></pre><but
     <h3>Flows</h3>
     <p>A flow goes from a source to a destination on a port: assets, the Internet, or a named Internet service. Strata suggests the devices it crosses (edge firewall for Internet traffic, core firewall or router between VLANs); untick <em>Suggested</em> to set the path yourself. Exposure follows from the flows: a port is <em>Internet</em>, <em>inter-VLAN</em> or <em>intra-VLAN</em> depending on where its traffic comes from.</p>
     <p>Every flow crossing a firewall, router, switch or gateway has its own lane on that device, in 3D and in 2D. <em>Flows › Colour by</em> colours them by risk, by exposure, or <em>Per flow</em>: flows that cross the same device then never share a colour (up to 10). On a device sheet, <em>Flows crossing this equipment</em> lists them in lane order; hovering one picks it out on the model.</p>
+    <h3>Moving around the 3D view</h3>
+    <p>Drag with the left button to orbit, with the <strong>middle</strong> (or right) button to move the view left, right, up and down, and scroll to zoom. On a touch screen, one finger orbits, two fingers zoom and move. The view stops at the edge of the model; <em>Reset view</em> centres it again.</p>
     <h3>2D diagram</h3>
     <p>The <em>2D diagram</em> view is the same model, flat: drag assets and plates, draw a flow from one asset to another (<kbd>F</kbd>), add an asset on a plate (<kbd>A</kbd>), move (<kbd>V</kbd>). Positions are shared with the 3D model.</p>
     <h3>Theme</h3>
@@ -183,6 +225,19 @@ docker compose exec strata node scripts/users.mjs disable alice</code></pre><but
     </table></div>
     <p>Critical from 70, high from 40, medium from 20. The fixes are ordered by the score each vulnerability would give its asset on its own. <em>Remediation list (CSV)</em> exports the whole list. On the asset sheet, <em>Risk score › Why?</em> shows each factor.</p>
     <p class="note">Strata does not download the EPSS and KEV feeds: it works offline. They come from the Cyberwatch connector, an import, or the asset form.</p>
+
+    <h2 id="attack" style="--edge:var(--s1)">Attack paths and blast radius</h2>
+    <p><em>Analysis › Attack paths</em> lists the critical assets (criticality High, of their own or through a business service) that an attacker coming from the Internet could reach along the allowed flows, with every path to each one, most likely first. <strong>Where to cut</strong> names the assets and the equipment that every path to a critical asset goes through: harden those, or tighten their rules. The rest of the model fades; hovering a path picks it out, in 3D and 2D.</p>
+    <p><strong>Blast radius</strong> starts from any asset instead (pick it in the panel, or <em>Blast radius</em> on its sheet): everything an attacker holding it could reach, the most likely way to each asset, and the business services hit.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Step</th><th scope="col">Likelihood of taking the next asset over</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Vulnerable</th><td>Its vulnerabilities, combined as for the risk score (CVSS times likelihood of exploitation).</td></tr>
+        <tr><th scope="row">Remote administration port</th><td>50%: SSH, Telnet, RPC, SMB, RDP, VNC, WinRM, for credentials picked up on the way.</td></tr>
+        <tr><th scope="row">Any other service</th><td>10%, for what the last scan did not see.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A step counts for the highest of these, and a path for the product of its steps. Flows run one way: answering a flow does not let the destination reach back. Both lists export as CSV.</p>
 
     <h2 id="proposals" style="--edge:var(--s6)">Proposals and history</h2>
     <p>A contributor clicks <em>Propose a change</em>, then edits as usual: everything goes into a draft (blue <em>Draft</em> bar) and the live map does not move. <em>Submit for review</em> sends it to the approvers. A proposal can also start from a JSON file: a whole-map export, or one IS exported with <em>Export this IS (JSON)</em>.</p>
@@ -218,6 +273,7 @@ docker compose exec strata node scripts/users.mjs disable alice</code></pre><but
     <h2 id="exports" style="--edge:var(--s0)">Plans and exports</h2>
     <ul>
       <li><strong>Architecture plan</strong> of an asset, as PNG or SVG, light whatever the theme. One right-angle line per flow, numbered, with the table of its flows (path, port, volume, exposure) and of the <strong>firewall rules</strong> the asset needs under the drawing. <em>Scope</em>: the asset’s own flows, or every path from and to the Internet. Filters: inbound, outbound, crossing; Internet, inter-VLAN, intra-VLAN. <em>Colour</em>: by exposure, or per flow.</li>
+      <li><strong>Architecture file</strong> of an IS (<em>Analysis › Architecture file</em>, or the IS summary), in the order audits and security accreditation files follow: cover and sign-off table, summary, scope, network diagram, zones and VLANs, applications, asset inventory, flow matrix, the rules each firewall needs, exposure, vulnerabilities and remediation order, attack paths, plans of the exposed and critical assets, incident contacts, change history, method. One standalone HTML file that prints to A4 PDF.</li>
       <li><strong>Flow matrix</strong> and <strong>firewall rules</strong> of an asset as CSV (a generic table, to map to your firewall’s object names).</li>
       <li><strong>Remediation list</strong> of an IS as CSV, from <em>Risk priorities</em>.</li>
       <li><strong>2D diagram</strong> as SVG.</li>
@@ -271,6 +327,9 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
       <li>Give everyone a named account with the lowest role that does the job: every change is attributed in the history.</li>
       <li>The server sends strict security headers (CSP with no external script, no framing, no referrer) and refuses cross-site writes.</li>
       <li>Connectors: use read-only service accounts, limited to the Strata server’s IP where the tool allows it.</li>
+      <li>Repeated failed sign-ins are refused for a while; behind a reverse proxy, set <code>TRUST_PROXY</code>.</li>
+      <li>Data files are readable by the server’s own user only. Passwords can come from files (<code>EDIT_PASS_FILE</code>), out of the environment.</li>
+      <li>Published Docker images are signed: check them with <code>gh attestation verify</code> (see <a href="#install">Install</a>).</li>
     </ul>
     <p>Strata is free software under the <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">GNU AGPL v3</a>. You may use, modify and share it. If you let people use a <em>modified</em> version over a network, offer them its source: set <code>SOURCE_URL</code> to your fork.</p>
 
@@ -298,6 +357,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
       <li>draw.io and Visio imports are not supported: only Strata JSON exports become proposals.</li>
       <li>Business dependencies follow the recorded flows: a dependency with no flow on the map is not seen.</li>
       <li>The risk score uses the EPSS and KEV values recorded on each vulnerability; Strata does not fetch them. A vulnerability is not tied to a port, so any open flow to its asset counts.</li>
+      <li>Attack paths only follow the recorded flows, and the likelihoods are estimates: an exploit chain, a stolen account or a flow missing from the map can go further. Paths of up to 8 steps are searched, and up to 20 are listed per critical asset.</li>
     </ul>
   </article>
 </div>
