@@ -82,7 +82,7 @@ before(async () => {
     const p = new URL(req.url, 'http://x').pathname;
     if (p === '/index.json') {
       const idx = JSON.parse(fs.readFileSync(join(root, 'docs/modules/index.json'), 'utf8'));
-      if (tamper) idx.modules[0].sha256 = '0'.repeat(64);
+      if (tamper) idx.modules.find(m => m.id === 'csv-inventory').sha256 = '0'.repeat(64);
       res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(idx));
     }
     if (p === '/pkg/csv.tgz') { res.writeHead(302, { Location: '/csv-inventory-1.0.0.tgz' }); return res.end(); }
@@ -247,6 +247,40 @@ test('the store: install a module, import a file with it, then remove it', async
   assert.ok(!fs.existsSync(join(dataDir, 'modules/csv-inventory')));
   assert.equal((await api('admin', 'GET', '/api/connectors')).data.connectors.some(c => c.id === 'csv-inventory'), false);
   assert.equal(JSON.parse(fs.readFileSync(join(dataDir, 'connectors.json'), 'utf8')).connectors['csv-inventory'], undefined, 'its settings are forgotten');
+});
+
+test('store modules: an Nmap scan imported by a contributor, NetBox synced by an approver', async () => {
+  for (const id of ['nmap', 'netbox']) assert.equal((await api('admin', 'POST', `/api/modules/${id}/install`, {})).status, 200, id);
+  // Nmap: app-erp gets its system and services, a new host is created as a database
+  const xml = fs.readFileSync(join(root, 'tests/fixtures/nmap-scan.xml'), 'utf8');
+  const n = await api('alice', 'POST', '/api/connectors/nmap/run', { wait: true, file: { name: 'scan.xml', text: xml }, overrides: { site: 'lyon' } });
+  assert.equal(n.data.run.ok, true, n.data.run.error);
+  assert.match(n.data.run.summary, /2 host\(s\) up in the scan: 1 on the map \(1 updated\), 1 new/);
+  let p = (await api('admin', 'GET', `/api/proposals/${n.data.run.proposals[0].id}`)).data.proposal;
+  assert.equal(p.changes.assets['app-erp'].os, 'Linux 5.0 - 5.14');
+  assert.deepEqual(p.changes.assets['app-erp'].apps.map(a => [a.name, a.ports]), [['OpenSSH', ['tcp/22']], ['Apache Tomcat', ['tcp/8080']]]);
+  assert.equal(p.changes.assets['nmap-lyon-10-20-0-31'].type, 'db');
+  assert.equal(p.changes.assets['nmap-lyon-10-20-0-31'].os, '', 'an OS guess below 90% is not kept');
+  assert.match((await api('alice', 'POST', '/api/connectors/nmap/run', { wait: true, file: { name: 'x.xml', text: '<config/>' }, overrides: { site: 'lyon' } })).data.run.error, /not an Nmap XML report/);
+
+  // NetBox, through the simulator: the Lyon HQ site is the lyon IS, Oslo has no IS
+  await api('admin', 'PUT', '/api/connectors/netbox', { url: `${sim}/netbox`, token: 'NBT', siteRules: 'Lyon HQ = lyon' });
+  const t = await api('bob', 'POST', '/api/connectors/netbox/test', {});
+  assert.equal(t.data.message, 'Connected to NetBox 4.1.6.');
+  const r = await api('bob', 'POST', '/api/connectors/netbox/run', { wait: true });
+  assert.equal(r.data.run.ok, true, r.data.run.error);
+  assert.match(r.data.run.summary, /2 NetBox site\(s\), 1 matched to an IS \(1 without\); 1 new VLAN\(s\), 1 updated; 2 new asset\(s\), 1 updated/);
+  p = (await api('admin', 'GET', `/api/proposals/${r.data.run.proposals[0].id}`)).data.proposal;
+  const vlans = p.changes.si.lyon.vlans;
+  assert.equal(vlans.find(v => v.num === 70).cidr, '10.70.0.0/24');
+  assert.equal(p.changes.assets['app-erp'].os, 'RHEL 9');
+  assert.equal(p.changes.assets['netbox-lyon-dev-2'].type, 'switch');
+  assert.equal(p.changes.assets['netbox-lyon-dev-2'].vlan, vlans.find(v => v.num === 70).id);
+  assert.equal(p.changes.assets['netbox-lyon-vm-7'].os, 'Ubuntu 24.04');
+  assert.ok(!Object.keys(p.changes.assets).some(k => k.includes('dev-3')), 'a decommissioning device is left out');
+  await api('admin', 'PUT', '/api/connectors/netbox', { token: 'wrong' });
+  assert.match((await api('bob', 'POST', '/api/connectors/netbox/test', {})).data.message, /access refused/);
+  for (const id of ['nmap', 'netbox']) assert.equal((await api('admin', 'DELETE', `/api/modules/${id}`, {})).status, 200);
 });
 
 test('the store refuses a package that does not match its checksum', async () => {

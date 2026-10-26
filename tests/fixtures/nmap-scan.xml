@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.94 scan initiated -->
+<nmaprun scanner="nmap" args="nmap -sV -O -oX scan.xml 10.20.0.0/24" start="1761490000" startstr="Sun Oct 26 10:00:00 2026" version="7.94" xmloutputversion="1.05">
+<scaninfo type="syn" protocol="tcp" numservices="1000" services="1-1000"/>
+<host starttime="1" endtime="2"><status state="up" reason="arp-response" reason_ttl="0"/>
+<address addr="10.20.0.20" addrtype="ipv4"/><address addr="00:11:22:33:44:55" addrtype="mac" vendor="VMware"/>
+<hostnames><hostname name="app-erp.lyon.example.com" type="PTR"/></hostnames>
+<ports><extraports state="closed" count="997"><extrareasons reason="reset" count="997"/></extraports>
+<port protocol="tcp" portid="22"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="ssh" product="OpenSSH" version="9.2p1 Debian 2" method="probed" conf="10"><cpe>cpe:/a:openbsd:openssh:9.2p1</cpe></service></port>
+<port protocol="tcp" portid="8080"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http" product="Apache Tomcat" version="9.0.54" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="443"><state state="filtered" reason="no-response" reason_ttl="0"/></port>
+</ports>
+<os><osmatch name="Linux 5.0 - 5.14" accuracy="98" line="1"><osclass type="general purpose" vendor="Linux" osfamily="Linux" osgen="5.X" accuracy="98"/></osmatch></os>
+</host>
+<host><status state="up" reason="arp-response"/><address addr="10.20.0.31" addrtype="ipv4"/><hostnames/>
+<ports><port protocol="tcp" portid="5432"><state state="open"/><service name="postgresql" product="PostgreSQL DB" version="15"/></port></ports>
+<os><osmatch name="Linux 4.15" accuracy="85"/></os></host>
+<host><status state="down" reason="no-response"/><address addr="10.20.0.99" addrtype="ipv4"/></host>
+<runstats><finished time="3" timestr="x" elapsed="10.5" summary="done" exit="success"/><hosts up="2" down="1" total="3"/></runstats>
+</nmaprun>

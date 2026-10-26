@@ -1,0 +1,23 @@
+{
+  "strataModule": 1,
+  "id": "netbox",
+  "name": "NetBox",
+  "version": "1.0.0",
+  "description": "Devices, virtual machines, VLANs and prefixes of each IS, from the NetBox source of truth",
+  "author": "Solid Geeks",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/SolidGeeks/strata/tree/main/modules/netbox",
+  "badge": "NBX",
+  "main": "index.mjs",
+  "permissions": { "map": true, "network": true },
+  "fields": [
+    { "k": "url", "label": "NetBox address", "placeholder": "https://netbox.example.internal", "required": true },
+    { "k": "token", "label": "API token (read-only)", "secret": true, "required": true, "help": "In NetBox: your profile › API Tokens › Add, with Write enabled left off." },
+    { "k": "siteRules", "label": "NetBox site → IS", "type": "rules", "placeholder": "Lyon HQ = lyon\n/^dc-?west/ = dcw", "help": "One rule per line: text found in the NetBox site, its slug or its region (or /regex/) = IS id. Without a rule, the IS whose name or id appears in the site is used." },
+    { "k": "statuses", "label": "Statuses to read", "type": "multi", "options": [["active", "Active"], ["planned", "Planned"], ["staged", "Staged"], ["offline", "Offline"], ["failed", "Failed"], ["decommissioning", "Decommissioning"]], "default": ["active", "staged"] },
+    { "k": "includeVms", "label": "Read the virtual machines too", "type": "bool", "default": true },
+    { "k": "createAssets", "label": "Create the devices missing from the map", "type": "bool", "default": true },
+    { "k": "createVlans", "label": "Create the VLANs missing from the map", "type": "bool", "default": true },
+    { "k": "pageSize", "label": "Objects per request", "type": "number", "default": 500, "advanced": true }
+  ]
+}

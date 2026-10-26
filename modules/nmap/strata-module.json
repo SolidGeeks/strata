@@ -1,0 +1,27 @@
+{
+  "strataModule": 1,
+  "id": "nmap",
+  "name": "Nmap scan",
+  "version": "1.0.0",
+  "description": "Hosts, systems and open ports from an Nmap scan saved as XML (nmap -oX)",
+  "author": "Solid Geeks",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/SolidGeeks/strata/tree/main/modules/nmap",
+  "badge": "NMAP",
+  "main": "index.mjs",
+  "permissions": { "map": true, "network": false },
+  "live": false,
+  "file": {
+    "label": "Import an Nmap scan",
+    "accept": ".xml,application/xml,text/xml",
+    "role": "contributor",
+    "fields": ["site", "createAssets"],
+    "help": "Run the scan with -oX to save it as XML, for example: nmap -sV -O -oX scan.xml 10.20.0.0/24. Hosts that are up are matched to the assets of the IS by IP, then by name; their open ports become the listening ports of their applications. Nothing is removed."
+  },
+  "fields": [
+    { "k": "site", "label": "IS the scanned hosts belong to", "type": "site", "required": true },
+    { "k": "createAssets", "label": "Create the hosts missing from the map", "type": "bool", "default": true },
+    { "k": "updateOs", "label": "Fill in the system Nmap detects when the asset has none", "type": "bool", "default": true },
+    { "k": "minAccuracy", "label": "Lowest accuracy of an OS guess to keep (%)", "type": "number", "default": 90, "advanced": true }
+  ]
+}

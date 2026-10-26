@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Connector simulator: fake Cyberwatch, GLPI, phpIPAM and PAN-OS APIs on http://localhost:8099, with data
+// Connector simulator: fake Cyberwatch, GLPI, phpIPAM, PAN-OS and NetBox APIs on http://localhost:8099, with data
 // that matches the Lyon IS of the demo. Use it to try the connectors before plugging in the real tools:
 //   node scripts/connector-sim.mjs
 // then, in Collaboration > Connectors > Settings (credentials of the simulator):
@@ -7,6 +7,7 @@
 //   GLPI        http://localhost:8099/glpi/apirest.php App-Token APP, user token UT, rule "Lyon = lyon"
 //   phpIPAM     http://localhost:8099/ipam/api        app id strata, token TK
 //   Palo Alto   http://localhost:8099/pan             API key KEY123, IS lyon, firewall lyo-fw-edge
+//   NetBox      http://localhost:8099/netbox          API token NBT (NetBox module, from the store)
 import http from 'node:http';
 const B = s => 'Basic ' + Buffer.from(s).toString('base64');
 const j = (res, code, o, h = {}) => { res.writeHead(code, { 'Content-Type': 'application/json', ...h }); res.end(JSON.stringify(o)); };
@@ -81,6 +82,21 @@ const PAN = `<?xml version="1.0"?>
 </rules></security></rulebase></entry></vsys></entry></devices></config>`;
 export { PAN };
 
+/* NetBox (4.x layout: device role in "role", sites by slug; paginated 2 by 2 to exercise "next") */
+const NB = {
+  sites: [{ id: 1, name: 'Lyon HQ', slug: 'lyon-hq', region: { name: 'France' } }, { id: 2, name: 'Oslo office', slug: 'oslo', region: { name: 'Norway' } }],
+  vlans: [{ id: 10, vid: 20, name: 'SRV', site: { id: 1, name: 'Lyon HQ', slug: 'lyon-hq' } }, { id: 11, vid: 70, name: 'LAB-NB', site: { id: 1, name: 'Lyon HQ', slug: 'lyon-hq' } }, { id: 12, vid: 5, name: 'OSLO', site: { id: 2, name: 'Oslo office', slug: 'oslo' } }],
+  prefixes: [{ id: 1, prefix: '10.20.0.0/24', vlan: { id: 10, vid: 20, name: 'SRV' } }, { id: 2, prefix: '10.70.0.0/24', vlan: { id: 11, vid: 70, name: 'LAB-NB' } }],
+  devices: [
+    { id: 1, name: 'app-erp', status: { value: 'active' }, role: { name: 'Application server', slug: 'app-server' }, platform: { name: 'RHEL 9' }, site: { id: 1, name: 'Lyon HQ', slug: 'lyon-hq' }, primary_ip4: { address: '10.20.0.20/24' }, serial: 'SN-ERP' },
+    { id: 2, name: 'nb-sw-70', status: { value: 'active' }, role: { name: 'Access switch', slug: 'switch' }, platform: null, site: { id: 1, name: 'Lyon HQ', slug: 'lyon-hq' }, primary_ip4: { address: '10.70.0.2/24' } },
+    { id: 3, name: 'old-box', status: { value: 'decommissioning' }, role: { name: 'Server', slug: 'server' }, site: { id: 1, name: 'Lyon HQ', slug: 'lyon-hq' }, primary_ip4: { address: '10.20.0.250/24' } },
+    { id: 4, name: 'oslo-fw', status: { value: 'active' }, role: { name: 'Firewall', slug: 'firewall' }, site: { id: 2, name: 'Oslo office', slug: 'oslo' }, primary_ip4: { address: '10.5.0.1/24' } },
+  ],
+  vms: [{ id: 7, name: 'vm-reports', status: { value: 'active' }, role: null, platform: { name: 'Ubuntu 24.04' }, site: { id: 1, name: 'Lyon HQ', slug: 'lyon-hq' }, primary_ip4: { address: '10.20.0.77/24' } }],
+};
+const NB_PATHS = { 'dcim/sites': 'sites', 'ipam/vlans': 'vlans', 'ipam/prefixes': 'prefixes', 'dcim/devices': 'devices', 'virtualization/virtual-machines': 'vms' };
+
 const srv = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x'), p = u.pathname, auth = req.headers.authorization || '';
   // Cyberwatch
@@ -135,6 +151,17 @@ const srv = http.createServer((req, res) => {
     if (t === 'keygen') return x(res, 200, '<response status="success"><result><key>KEY123</key></result></response>');
     if (req.headers['x-pan-key'] !== 'KEY123') return x(res, 403, '<response status="error"><msg><line>Invalid credentials.</line></msg></response>');
     if (t === 'export') return x(res, 200, PAN);
+  }
+  // NetBox
+  if (p.startsWith('/netbox/api/')) {
+    if (auth !== 'Token NBT') return j(res, 403, { detail: 'Invalid token' });
+    const r = p.slice('/netbox/api/'.length).replace(/\/$/, '');
+    if (r === 'status') return j(res, 200, { 'netbox-version': '4.1.6', 'python-version': '3.12' });
+    const list = NB[NB_PATHS[r]];
+    if (!list) return j(res, 404, { detail: 'Not found.' });
+    const off = +u.searchParams.get('offset') || 0, lim = 2;
+    const next = off + lim < list.length ? `http://${req.headers.host}${p}?limit=${lim}&offset=${off + lim}` : null;
+    return j(res, 200, { count: list.length, next, previous: null, results: list.slice(off, off + lim) });
   }
   j(res, 404, { error: 'nope' });
 });
