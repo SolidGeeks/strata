@@ -225,10 +225,16 @@ The store's index is [`docs/modules/index.json`](docs/modules/index.json), serve
    will, writes `your-module-1.0.0.tgz` (the same files always give the same bytes) and prints its
    SHA-256. Attach the package to a release of your repository.
 3. Open a pull request that adds your entry to `docs/modules/index.json`: the fields of the manifest,
-   plus `url` (the package's address) and `sha256`. Say what the module reads and why it needs what its
-   `permissions` say.
-4. A maintainer reads the code of that exact package and merges it. A new version is a new pull request
-   with its new `url` and `sha256`.
+   plus `url` (the package's address) and `sha256`.
+4. The *Modules* workflow checks your entry (`node scripts/check-registry.mjs` does the same locally):
+   the package downloads over HTTPS, matches its `sha256`, holds a manifest Strata accepts with the same
+   `id`, `version`, `name`, `permissions` and `minStrata` as the entry, and loads in the restricted module
+   process with a `run()` function (and `test()`, unless `"live": false`).
+5. A maintainer reads the code of that exact package and merges it (`.github/CODEOWNERS` asks for their
+   review). A new version is a new pull request with its new `url` and `sha256`.
+
+In the pull request, say what the module reads, which tool and versions you tried it with, and why it
+needs what its `permissions` say.
 
 Modules kept in this repository (`modules/`) are packed into `docs/modules/` with
 `node scripts/pack-module.mjs modules/<id> --registry docs/modules/index.json`; a test checks that the

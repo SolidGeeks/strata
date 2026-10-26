@@ -1,0 +1,7 @@
+# Reviews GitHub asks for before a pull request can merge (with "Require review from Code Owners" on
+# the main branch). The module store lists code that runs on Strata servers: a maintainer reads every
+# module added or updated there (MODULES.md, "Publishing it in the store").
+/docs/modules/          @0b3l1X-SolidGeeks
+/modules/               @0b3l1X-SolidGeeks
+/server/connectors/     @0b3l1X-SolidGeeks
+/.github/               @0b3l1X-SolidGeeks

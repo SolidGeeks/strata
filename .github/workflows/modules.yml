@@ -1,0 +1,29 @@
+# The module store: every pull request that changes its index or a module kept in this repository
+# checks each listed package (download, SHA-256, manifest, loads in the restricted module process).
+# A maintainer still reads the code of a new or updated module before merging (MODULES.md).
+name: Modules
+
+on:
+  pull_request:
+    paths:
+      - docs/modules/**
+      - modules/**
+      - server/connectors/**
+      - scripts/check-registry.mjs
+  push:
+    branches: [main]
+    paths:
+      - docs/modules/**
+
+permissions:
+  contents: read
+
+jobs:
+  registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: node scripts/check-registry.mjs docs/modules/index.json

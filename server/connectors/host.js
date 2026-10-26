@@ -2,7 +2,7 @@
 // Runs one connector module operation in its own process, started by runner.js with the Node.js
 // permission model: this process reads only its module's folder and the SDK, cannot write files or start
 // other processes, and its environment holds none of the server's settings or passwords.
-// Messages: in {op: 'test' | 'run', main, cfg, state, file}; out {log} while it works, then
+// Messages: in {op: 'test' | 'run' | 'exports', main, cfg, state, file}; out {log} while it works, then
 // {ok: true, result} or {ok: false, error, expected}.
 import { pathToFileURL } from 'node:url';
 import * as sdk from './sdk.js';
@@ -11,6 +11,8 @@ const send = m => new Promise(res => process.send(m, () => res()));
 process.once('message', async ({ op, main, cfg, state, file }) => {
   try {
     const mod = await import(pathToFileURL(main).href);
+    // the functions the module offers, to check a package (scripts/check-registry.mjs)
+    if (op === 'exports') { await send({ ok: true, result: Object.keys(mod).filter(k => typeof mod[k] === 'function').sort() }); process.exit(0); }
     const fn = mod[op];
     if (typeof fn !== 'function') throw new sdk.ConnectorError(`This module has no ${op}() function.`);
     const ctx = { state, file: file || null, sdk, log: (...a) => { process.send({ log: a.map(String).join(' ').slice(0, 2000) }); } };
