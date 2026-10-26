@@ -41,11 +41,8 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      # First run only: there is no flake.lock yet, print the one Nix writes so it can be committed
-      - name: Lock nixpkgs
-        run: |
-          if [ ! -f flake.lock ]; then nix flake lock; echo "----- flake.lock -----"; cat flake.lock; echo "----------------------"; fi
+      # --no-update-lock-file: a missing or stale flake.lock fails instead of being rewritten
       - name: Build the package (runs npm test)
-        run: nix build -L .#default
+        run: nix build -L --no-update-lock-file .#default
       - name: Flake checks (NixOS VM test of the module)
-        run: nix flake check -L
+        run: nix flake check -L --no-update-lock-file
