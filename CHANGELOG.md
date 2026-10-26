@@ -5,6 +5,7 @@ All notable changes to Strata. Versions follow [Semantic Versioning](https://sem
 ## [Unreleased]
 ### Added
 - **API reference** ([`docs/api.html`](docs/api.html), on the site under *API*): every route with its role, request and answer, authentication, errors, the event stream, the export format, the module API.
+- **Module guide** ([`MODULES.md`](MODULES.md)), in two parts. *Using modules*: install from the store, set up, run, read the result, update, remove, provide your own, run from a script. *Writing a module*: a first module step by step (a JSON import tried on a local Strata), good practice, testing, a checklist before publishing in the store. The documentation's *Modules and the module store* follows the same steps.
 - **Compatibility policy for 1.x**: what stays stable from 1.0 on (routes, authentication, export format, module API, event names), what a minor version may add, and how something is deprecated (announced here, kept at least one more minor version). In the API reference and the README.
 - **Single sign-on**, next to the local accounts:
   - **OpenID Connect** (Entra ID, Keycloak, Authentik, Google Workspace, Okta…): a sign-in page, authorization code flow with PKCE, the ID token checked against the provider's keys (issuer, audience, expiry, nonce), then a session cookie (`HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS). Sign-out ends the session at the provider too.
