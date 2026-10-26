@@ -3,6 +3,10 @@
 All notable changes to Strata. Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+### Added
+- **Release without typing a tag**: *Actions › Release › Run workflow* on `main` reads the version from `package.json`, creates the `vX.Y.Z` tag and publishes, after a maintainer's approval (the `release` environment). Tags pushed with git and releases published from the web page keep working.
+- **Pre-releases**: a version such as `1.0.0-rc.1` is published under its own version only, never as `latest`, and its GitHub release is marked as a pre-release. The README explains how to try a release candidate.
+
 ### Removed
 - **Everything left from the IS Map 3D name**: Strata is the only name.
   - `X-Requested-With: is-map` is refused: scripts must send `X-Requested-With: strata`.

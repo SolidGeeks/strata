@@ -297,6 +297,7 @@ docker compose exec strata node scripts/users.mjs disable alice</code></pre><but
     <div class="code"><pre><code>./scripts/backup.sh
 git pull                      # or replace the files, keeping .env
 docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compose up -d</code></pre><button class="copy" type="button">Copy</button></div>
+    <p>Release candidates (<code>1.0.0-rc.1</code>…) are published under their own version only, never as <code>latest</code>: to try one, back up, set <code>image: ghcr.io/solidgeeks/strata:1.0.0-rc.1</code> in <code>docker-compose.yml</code>, then <code>docker compose pull &amp;&amp; docker compose up -d</code>.</p>
 
     <h2 id="api" style="--edge:var(--s3)">API</h2>
     <p>Every route uses the same credentials as the interface, with the rights of the account’s role. Writes need the headers <code>Content-Type: application/json</code> and <code>X-Requested-With: strata</code>. Group several writes into one history entry with <code>X-Batch</code> and <code>X-Batch-Label</code>. For a tool that should propose rather than write, give it a contributor account and use <code>POST /api/proposals</code>.</p>

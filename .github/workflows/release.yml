@@ -1,12 +1,19 @@
-# Publishes ghcr.io/solidgeeks/strata:<version> and :latest, with a signed build provenance
-# attestation, and a GitHub release, on every vX.Y.Z tag: pushed with git, or created by publishing
-# a release from the GitHub web page (Releases › Draft a new release › new tag on main).
+# Publishes ghcr.io/solidgeeks/strata:<version>, with a signed build provenance attestation, and a
+# GitHub release. Three ways to start it:
+#   - Actions › Release › Run workflow (on main): the version comes from package.json and the workflow
+#     creates the vX.Y.Z tag itself, so nobody types it. It waits for a maintainer's approval (the
+#     "release" environment, Settings › Environments).
+#   - a vX.Y.Z tag pushed with git;
+#   - a release published from the GitHub web page with a new vX.Y.Z tag on main.
+# A version with a pre-release part (1.0.0-rc.1, 0.9.0-beta.2) is published under its own version only,
+# never as :latest, and its GitHub release is marked as a pre-release.
 # Verify an image: gh attestation verify oci://ghcr.io/solidgeeks/strata:<version> --owner SolidGeeks
 name: Release
 
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,16 +23,47 @@ permissions:
   attestations: write
 
 jobs:
-  image:
+  # Run by hand: tags main with the version of package.json, once a maintainer approves
+  tag:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    environment: release
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Only from main
+        run: test "$GITHUB_REF" = refs/heads/main || { echo "::error::Run the release from the main branch."; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Create the tag
+        id: tag
+        run: |
+          v=$(node -p "require('./package.json').version")
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || { echo "::error::package.json version $v is not X.Y.Z or X.Y.Z-pre"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$v" > /dev/null; then
+            echo "::error::v$v already exists: raise the version in package.json first."; exit 1
+          fi
+          git tag "v$v" "$GITHUB_SHA"
+          git push origin "v$v"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
+  image:
+    needs: tag
+    # after the tag job when run by hand; on its own for a pushed tag (the tag job is skipped then)
+    if: ${{ !cancelled() && (needs.tag.result == 'success' || needs.tag.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.tag.outputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.TAG }}
       - name: Check the tag matches package.json
         id: version
         run: |
           v=$(node -p "require('./package.json').version")
-          test "v$v" = "$GITHUB_REF_NAME"
+          test "v$v" = "$TAG" || { echo "::error::The tag is $TAG but package.json says $v: the tag must be v$v."; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          case "$v" in *-*) echo "pre=true" >> "$GITHUB_OUTPUT";; *) echo "pre=false" >> "$GITHUB_OUTPUT";; esac
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -42,12 +80,14 @@ jobs:
         with:
           context: .
           push: true
+          # :latest only for a release, never for a pre-release
           tags: |
             ghcr.io/solidgeeks/strata:${{ steps.version.outputs.version }}
-            ghcr.io/solidgeeks/strata:latest
+            ${{ steps.version.outputs.pre == 'false' && 'ghcr.io/solidgeeks/strata:latest' || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/SolidGeeks/strata
             org.opencontainers.image.licenses=AGPL-3.0-or-later
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
       # Signs the image digest (not the tag, which can be moved) and stores the attestation
       # on GitHub and next to the image in ghcr.io
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
@@ -55,11 +95,15 @@ jobs:
           subject-name: ghcr.io/solidgeeks/strata
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
-      # The release may already exist: publishing one from the GitHub web page creates its tag,
-      # which runs this workflow
+      # The release may already exist: publishing one from the GitHub web page creates its tag, which
+      # runs this workflow. A pre-release is marked as such either way.
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          PRE: ${{ steps.version.outputs.pre }}
         run: |
-          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --title "Strata $GITHUB_REF_NAME" --generate-notes --verify-tag
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            if [ "$PRE" = true ]; then gh release edit "$TAG" --prerelease; fi
+          else
+            gh release create "$TAG" --title "Strata $TAG" --generate-notes --verify-tag $([ "$PRE" = true ] && echo --prerelease || echo --latest)
+          fi

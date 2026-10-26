@@ -398,6 +398,8 @@ docker compose up -d --build
 
 The data lives in the Docker volume and is not touched by the rebuild. Before upgrading, read the *Upgrading* notes of the [CHANGELOG](CHANGELOG.md) for every version you skip.
 
+**Trying a release candidate.** Before a release, candidates such as `1.0.0-rc.1` are published under their own version only ([releases marked *Pre-release*](https://github.com/SolidGeeks/strata/releases)). To try one, back up, then set its version in `docker-compose.yml` (`image: ghcr.io/solidgeeks/strata:1.0.0-rc.1`) and run `docker compose pull && docker compose up -d`. To go back, set the release you had and restore the backup if the candidate changed the data.
+
 ---
 
 ## 9. API (for automation)
@@ -524,5 +526,14 @@ The tests start a real server on a temporary data folder, create one account per
 The `CI` workflow runs them on Node 20 and 22 on every push to `main` and every pull request. A change that touches the API must come with a test.
 
 `npm run test:e2e` walks through the interface in Chromium with Playwright (`tests/e2e.mjs`): an admin loads the demo and sees the 3D model and the 2D diagram, a contributor proposes a change, an approver sees it highlighted and approves it. Any JavaScript error in a page fails it. The first time, install the browser with `npx playwright install chromium`. The `CI` workflow runs it too (`e2e` job). A change to the interface must keep it green.
+
+### Releasing
+
+1. Merge a pull request that sets the new version in `package.json` (`npm version 0.9.0 --no-git-tag-version`), `docker-compose.yml`, the interface and the docs, and dates its CHANGELOG section.
+2. *Actions › Release › Run workflow*, on `main`. The workflow reads the version from `package.json` and creates the `vX.Y.Z` tag itself, so there is nothing to type. It waits for a maintainer's approval (the `release` environment), then runs the tests, publishes the signed image and the GitHub release with its notes.
+
+Pushing a `vX.Y.Z` tag, or publishing a release from the web page with a new tag on `main`, still works: the tag must then be exactly `v` and the version (`v0.9.0`, not `V0.9.0` or `v.0.9.0`).
+
+A version with a pre-release part (`1.0.0-rc.1`, `0.9.0-beta.2`) is published as `ghcr.io/solidgeeks/strata:1.0.0-rc.1` only, never as `latest`, and its GitHub release is marked as a pre-release: `docker compose pull` keeps the last release.
 
 Contributions follow the [Solid standard](https://github.com/SolidGeeks/.github/blob/main/CONTRIBUTING.md): sign off every commit with `git commit -s` (DCO), no CLA. To report a vulnerability, see [SECURITY.md](SECURITY.md).
