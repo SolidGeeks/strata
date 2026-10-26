@@ -1394,7 +1394,7 @@ const ARCH_CSS=`
 @page{size:A4;margin:14mm 12mm}
 @media print{.af{padding:0;max-width:none}.af h2{margin-top:0}.af .cover{min-height:250mm}}
 .af .ip{white-space:nowrap}
-@media (max-width:640px){.af{padding:18px 16px;font-size:15px}.af table{font-size:12.5px}.af .mono,.af code,.af td.m,.af .path{font-size:12px}.af figcaption,.af .note,.af .fig span{font-size:12.5px}.af .t{font-size:11px}.af .figs{grid-template-columns:repeat(2,1fr)}.af .toc{columns:1}.af .meta{grid-template-columns:1fr}.af .scroll{overflow-x:auto}}
+@media (max-width:640px){.af figure{overflow-x:auto}.af figure svg{width:760px;max-width:none}.af figure.net svg{width:1100px}.af{padding:18px 16px;font-size:15px}.af table{font-size:12.5px}.af .mono,.af code,.af td.m,.af .path{font-size:12px}.af figcaption,.af .note,.af .fig span{font-size:12.5px}.af .t{font-size:11px}.af .figs{grid-template-columns:repeat(2,1fr)}.af .toc{columns:1}.af .meta{grid-template-columns:1fr}.af .scroll{overflow-x:auto}}
 `;
 const afSev=k=>`<span class="t ${k}">${SEV[k].label}</span>`;
 const afExp=k=>`<span class="t x-${k}">${EXP[k].label}</span>`;
@@ -1473,7 +1473,7 @@ ${afTable(['Service','Category','Hosts','Ports'],siteServices().map(x=>[esc(x.na
 
 ${H('arch')}
 <h3>Network diagram</h3>
-<figure>${afDiagram()}<figcaption>IS ${esc(s.name)}: zones as bands, VLANs as plates, flows coloured by exposure (Internet, between VLANs, inside a VLAN), through the equipment they cross. Dashed: risky flows.</figcaption></figure>
+<figure class="net">${afDiagram()}<figcaption>IS ${esc(s.name)}: zones as bands, VLANs as plates, flows coloured by exposure (Internet, between VLANs, inside a VLAN), through the equipment they cross. Dashed: risky flows.</figcaption></figure>
 <h3>Zones and VLANs</h3>
 ${afTable(['Zone','VLAN','Name','Range','Assets'],s.zones.slice().reverse().flatMap(z=>z.vlans.map(v=>[esc(z.name),`<span class="mono">${esc(v.num)}</span>`,esc(v.name),`<span class="mono">${esc(v.cidr||'—')}</span>`,ASSETS.filter(a=>a.vlan===v.id).length])))}
 <h3>Interconnection equipment</h3>
@@ -2002,7 +2002,7 @@ function exportFwRules(a){
 const PF={d:"'Archivo Narrow','Arial Narrow',Arial,sans-serif",b:"Archivo,Arial,Helvetica,sans-serif",m:"'IBM Plex Mono',Consolas,'Courier New',monospace"};
 // Per-flow colours on paper: the light values of --f0 to --f9
 const PC_FLOW=['#2f63c8','#d97a0f','#13917f','#8549c9','#4a8f1f','#c93f8f','#a88200','#1688b8','#8c5a36','#55657d'];
-const PC={ink:'#1b2125',muted:'#5b646a',line:'#c2c6c0',panel:'#ffffff',paper:'#f7f7f3',zone:'#ecece6',dev:'#2b3238',devText:'#f0eee8',net:'#8a3fbf',inter:'#2a7fa6',intra:'#7c8790',crit:'#c4313d',high:'#cc6a22',med:'#b38d14',low:'#3a8763',none:'#89939a',accent:'#2b5884',
+const PC={ink:'#1b2125',muted:'#454e53',line:'#c2c6c0',panel:'#ffffff',paper:'#f7f7f3',zone:'#ecece6',dev:'#2b3238',devText:'#f0eee8',net:'#8a3fbf',inter:'#2a7fa6',intra:'#5f6a72',crit:'#c4313d',high:'#cc6a22',med:'#b38d14',low:'#3a8763',none:'#6a747a',accent:'#2b5884',
   vlan:['#d2a198','#9db9a3','#d5b671','#97acc3','#aea8c9','#b8c39e','#c6a9b9','#a9c4c0','#d8b49a','#b3b8a6']};
 const measureCtx=document.createElement('canvas').getContext('2d');
 const tw=(t,size,weight,fam)=>{measureCtx.font=`${weight} ${size}px ${fam}`;return measureCtx.measureText(String(t)).width;};
