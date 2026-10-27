@@ -221,6 +221,7 @@ function cleanIncident(b) {
     cuts: Array.isArray(b.cuts) ? b.cuts.filter(x => typeof x === 'string' && ID_RE.test(x)).slice(0, 5000) : [],
     run: isObj(b.run) ? b.run : null,
     log: Array.isArray(b.log) ? b.log.filter(isObj).slice(0, 500) : [],
+    ...(typeof b.from === 'string' && b.from ? { from: b.from.slice(0, 120) } : {}),
   };
 }
 function cleanChanges(c) {

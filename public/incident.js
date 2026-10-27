@@ -11,7 +11,7 @@ const TYPE_LABEL={server:'Server',dc:'Domain controller',db:'Database',hyperviso
 const SEV_RANK={none:0,low:1,med:2,high:3,crit:4};
 
 /* ---- Incident state of one IS ---- */
-// {on, marks:{assetId:state}, cuts:[flowId], run:null|{…}, log:[{at,msg,kind,by}]}
+// {on, marks:{assetId:state}, cuts:[flowId], run:null|{…}, log:[{at,msg,kind,by}], from: the incident the marks belong to}
 function empty(){return {on:false,marks:{},cuts:[],run:null,log:[]};}
 function clean(o){
   const e=empty();if(!o||typeof o!=='object')return e;
@@ -20,7 +20,16 @@ function clean(o){
   if(Array.isArray(o.cuts))e.cuts=o.cuts.filter(x=>typeof x==='string');
   if(o.run&&typeof o.run==='object')e.run=o.run;
   if(Array.isArray(o.log))e.log=o.log.slice(0,500);
+  if(typeof o.from==='string'&&o.from)e.from=o.from.slice(0,120);
   return e;
+}
+// Opening an incident on the map: the marks and cuts of another incident are put aside (an incident is its own
+// situation), those made by hand before any incident was opened stay (they are often the one being declared).
+// Returns how many marks were put aside.
+function adopt(inc,key){
+  let n=0;
+  if(inc.from&&inc.from!==key){n=Object.keys(inc.marks).length;inc.marks={};inc.cuts=[];}
+  inc.from=key;return n;
 }
 // Assets in the given states that still exist on the map
 function marked(site,inc,states){return Object.keys(inc.marks).filter(id=>site.byId[id]&&states.includes(inc.marks[id]));}
@@ -426,7 +435,7 @@ function yamlCheck(text){
   return {blocks,steps:types.length,bad:[...new Set(types.filter(t=>!['start','action','decision','escalation','end'].includes(t)))],targets:(String(text).match(/^\s*targets:/gm)||[]).length};
 }
 
-const api={STATES,empty,clean,marked,affected,reach,consumers,business,selectAssets,resolve,cutPoint,flowsToCut,callList,
+const api={STATES,empty,clean,adopt,marked,affected,reach,consumers,business,selectAssets,resolve,cutPoint,flowsToCut,callList,
   PLAYBOOKS,step,nextOf,start,effects,isMuster,advance,route,fromGraph,runOf,newAnswers,musterFor,idsOf,demoFeed,placeholders,prompts,sensitive,leaks,reidentify,yamlCheck};
 root.StrataIncident=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

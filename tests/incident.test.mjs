@@ -145,3 +145,14 @@ test('Muster: a frozen playbook and its steps become a run on the map, answers a
   assert.deepEqual(J(mine.map(i => i.id)), ['inc_1']);
   assert.deepEqual(J(other.map(i => i.id)), ['x', 'y']);
 });
+
+test('adopt: a new incident starts from its own assets, marks made by hand before any incident stay', () => {
+  const inc = I.clean({ marks: { a: 'compromised' }, cuts: ['f1'] });
+  assert.equal(I.adopt(inc, 'IR-1'), 0, 'marks made by hand are kept for the first incident');
+  assert.deepEqual(J(inc.marks), { a: 'compromised' });
+  assert.equal(I.adopt(inc, 'IR-1'), 0, 'opening the same incident again changes nothing');
+  assert.equal(I.adopt(inc, 'IR-2'), 1);
+  assert.deepEqual(J(inc.marks), {});
+  assert.deepEqual(J(inc.cuts), []);
+  assert.equal(I.clean(J(inc)).from, 'IR-2', 'kept when saved');
+});

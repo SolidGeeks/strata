@@ -3374,7 +3374,8 @@ function showIncident(keep){
 }
 function incOpenScenario(i){
   const sc=IR.demoFeed(SITE)[i],pb=sc&&IR.PLAYBOOKS[sc.pb];if(!pb)return;
-  const inc=Inc.of(SITE.id);inc.on=true;inc.run=IR.start(sc,pb,Date.now()-7*60000);
+  const inc=Inc.of(SITE.id),was=inc.from,n=IR.adopt(inc,sc.ref);inc.on=true;inc.run=IR.start(sc,pb,Date.now()-7*60000);
+  if(n)incLog(inc,`${plural(n,'mark')} of ${was} put aside: ${sc.ref} starts from its own assets`,'info');
   incLog(inc,`Muster ${sc.ref} opened on the map (${sc.pb} v${pb.v})`,'sync');
   sc.assets.forEach(id=>incSetMark(inc,id,'compromised'));
   if(sc.params.cve){const f=IR.selectAssets(SITE,inc,'vuln:{cve}',sc.params);incLog(inc,`${sc.params.cve}: ${plural(f.length,'asset')} on the map${f.length?' ('+f.map(nameOf).join(', ')+')':''}`,'sync');}
@@ -3475,7 +3476,8 @@ function musterGo(edgeId,btn){if(edgeId)musterCall('advance',{edgeId},btn);}
 async function musterOpen(id){
   let m;try{m=await Store.api('GET','api/muster/incidents/'+encodeURIComponent(id));}catch(e){toast(e.message||'Muster cannot be reached.',true);return;}
   MU.full[id]=m;
-  const inc=Inc.of(SITE.id),st=m.strata||{};
+  const inc=Inc.of(SITE.id),st=m.strata||{},was=inc.from,n=IR.adopt(inc,m.ref);
+  if(n)incLog(inc,`${plural(n,'mark')} of ${was} put aside: ${m.ref} starts from its own assets`,'info');
   inc.on=true;inc.run={source:'muster',id:m.id,ref:m.ref,name:m.name,pb:m.pbCode,v:m.v,mode:m.mode,severity:m.severity,seen:0};
   incLog(inc,`Muster ${m.ref} opened on the map (${m.pbCode} v${m.v})`,'sync');
   MU.out.push({msg:`opened on the map of IS ${SITE.name}`,kind:'info'});
