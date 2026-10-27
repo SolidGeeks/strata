@@ -116,14 +116,54 @@ function start(sc,pb,now,by){
   const n=nextOf(pb,run.cur)[0];if(n){run.path.push(n[1]);run.cur=n[1];}
   return run;
 }
-// Moves the run along an edge; returns the marks a decision asks for, as [[assetId,state]]
+// The marks a decision asks for once answered, as [[assetId,state]]: never back from compromised or contained
+function effects(site,inc,s,label,params){
+  const eff=s&&s.effects&&s.effects[label],out=[];
+  if(eff)selectAssets(site,inc,eff[1],params).forEach(id=>{const was=inc.marks[id];if(was!=='compromised'&&was!=='contained'&&was!==eff[0])out.push([id,eff[0]]);});
+  return out;
+}
+// Moves the run along an edge; returns the marks a decision asks for
 function advance(site,inc,pb,to,label){
-  const run=inc.run,s=step(pb,run.cur),changes=[];
-  if(label){run.answers[run.cur]=label;const eff=s.effects&&s.effects[label];
-    if(eff)selectAssets(site,inc,eff[1],run.params).forEach(id=>{const was=inc.marks[id];if(was!=='compromised'&&was!=='contained'&&was!==eff[0])changes.push([id,eff[0]]);});}
+  const run=inc.run,s=step(pb,run.cur),changes=label?effects(site,inc,s,label,run.params):[];
+  if(label)run.answers[run.cur]=label;
   run.path.push(to);run.cur=to;if(step(pb,to).type==='end')run.closed=true;
   return changes;
 }
+
+/* ---- A Muster incident, as the map runs it ---- */
+// The playbook frozen in the incident, in the shape above; edges keep their Muster id
+function fromGraph(m){
+  const g=m.graph||{nodes:[],edges:[]};
+  return {code:m.pbCode,name:m.pbName,v:m.v,severity:m.severity,
+    steps:g.nodes.map(n=>({id:n.id,type:n.type,title:n.title,phase:n.phase||'',role:n.role||'',sla:n.sla||0,desc:n.desc||'',checklist:n.checklist||[],targets:Array.isArray(n.targets)?n.targets:[],effects:n.effects||null})),
+    edges:g.edges.map(e=>[e.from,e.to,e.label||'',e.id])};
+}
+// Where the response stands: the steps taken, the answers given, the tasks ticked
+function runOf(m,pb){
+  const steps=m.steps||[],answers={},checks={};
+  steps.forEach(st=>{const e=st.edge&&pb.edges.find(x=>x[3]===st.edge),s=step(pb,st.id);if(e&&s&&s.type==='decision')answers[st.id]=e[2];});
+  Object.entries(m.checks||{}).forEach(([id,arr])=>(arr||[]).forEach((v,i)=>{if(v)checks[id+':'+i]=true;}));
+  const st=m.strata||{};
+  return {source:'muster',id:m.id,ref:m.ref,name:m.name,pb:m.pbCode,v:m.v,mode:m.mode,severity:m.severity,status:m.status,
+    assets:st.assets||[],params:st.params||{},path:steps.map(x=>x.id),cur:steps.length?steps[steps.length-1].id:null,answers,checks,startedAt:m.startedAt,closed:m.status!=='active'};
+}
+// Answers given since the map last looked (in Strata or in Muster), with the marks they ask for
+function newAnswers(site,inc,pb,m,seen){
+  const out=[],steps=m.steps||[];
+  for(let i=Math.max(0,seen||0);i<steps.length;i++){const st=steps[i],s=step(pb,st.id),e=st.edge&&pb.edges.find(x=>x[3]===st.edge);
+    if(s&&e&&s.type==='decision')out.push({step:s,label:e[2],marks:effects(site,inc,s,e[2],(m.strata||{}).params)});}
+  return out;
+}
+// Muster incidents that belong to this IS: linked to it, or naming one of its assets
+function musterFor(site,list){
+  const mine=[],other=[];
+  (list||[]).forEach(i=>{const st=i.strata||{};
+    const named=(st.assets||[]).some(a=>site.byId[a]||site.assets.some(x=>x.name===a));
+    (st.site===site.id||(!st.site&&named)?mine:other).push(i);});
+  return {mine,other};
+}
+// Asset ids from what Muster names: Strata ids, or names
+const idsOf=(site,names)=>[...new Set((names||[]).map(a=>site.byId[a]?a:(site.assets.find(x=>x.name===a)||{}).id).filter(Boolean))];
 // The most likely route ahead: the steps taken, then the first edge out of each step
 function route(pb,run){
   const seen=new Set(run.path),r=run.path.slice();let c=run.cur;
@@ -385,6 +425,6 @@ function yamlCheck(text){
 }
 
 const api={STATES,empty,clean,marked,affected,reach,consumers,business,selectAssets,resolve,cutPoint,flowsToCut,callList,
-  PLAYBOOKS,step,nextOf,start,advance,route,demoFeed,placeholders,prompts,sensitive,leaks,reidentify,yamlCheck};
+  PLAYBOOKS,step,nextOf,start,effects,advance,route,fromGraph,runOf,newAnswers,musterFor,idsOf,demoFeed,placeholders,prompts,sensitive,leaks,reidentify,yamlCheck};
 root.StrataIncident=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

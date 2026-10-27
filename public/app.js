@@ -387,6 +387,7 @@ const Store={
     es.addEventListener('proposals',()=>{onProposalsChanged();});
     es.addEventListener('connectors',()=>{onConnectorsChanged();});
     es.addEventListener('incidents',()=>{onIncidentsChanged();});
+    es.addEventListener('muster',()=>{musterLoad().then(musterSync);});
     let first=true;es.addEventListener('open',()=>{if(!first)this.pull();first=false;});
   },
   async api(method,url,body){
@@ -3240,7 +3241,8 @@ const curInc=()=>state.view==='site'&&SITE?Inc.of(SITE.id):null;
 const incOn=()=>{const i=curInc();return !!(i&&i.on);};
 const incMark=id=>incOn()?Inc.of(SITE.id).marks[id]||null:null;
 const hhmm=t=>{const d=new Date(t);return `${pad(d.getHours())}:${pad(d.getMinutes())}`;};
-function incLog(inc,msg,kind){inc.log.unshift({at:Date.now(),msg,kind:kind||'info',by:Store.user||''});}
+function incLog(inc,msg,kind){inc.log.unshift({at:Date.now(),msg,kind:kind||'info',by:Store.user||''});
+  if(inc.run&&inc.run.source==='muster'&&kind!=='sync')MU.out.push({msg,kind:kind==='crit'?'warn':kind==='dec'||kind==='ok'?kind:'info'});}
 // What the model and the diagram show, worked out once per change
 let INCV=null;
 function incView(){
@@ -3259,7 +3261,7 @@ function incRedraw(full){
   if(state.panel==='incident')showIncident(true);
   else if(state.panel==='asset'&&selAsset())showAsset(selAsset());
 }
-function incSave(full){Inc.changed(SITE.id);incRedraw(full);}
+function incSave(full){const inc=Inc.of(SITE.id);Inc.changed(SITE.id);if(inc.run&&inc.run.source==='muster')musterPush(SITE.id);incRedraw(full);}
 function incSetMark(inc,id,st,quiet){
   const was=inc.marks[id]||null;if(was===(st||null))return;
   if(st)inc.marks[id]=st;else delete inc.marks[id];
@@ -3307,8 +3309,8 @@ function incTargetHtml(sel,s,run){
   return `<div class="inc-tg">${head}${incCallHtml(r.items.slice(0,4))}</div>`;
 }
 function incRunHtml(inc){
-  const run=inc.run,pb=IR.PLAYBOOKS[run.pb];if(!pb)return `<p class="empty">Playbook ${esc(run.pb)} is unknown here.</p>`;
-  const R=IR.route(pb,run),w=Inc.canWrite;
+  const rv=runView(inc);if(!rv)return `<p class="empty">${inc.run.source==='muster'?'Reading the incident from Muster…':`Playbook ${esc(inc.run.pb)} is unknown here.`}</p>`;
+  const {pb,run}=rv,R=IR.route(pb,run),w=Inc.canWrite;if(!run.cur)return '<p class="empty">This response has no step.</p>';
   return `<ol class="inc-steps">${R.map((sid,i)=>{const s=IR.step(pb,sid),cur=sid===run.cur&&!run.closed,done=i<run.path.length-1||(run.closed&&sid===run.cur),ahead=i>=run.path.length;
     let h=`<li class="inc-step ${s.type}${done?' done':''}${cur?' cur':''}${ahead?' ahead':''}"><span class="dot">${done?'✓':i+1}</span><div class="inc-sb"><b>${esc(s.title)}</b><small>${esc(s.phase)}${s.role?' · '+esc(s.role):''}${s.sla?` · SLA ${s.sla} min`:''}</small>${run.answers[sid]?`<span class="inc-ans">→ ${esc(run.answers[sid])}</span>`:''}`;
     if(cur){
@@ -3316,12 +3318,12 @@ function incRunHtml(inc){
       h+=`<div class="inc-cur">${s.desc?`<p class="fhint">${esc(s.desc)}</p>`:''}
         ${(s.checklist||[]).map((t,j)=>`<label class="inc-chk"><input type="checkbox" data-inc-chk="${esc(sid+':'+j)}" ${run.checks[sid+':'+j]?'checked':''} ${w?'':'disabled'}> <span>${esc(t)}</span></label>`).join('')}
         ${s.targets.length?`<div class="inc-tgs">${s.targets.map(t=>incTargetHtml(t,s,run)).join('')}</div>`:''}
-        ${w&&out.length?`<div class="actions">${s.type==='decision'?out.map(e=>`<button class="btn small primary" data-inc-go="${esc(e[1])}" data-inc-lbl="${esc(e[2]||'')}">${esc(e[2]||'Next')}</button>`).join(''):`<button class="btn small primary" data-inc-go="${esc(out[0][1])}">Step done</button>`}</div>`:''}</div>`;}
+        ${w&&out.length?`<div class="actions">${s.type==='decision'?out.map(e=>`<button class="btn small primary" data-inc-go="${esc(e[1])}" data-inc-edge="${esc(e[3]||'')}" data-inc-lbl="${esc(e[2]||'')}">${esc(e[2]||'Next')}</button>`).join(''):out.map(e=>`<button class="btn small primary" data-inc-go="${esc(e[1])}" data-inc-edge="${esc(e[3]||'')}">Step done${out.length>1?' → '+esc(IR.step(pb,e[1]).title):''}</button>`).join('')}</div>`:''}</div>`;}
     return h+'</div></li>';}).join('')}</ol>`;
 }
 // What this integration sends back to Muster: the log entries and the assets linked to the incident
 function incContract(inc){
-  const run=inc.run,pb=IR.PLAYBOOKS[run.pb],s=pb&&IR.step(pb,run.cur);
+  const run=inc.run,pb=IR.PLAYBOOKS[run.pb],s=pb&&IR.step(pb,run.cur);if(!pb)return {};
   return {'Muster → Strata':{ref:run.ref,playbook:`${run.pb} v${run.v}`,mode:run.mode,assets:run.assets,params:run.params,step:s?{id:s.id,title:s.title,targets:s.targets}:null},
     'Strata → Muster':{log:inc.log.slice(0,4).map(l=>({at:new Date(l.at).toISOString(),msg:l.msg,by:l.by})),assets:IR.affected(SITE,inc).map(id=>({id,name:nameOf(id),state:inc.marks[id]}))}};
 }
@@ -3332,19 +3334,27 @@ function showIncident(keep){
   let body='';
   if(!inc.on)body+=`<p class="summary">Incident mode is off for IS ${esc(SITE.name)}.</p>${w?'<div class="actions"><button class="btn small primary" data-inc-on>Switch incident mode on</button></div>':'<p class="empty">Your role can read the incident, not change it.</p>'}`;
   body+=`<h3 class="cap">Muster</h3>`;
-  if(!run){
+  if(!run&&musterOn()){
+    const act=(MU.list||[]).filter(i=>i.status==='active'),{mine,other}=IR.musterFor(SITE,act);
+    const li=(i,linked)=>`<li class="reach"><span class="nm">${esc(i.ref)} · ${esc(i.name)}<small>${esc(i.pbCode)} ${esc(i.pbName)} v${esc(i.v)} · ${esc(i.mode)}${i.current?' · now: '+esc(i.current.title):''}${i.strata&&i.strata.assets.length?' · assets: '+esc(i.strata.assets.join(', ')):''}${i.strata&&i.strata.params.cve?' · '+esc(i.strata.params.cve):''}</small></span>${w?`<button class="btn small" data-inc-mopen="${esc(i.id)}">${linked?'Open':'Open on this IS'}</button>`:''}</li>`;
+    body+=`<p class="fhint">${MU.ok?`Connected to <a href="${esc(MU.url)}" target="_blank" rel="noopener">${esc(MU.url)}</a>.`:`<span style="color:var(--crit)">${esc(MU.error||'Muster cannot be reached.')}</span>`}</p>
+      ${mine.length?`<ul class="list">${mine.map(i=>li(i,true)).join('')}</ul>`:'<p class="empty">No response in progress in Muster for this IS. In Muster, declare an incident and link it to Strata IS <b>'+esc(SITE.id)+'</b>.</p>'}
+      ${other.length?`<p class="fhint">Other responses in progress in Muster</p><ul class="list">${other.map(i=>li(i,false)).join('')}</ul>`:''}`;
+  }else if(!run){
     const feed=IR.demoFeed(SITE);
     body+=`<p class="fhint">No Muster incident is linked to this IS. When an analyst declares one in Muster with assets of this IS, it opens here and its playbook points at the model.</p>
       ${feed.length?`<ul class="list">${feed.map((sc,i)=>`<li class="reach"><span class="nm">${esc(sc.ref)} · ${esc(sc.name)}<small>${esc(sc.pb)} ${esc(IR.PLAYBOOKS[sc.pb].name)} · ${esc(sc.mode)} · ${esc(sc.note)}</small></span>${w?`<button class="btn small" data-inc-open="${i}">Open</button>`:''}</li>`).join('')}</ul>
       <p class="fhint">Muster is not connected to this Strata: these two incidents are examples built from this map.</p>`:''}`;
   }else{
-    const pb=IR.PLAYBOOKS[run.pb],mins=Math.floor((Date.now()-run.startedAt)/60000);
-    body+=`<div class="inc-run"><div class="inc-rh"><span class="mono">${esc(run.ref)} · ${esc(run.pb)} v${esc(run.v)} · ${esc(run.mode)}</span><span class="mono">T+${pad(Math.floor(mins/60))}:${pad(mins%60)}</span></div>
-      <b class="inc-rn">${esc(run.name)}</b>
-      <div class="chips"><span class="tag" style="color:var(--crit)"><i style="background:var(--crit)"></i>${esc(run.severity)}</span><span class="chip">${esc(pb?pb.name:run.pb)}</span>${run.params.cve?`<span class="chip">${esc(run.params.cve)}</span>`:''}${run.closed?'<span class="tag" style="color:var(--low)"><i style="background:var(--low)"></i>Closed</span>':''}</div>
-      ${w?'<div class="actions"><button class="btn small" data-inc-unlink>Unlink from Muster</button></div>':''}</div>
+    const rv=runView(inc),R=rv?rv.run:run,pb=rv&&rv.pb,real=run.source==='muster',mins=Math.floor((Date.now()-(R.startedAt||Date.now()))/60000);
+    const ended=R.closed?`<span class="tag" style="color:var(--low)"><i style="background:var(--low)"></i>${R.status==='stopped'?'Stopped':'Closed'}</span>`:'';
+    body+=`<div class="inc-run"><div class="inc-rh"><span class="mono">${esc(R.ref)} · ${esc(R.pb)} v${esc(R.v)} · ${esc(R.mode||'')}</span><span class="mono">T+${pad(Math.floor(mins/60))}:${pad(mins%60)}</span></div>
+      <b class="inc-rn">${esc(R.name)}</b>
+      <div class="chips"><span class="tag" style="color:var(--crit)"><i style="background:var(--crit)"></i>${esc(R.severity||'')}</span><span class="chip">${esc(pb?pb.name:R.pb)}</span>${R.params&&R.params.cve?`<span class="chip">${esc(R.params.cve)}</span>`:''}${ended}</div>
+      ${real?`<p class="fhint">${MU.ok?'Live from Muster: answers, tasks and steps go both ways.':`<span style="color:var(--crit)">${esc(MU.error||'Muster cannot be reached.')}</span>`}</p>`:''}
+      <div class="actions">${real&&MU.url?`<a class="btn small" href="${esc(MU.url)}/#/incidents/${encodeURIComponent(run.id)}" target="_blank" rel="noopener">Open in Muster</a>`:''}${w?'<button class="btn small" data-inc-unlink>Unlink from Muster</button>':''}</div></div>
       <h3 class="cap">Playbook · decisions point at the model</h3>${incRunHtml(inc)}
-      <details class="inc-contract"><summary>What Strata and Muster exchange</summary><pre>${esc(JSON.stringify(incContract(inc),null,2))}</pre></details>`;
+      ${real?'':`<details class="inc-contract"><summary>What Strata and Muster exchange</summary><pre>${esc(JSON.stringify(incContract(inc),null,2))}</pre></details>`}`;
   }
   body+=`<h3 class="cap">Assets hit · ${aff.length}</h3>${aff.length?`<div class="chips">${aff.map(incChip).join('')}</div>`:`<p class="empty">Nothing marked. Select an asset on the model and mark it from its sheet${run?', or answer the playbook decisions':''}.</p>`}`;
   if(aff.length&&iv){
@@ -3389,23 +3399,93 @@ det.addEventListener('click',e=>{
   if(q('[data-inc-on]')){incToggle(true);return;}
   if(q('[data-inc-off]')){incToggle(false);return;}
   if(q('[data-inc-open]')){incOpenScenario(+q('[data-inc-open]').dataset.incOpen);return;}
-  if(q('[data-inc-go]')){const b=q('[data-inc-go]');incGo(b.dataset.incGo,b.dataset.incLbl||'');return;}
+  if(q('[data-inc-mopen]')){musterOpen(q('[data-inc-mopen]').dataset.incMopen);return;}
+  if(q('[data-inc-go]')){const b=q('[data-inc-go]');if(inc.run&&inc.run.source==='muster')musterGo(b.dataset.incEdge,b);else incGo(b.dataset.incGo,b.dataset.incLbl||'');return;}
   if(q('[data-inc-cut]')){const id=q('[data-inc-cut]').dataset.incCut,f=FLOWS.find(x=>x.id===id),r=IR.flowsToCut(SITE,inc,IR.affected(SITE,inc)).find(x=>x.f.id===id);
     const i=inc.cuts.indexOf(id);if(i>=0){inc.cuts.splice(i,1);incLog(inc,`Flow reopened: ${nameOf(f.src)} → ${nameOf(f.dst)} ${f.port}`);}
     else{inc.cuts.push(id);incLog(inc,`Flow cut at ${r?r.at.label:'the host'}: ${nameOf(f.src)} → ${nameOf(f.dst)} ${f.port}`,'ok');}
     incSave(false);return;}
-  if(q('[data-inc-isolate]')){IR.selectAssets(SITE,inc,q('[data-inc-isolate]').dataset.incIsolate,inc.run&&inc.run.params).forEach(id=>incSetMark(inc,id,'contained'));incSave(true);return;}
+  if(q('[data-inc-isolate]')){IR.selectAssets(SITE,inc,q('[data-inc-isolate]').dataset.incIsolate,(runView(inc)||{run:{}}).run.params).forEach(id=>incSetMark(inc,id,'contained'));incSave(true);return;}
   if(q('[data-inc-unlink]')){incLog(inc,`Muster ${inc.run.ref} unlinked`,'sync');inc.run=null;incSave(false);return;}
   if(q('[data-inc-reset]')){const b=q('[data-inc-reset]');if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='Confirm: clear marks, cuts, run and timeline';return;}
     Inc.all[SITE.id]=IR.empty();incSave(true);toast('Incident cleared.');return;}
 });
-det.addEventListener('change',e=>{const c=e.target.closest('[data-inc-chk]');if(!c||!SITE)return;const inc=Inc.of(SITE.id);if(!inc.run)return;inc.run.checks[c.dataset.incChk]=c.checked;Inc.changed(SITE.id);});
+det.addEventListener('change',e=>{const c=e.target.closest('[data-inc-chk]');if(!c||!SITE)return;const inc=Inc.of(SITE.id);if(!inc.run)return;
+  if(inc.run.source==='muster'){const [node,i]=c.dataset.incChk.split(':');musterCall('tasks',{nodeId:node,index:+i,done:c.checked});return;}
+  inc.run.checks[c.dataset.incChk]=c.checked;Inc.changed(SITE.id);});
 $('#incBtn').addEventListener('click',()=>{if(!SITE)return;if(state.panel==='incident'){closeDet();return;}if(!incOn()&&Inc.canWrite)incToggle(true);else showIncident();closeCtlMobile(true);});
 $('#cart').addEventListener('click',e=>{if(e.target.closest('[data-inc-board]'))showIncident();});
 function incBand(){
   const iv=incView();if(!iv)return '';const run=iv.inc.run,open=iv.rows.filter(r=>!r.cut).length;
   return `<div class="incband"><b>Incident mode</b><span>${run?`${esc(run.ref)} · ${esc(run.pb)}`:'No Muster incident'} · ${plural(iv.aff.length,'asset')} hit · ${open} to cut</span><button data-inc-board>Board</button></div>`;
 }
+/* ---- Muster: real incidents, through this Strata's server ---- */
+// The server signs in to Muster and passes calls on (api/muster). Strata keeps a pointer to the Muster incident
+// in the incident of the IS; the playbook, the steps taken and the tasks ticked are read from Muster each time.
+const MU={list:null,ok:false,error:'',url:'',full:{},out:[],t:null};
+const musterOn=()=>Store.mode==='api'&&!!(Store.me&&Store.me.muster);
+async function musterLoad(){
+  if(!musterOn())return;
+  try{const j=await Store.api('GET','api/muster');Object.assign(MU,{list:j.incidents||[],ok:j.ok,error:j.error,url:j.url});}
+  catch(e){MU.ok=false;MU.error=e.message||'Muster cannot be reached.';}
+}
+// The run shown in the sheet: the example kept in the incident, or the Muster incident it points to
+function runView(inc){
+  const r=inc.run;if(!r)return null;
+  if(r.source!=='muster'){const pb=IR.PLAYBOOKS[r.pb];return pb?{pb,run:r}:null;}
+  const m=MU.full[r.id];if(!m)return null;
+  const pb=IR.fromGraph(m);return {pb,run:IR.runOf(m,pb)};
+}
+// Reads the linked Muster incident again; answers given since (here or in Muster) mark the assets they name
+let musterSyncing=false;
+async function musterSync(){
+  if(!SITE||!musterOn()||musterSyncing)return;
+  const id=SITE.id,inc=Inc.of(id),r=inc.run;if(!r||r.source!=='muster'){if(state.panel==='incident')showIncident(true);return;}
+  musterSyncing=true;
+  try{
+    const m=await Store.api('GET','api/muster/incidents/'+encodeURIComponent(r.id));MU.full[r.id]=m;
+    let changed=false;
+    if(Inc.canWrite){
+      const pb=IR.fromGraph(m);
+      IR.newAnswers(SITE,inc,pb,m,r.seen).forEach(a=>a.marks.forEach(([aid,st])=>{incSetMark(inc,aid,st);changed=true;}));
+      if(r.seen!==(m.steps||[]).length){r.seen=(m.steps||[]).length;Inc.changed(id);}
+    }
+    if(changed){Inc.changed(id);musterPush(id);}
+    incRedraw(changed);
+  }catch(e){toast('Muster: '+(e.message||'cannot be reached')+'.',true);incRedraw(false);}
+  finally{musterSyncing=false;}
+}
+// Sends the state of the assets and what was done on the map to Muster's timeline, a moment after the last change
+function musterPush(siteId){
+  clearTimeout(MU.t);
+  MU.t=setTimeout(async()=>{
+    const s=siteById[siteId],inc=Inc.of(siteId),r=inc.run;if(!s||!r||r.source!=='muster')return;
+    const marks={},names={};IR.affected(s,inc).forEach(a=>{marks[a]=inc.marks[a];names[a]=s.byId[a].name;});
+    const log=MU.out.splice(0);
+    try{await Store.api('POST',`api/muster/incidents/${encodeURIComponent(r.id)}/strata`,{site:siteId,marks,names,log});}
+    catch(e){MU.out.unshift(...log);toast('Muster did not take the update: '+(e.message||'error')+'.',true);}
+  },300);
+}
+async function musterCall(act,body,btn){
+  const r=Inc.of(SITE.id).run;if(!r)return;if(btn)btn.disabled=true;
+  try{MU.full[r.id]=await Store.api('POST',`api/muster/incidents/${encodeURIComponent(r.id)}/${act}`,body);await musterSync();}
+  catch(e){toast(e.message||'Muster refused it.',true);if(btn)btn.disabled=false;musterSync();}
+}
+function musterGo(edgeId,btn){if(edgeId)musterCall('advance',{edgeId},btn);}
+async function musterOpen(id){
+  let m;try{m=await Store.api('GET','api/muster/incidents/'+encodeURIComponent(id));}catch(e){toast(e.message||'Muster cannot be reached.',true);return;}
+  MU.full[id]=m;
+  const inc=Inc.of(SITE.id),st=m.strata||{};
+  inc.on=true;inc.run={source:'muster',id:m.id,ref:m.ref,name:m.name,pb:m.pbCode,v:m.v,mode:m.mode,severity:m.severity,seen:0};
+  incLog(inc,`Muster ${m.ref} opened on the map (${m.pbCode} v${m.v})`,'sync');
+  MU.out.push({msg:`opened on the map of IS ${SITE.name}`,kind:'info'});
+  const ids=IR.idsOf(SITE,st.assets),missing=(st.assets||[]).filter(a=>!SITE.byId[a]&&!SITE.assets.some(x=>x.name===a));
+  ids.forEach(a=>incSetMark(inc,a,'compromised'));
+  if(missing.length)incLog(inc,`Not on this map: ${missing.join(', ')}`,'crit');
+  if(st.params&&st.params.cve){const f=IR.selectAssets(SITE,inc,'vuln:{cve}',st.params);incLog(inc,`${st.params.cve}: ${plural(f.length,'asset')} on the map${f.length?' ('+f.map(nameOf).join(', ')+')':''}`,'info');}
+  incSave(true);showIncident();musterSync();
+}
+
 // The asset sheet: mark it, and prompt a public AI about it
 function incAssetHtml(a){
   const m=Inc.of(SITE.id).marks[a.id]||null;
@@ -3741,7 +3821,7 @@ function tick(t){
 }
 function start(){
   resize();buildOverview();renderCart();syncUI();renderEmpty();setViewNow();tick();
-  Store.init().then(()=>{renderCollab();if(Store.features.proposals)loadProposals();return Inc.load();}).then(()=>incRedraw(true));
+  Store.init().then(()=>{renderCollab();if(Store.features.proposals)loadProposals();return Inc.load();}).then(()=>musterLoad()).then(()=>{incRedraw(true);musterSync();});
 }
 const ready=document.fonts&&document.fonts.ready?Promise.race([document.fonts.ready,new Promise(r=>setTimeout(r,1500))]):Promise.resolve();
 ready.then(start,start);

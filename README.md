@@ -233,6 +233,9 @@ By default, the port only listens on the machine itself (`127.0.0.1:8080`). To o
 | `MODULE_UPLOAD` | `false` | `true` lets administrators install a module package from a file (no checksum: whoever uploads it vouches for it). |
 | `MODULES_DIR` | — | A folder of connector modules you provide yourself, one sub-folder each ([MODULES.md](MODULES.md)). |
 | `CONNECTOR_TIMEOUT_MINUTES` | `30` | Longest a connector run may take before it is stopped (2 minutes at most for a test). |
+| `MUSTER_URL` | — | Address of your [Muster](https://github.com/SolidGeeks/muster) server, as this server reaches it (`http://muster:8080`). Its incidents then open on the map, in the incident sheet of the IS they name. Empty: no connection. |
+| `MUSTER_USER` / `MUSTER_PASSWORD` | `strata` / — | The Muster account Strata signs in with: create it in Muster with the **analyst** role. `MUSTER_PASSWORD_FILE` reads the password from a file. |
+| `MUSTER_POLL_SECONDS` | `10` | How often Strata reads Muster's incidents; every page then follows. |
 | `SOURCE_URL` | `https://github.com/SolidGeeks/strata` | The app's *Source code* link (AGPL): point it at your fork if you modify the code. |
 
 After changing `.env`, apply it with `docker compose up -d`.
@@ -460,6 +463,9 @@ Every route needs the same credentials as the interface (a local account with Ba
 | `PUT /api/wan` | Replaces the links between IS: `{"links": [...]}` |
 | `POST /api/import` | Replaces the whole map: `{si, assets, wan, services}` |
 | `GET /api/incidents` | Incident mode of every IS: `{incidents: {<IS id>: {on, marks, cuts, run, log}}}` |
+| `GET /api/muster` | Muster's incidents and whether Muster answers (`{url, ok, error, incidents}`), when `MUSTER_URL` is set |
+| `GET /api/muster/incidents/{id}` | One Muster incident: its frozen playbook, the steps taken, the link to Strata |
+| `POST /api/muster/incidents/{id}/advance`, `/tasks`, `/strata` | Passed on to Muster (`contributor` and up): answer a step `{edgeId}`, tick a task `{nodeId, index, done}`, report the assets and what was done `{site, marks, names, log}` |
 | `PUT /api/incidents/{IS id}` | Replaces the incident of an IS (`contributor` and up, no proposal): marks are `compromised`, `suspected` or `contained` |
 | `PUT /api/services` | Replaces the common catalogue of Internet services: `{"services": [...]}` |
 | `GET /api/history` | Latest changes (`?before=REV&limit=N`); `GET /api/history/{rev}`: the before/after details |

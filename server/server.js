@@ -13,6 +13,7 @@ import { createConnectors } from './connectors/index.js';
 import { createStore } from './connectors/store.js';
 import { ID_RE as MODULE_ID_RE } from './connectors/modules.js';
 import { ssoConfig, createSso, loginPage } from './sso.js';
+import { createMuster } from './muster.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = process.env;
@@ -55,6 +56,11 @@ const CONFIG = {
   connectorTimeoutMs: Math.max(2000, (parseFloat(env.CONNECTOR_TIMEOUT_MINUTES || '30') || 30) * 60000),
   // AGPL-3.0 section 13: users of a modified version must be offered its source. Point this at your fork.
   sourceUrl: /^https?:\/\//.test(env.SOURCE_URL || '') ? env.SOURCE_URL : 'https://github.com/SolidGeeks/strata',
+  // Muster: its address and the account Strata signs in with (analyst role). Empty: no connection.
+  musterUrl: /^https?:\/\//.test(env.MUSTER_URL || '') ? env.MUSTER_URL : '',
+  musterUser: env.MUSTER_USER || 'strata',
+  musterPass: secret('MUSTER_PASSWORD'),
+  musterPollMs: Math.max(2, parseFloat(env.MUSTER_POLL_SECONDS || '10') || 10) * 1000,
 };
 const DB_FILE = path.join(CONFIG.dataDir, 'db.json');
 const USERS_FILE = path.join(CONFIG.dataDir, 'users.json');
@@ -478,7 +484,7 @@ async function api(req, res, parts, url, auth) {
 
   if (r1 === 'me' && !id && method === 'GET') return send(res, 200, {
     user: auth.user, role: auth.role, auth: !auth.open, via: auth.via, signOut: auth.via === 'sso', sso: sso.oidc || sso.header, readOnly: CONFIG.readOnly, allowSelfApproval: CONFIG.allowSelfApproval,
-    canWrite: can(auth, 'approver'), canPropose: can(auth, 'contributor'), canReview: can(auth, 'approver'), canAdmin: can(auth, 'admin'), connectors: !!connectors, sourceUrl: CONFIG.sourceUrl,
+    canWrite: can(auth, 'approver'), canPropose: can(auth, 'contributor'), canReview: can(auth, 'approver'), canAdmin: can(auth, 'admin'), connectors: !!connectors, sourceUrl: CONFIG.sourceUrl, muster: muster ? { url: muster.url } : null,
   });
   if (r1 === 'me' && id === 'password' && method === 'PUT') {
     if (auth.open) throw httpError(400, 'Accounts are not enabled on this server.');
@@ -503,6 +509,24 @@ async function api(req, res, parts, url, auth) {
     res.write(`retry: 3000\nevent: change\ndata: ${JSON.stringify({ rev: state.rev })}\n\n`);
     clients.add(res); req.on('close', () => clients.delete(res));
     return;
+  }
+
+  /* ---- Muster: every role reads, contributors and up act on a response ---- */
+  if (r1 === 'muster') {
+    if (!muster) throw httpError(404, 'Muster is not connected to this Strata (MUSTER_URL)');
+    if (!id && method === 'GET') { const st = muster.status(); return send(res, 200, { url: muster.url, ok: st.ok, error: st.error, checkedAt: st.checkedAt, incidents: st.incidents }); }
+    if (id === 'incidents' && r3 && method === 'GET' && !parts[3]) return send(res, 200, await muster.incident(r3));
+    if (id === 'incidents' && r3 && method === 'POST') {
+      need(auth, 'contributor');
+      const b = await readBody(req, 128 * 1024) || {}, act = parts[3], who = auth.user || 'strata';
+      if (act === 'advance') return send(res, 200, await muster.advance(r3, b.edgeId));
+      if (act === 'tasks') return send(res, 200, await muster.task(r3, b.nodeId, Number(b.index), b.done));
+      if (act === 'strata') {
+        const log = (Array.isArray(b.log) ? b.log : []).slice(0, 50).map(l => ({ msg: String(l?.msg || '').slice(0, 400), kind: String(l?.kind || 'info'), by: who })).filter(l => l.msg);
+        return send(res, 200, await muster.report(r3, { site: b.site, marks: b.marks, names: b.names, log }));
+      }
+    }
+    return fail(res, 404, 'Unknown Muster route');
   }
 
   /* ---- incident mode: contributors and up, without a proposal ---- */
@@ -832,6 +856,8 @@ const connectors = /^(0|false|no|off)$/i.test(env.CONNECTORS || '') ? null : cre
 const modStore = connectors ? createStore({ registryUrl: CONFIG.moduleRegistry, uploads: CONFIG.moduleUpload, installedDir: MODULES_INSTALLED, strataVersion: STRATA_VERSION, connectors, log }) : null;
 loadProposals();
 loadIncidents();
+const muster = CONFIG.musterUrl ? createMuster({ url: CONFIG.musterUrl, user: CONFIG.musterUser, password: CONFIG.musterPass, pollMs: CONFIG.musterPollMs, log, onChange: () => broadcast('muster', { at: Date.now() }) }) : null;
+if (muster) { muster.start(); log(`Muster: ${muster.url}, signed in as ${CONFIG.musterUser}`); }
 bootstrapUsers();
 await backup('startup');
 setInterval(() => backup('scheduled').catch(e => log('Backup failed:', e.message)), CONFIG.backupEveryHours * 3600 * 1000).unref();
