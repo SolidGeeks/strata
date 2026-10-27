@@ -3242,7 +3242,7 @@ const incOn=()=>{const i=curInc();return !!(i&&i.on);};
 const incMark=id=>incOn()?Inc.of(SITE.id).marks[id]||null:null;
 const hhmm=t=>{const d=new Date(t);return `${pad(d.getHours())}:${pad(d.getMinutes())}`;};
 function incLog(inc,msg,kind){inc.log.unshift({at:Date.now(),msg,kind:kind||'info',by:Store.user||''});
-  if(inc.run&&inc.run.source==='muster'&&kind!=='sync')MU.out.push({msg,kind:kind==='crit'?'warn':kind==='dec'||kind==='ok'?kind:'info'});}
+  if(IR.isMuster(inc.run)&&kind!=='sync')MU.out.push({msg,kind:kind==='crit'?'warn':kind==='dec'||kind==='ok'?kind:'info'});}
 // What the model and the diagram show, worked out once per change
 let INCV=null;
 function incView(){
@@ -3261,7 +3261,7 @@ function incRedraw(full){
   if(state.panel==='incident')showIncident(true);
   else if(state.panel==='asset'&&selAsset())showAsset(selAsset());
 }
-function incSave(full){const inc=Inc.of(SITE.id);Inc.changed(SITE.id);if(inc.run&&inc.run.source==='muster')musterPush(SITE.id);incRedraw(full);}
+function incSave(full){const inc=Inc.of(SITE.id);Inc.changed(SITE.id);if(IR.isMuster(inc.run))musterPush(SITE.id);incRedraw(full);}
 function incSetMark(inc,id,st,quiet){
   const was=inc.marks[id]||null;if(was===(st||null))return;
   if(st)inc.marks[id]=st;else delete inc.marks[id];
@@ -3309,7 +3309,7 @@ function incTargetHtml(sel,s,run){
   return `<div class="inc-tg">${head}${incCallHtml(r.items.slice(0,4))}</div>`;
 }
 function incRunHtml(inc){
-  const rv=runView(inc);if(!rv)return `<p class="empty">${inc.run.source==='muster'?'Reading the incident from Muster…':`Playbook ${esc(inc.run.pb)} is unknown here.`}</p>`;
+  const rv=runView(inc);if(!rv)return `<p class="empty">${IR.isMuster(inc.run)?'Reading the incident from Muster…':`Playbook ${esc(inc.run.pb)} is unknown here.`}</p>`;
   const {pb,run}=rv,R=IR.route(pb,run),w=Inc.canWrite;if(!run.cur)return '<p class="empty">This response has no step.</p>';
   return `<ol class="inc-steps">${R.map((sid,i)=>{const s=IR.step(pb,sid),cur=sid===run.cur&&!run.closed,done=i<run.path.length-1||(run.closed&&sid===run.cur),ahead=i>=run.path.length;
     let h=`<li class="inc-step ${s.type}${done?' done':''}${cur?' cur':''}${ahead?' ahead':''}"><span class="dot">${done?'✓':i+1}</span><div class="inc-sb"><b>${esc(s.title)}</b><small>${esc(s.phase)}${s.role?' · '+esc(s.role):''}${s.sla?` · SLA ${s.sla} min`:''}</small>${run.answers[sid]?`<span class="inc-ans">→ ${esc(run.answers[sid])}</span>`:''}`;
@@ -3346,7 +3346,7 @@ function showIncident(keep){
       ${feed.length?`<ul class="list">${feed.map((sc,i)=>`<li class="reach"><span class="nm">${esc(sc.ref)} · ${esc(sc.name)}<small>${esc(sc.pb)} ${esc(IR.PLAYBOOKS[sc.pb].name)} · ${esc(sc.mode)} · ${esc(sc.note)}</small></span>${w?`<button class="btn small" data-inc-open="${i}">Open</button>`:''}</li>`).join('')}</ul>
       <p class="fhint">Muster is not connected to this Strata: these two incidents are examples built from this map.</p>`:''}`;
   }else{
-    const rv=runView(inc),R=rv?rv.run:run,pb=rv&&rv.pb,real=run.source==='muster',mins=Math.floor((Date.now()-(R.startedAt||Date.now()))/60000);
+    const rv=runView(inc),R=rv?rv.run:run,pb=rv&&rv.pb,real=IR.isMuster(run),mins=Math.floor((Date.now()-(R.startedAt||Date.now()))/60000);
     const ended=R.closed?`<span class="tag" style="color:var(--low)"><i style="background:var(--low)"></i>${R.status==='stopped'?'Stopped':'Closed'}</span>`:'';
     body+=`<div class="inc-run"><div class="inc-rh"><span class="mono">${esc(R.ref)} · ${esc(R.pb)} v${esc(R.v)} · ${esc(R.mode||'')}</span><span class="mono">T+${pad(Math.floor(mins/60))}:${pad(mins%60)}</span></div>
       <b class="inc-rn">${esc(R.name)}</b>
@@ -3400,7 +3400,7 @@ det.addEventListener('click',e=>{
   if(q('[data-inc-off]')){incToggle(false);return;}
   if(q('[data-inc-open]')){incOpenScenario(+q('[data-inc-open]').dataset.incOpen);return;}
   if(q('[data-inc-mopen]')){musterOpen(q('[data-inc-mopen]').dataset.incMopen);return;}
-  if(q('[data-inc-go]')){const b=q('[data-inc-go]');if(inc.run&&inc.run.source==='muster')musterGo(b.dataset.incEdge,b);else incGo(b.dataset.incGo,b.dataset.incLbl||'');return;}
+  if(q('[data-inc-go]')){const b=q('[data-inc-go]');if(IR.isMuster(inc.run))musterGo(b.dataset.incEdge,b);else incGo(b.dataset.incGo,b.dataset.incLbl||'');return;}
   if(q('[data-inc-cut]')){const id=q('[data-inc-cut]').dataset.incCut,f=FLOWS.find(x=>x.id===id),r=IR.flowsToCut(SITE,inc,IR.affected(SITE,inc)).find(x=>x.f.id===id);
     const i=inc.cuts.indexOf(id);if(i>=0){inc.cuts.splice(i,1);incLog(inc,`Flow reopened: ${nameOf(f.src)} → ${nameOf(f.dst)} ${f.port}`);}
     else{inc.cuts.push(id);incLog(inc,`Flow cut at ${r?r.at.label:'the host'}: ${nameOf(f.src)} → ${nameOf(f.dst)} ${f.port}`,'ok');}
@@ -3411,7 +3411,7 @@ det.addEventListener('click',e=>{
     Inc.all[SITE.id]=IR.empty();incSave(true);toast('Incident cleared.');return;}
 });
 det.addEventListener('change',e=>{const c=e.target.closest('[data-inc-chk]');if(!c||!SITE)return;const inc=Inc.of(SITE.id);if(!inc.run)return;
-  if(inc.run.source==='muster'){const [node,i]=c.dataset.incChk.split(':');musterCall('tasks',{nodeId:node,index:+i,done:c.checked});return;}
+  if(IR.isMuster(inc.run)){const [node,i]=c.dataset.incChk.split(':');musterCall('tasks',{nodeId:node,index:+i,done:c.checked});return;}
   inc.run.checks[c.dataset.incChk]=c.checked;Inc.changed(SITE.id);});
 $('#incBtn').addEventListener('click',()=>{if(!SITE)return;if(state.panel==='incident'){closeDet();return;}if(!incOn()&&Inc.canWrite)incToggle(true);else showIncident();closeCtlMobile(true);});
 $('#cart').addEventListener('click',e=>{if(e.target.closest('[data-inc-board]'))showIncident();});
@@ -3432,7 +3432,7 @@ async function musterLoad(){
 // The run shown in the sheet: the example kept in the incident, or the Muster incident it points to
 function runView(inc){
   const r=inc.run;if(!r)return null;
-  if(r.source!=='muster'){const pb=IR.PLAYBOOKS[r.pb];return pb?{pb,run:r}:null;}
+  if(!IR.isMuster(r)){const pb=IR.PLAYBOOKS[r.pb];return pb?{pb,run:r}:null;}
   const m=MU.full[r.id];if(!m)return null;
   const pb=IR.fromGraph(m);return {pb,run:IR.runOf(m,pb)};
 }
@@ -3440,7 +3440,7 @@ function runView(inc){
 let musterSyncing=false;
 async function musterSync(){
   if(!SITE||!musterOn()||musterSyncing)return;
-  const id=SITE.id,inc=Inc.of(id),r=inc.run;if(!r||r.source!=='muster'){if(state.panel==='incident')showIncident(true);return;}
+  const id=SITE.id,inc=Inc.of(id),r=inc.run;if(!IR.isMuster(r)){if(state.panel==='incident')showIncident(true);return;}
   musterSyncing=true;
   try{
     const m=await Store.api('GET','api/muster/incidents/'+encodeURIComponent(r.id));MU.full[r.id]=m;
@@ -3459,7 +3459,7 @@ async function musterSync(){
 function musterPush(siteId){
   clearTimeout(MU.t);
   MU.t=setTimeout(async()=>{
-    const s=siteById[siteId],inc=Inc.of(siteId),r=inc.run;if(!s||!r||r.source!=='muster')return;
+    const s=siteById[siteId],inc=Inc.of(siteId),r=inc.run;if(!s||!IR.isMuster(r))return;
     const marks={},names={};IR.affected(s,inc).forEach(a=>{marks[a]=inc.marks[a];names[a]=s.byId[a].name;});
     const log=MU.out.splice(0);
     try{await Store.api('POST',`api/muster/incidents/${encodeURIComponent(r.id)}/strata`,{site:siteId,marks,names,log});}

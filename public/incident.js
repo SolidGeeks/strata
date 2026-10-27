@@ -111,7 +111,7 @@ function callList(site,ids,withIs=true){
 const step=(pb,id)=>pb.steps.find(s=>s.id===id);
 const nextOf=(pb,id)=>pb.edges.filter(e=>e[0]===id);
 function start(sc,pb,now,by){
-  const run={ref:sc.ref,name:sc.name,pb:pb.code,v:pb.v,mode:sc.mode,severity:sc.severity,assets:(sc.assets||[]).slice(),params:Object.assign({},sc.params||{}),source:sc.source||'muster',
+  const run={ref:sc.ref,name:sc.name,pb:pb.code,v:pb.v,mode:sc.mode,severity:sc.severity,assets:(sc.assets||[]).slice(),params:Object.assign({},sc.params||{}),source:sc.source||'example',
     path:[pb.steps[0].id],cur:pb.steps[0].id,answers:{},checks:{},startedAt:now,closed:false};
   const n=nextOf(pb,run.cur)[0];if(n){run.path.push(n[1]);run.cur=n[1];}
   return run;
@@ -131,6 +131,8 @@ function advance(site,inc,pb,to,label){
 }
 
 /* ---- A Muster incident, as the map runs it ---- */
+// A run that points to a real Muster incident (an example has no Muster id; older ones say source:'muster')
+const isMuster=r=>!!(r&&r.source==='muster'&&r.id);
 // The playbook frozen in the incident, in the shape above; edges keep their Muster id
 function fromGraph(m){
   const g=m.graph||{nodes:[],edges:[]};
@@ -425,6 +427,6 @@ function yamlCheck(text){
 }
 
 const api={STATES,empty,clean,marked,affected,reach,consumers,business,selectAssets,resolve,cutPoint,flowsToCut,callList,
-  PLAYBOOKS,step,nextOf,start,effects,advance,route,fromGraph,runOf,newAnswers,musterFor,idsOf,demoFeed,placeholders,prompts,sensitive,leaks,reidentify,yamlCheck};
+  PLAYBOOKS,step,nextOf,start,effects,isMuster,advance,route,fromGraph,runOf,newAnswers,musterFor,idsOf,demoFeed,placeholders,prompts,sensitive,leaks,reidentify,yamlCheck};
 root.StrataIncident=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
