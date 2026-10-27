@@ -20,8 +20,14 @@ const read = f => fs.readFileSync(path.join(PUB, f), 'utf8');
 const js = s => s.replace(/<\/script/gi, '<\\/script');
 
 const html = read('index.html');
-const body = html.slice(html.indexOf('<body>') + 6, html.indexOf('</body>'))
-  .replace(/<script src="[^"]+"><\/script>\s*/g, '');
+// The page loads these three scripts; they are inlined below instead. Any other script tag stops the build.
+let body = html.slice(html.indexOf('<body>') + 6, html.indexOf('</body>'));
+for (const f of ['analysis.js', 'incident.js', 'app.js']) {
+  const tag = `<script src="${f}"></script>`;
+  if (!body.includes(tag)) throw new Error(`index.html no longer loads ${f}: check scripts/build-online.mjs`);
+  body = body.replace(tag, '');
+}
+if (body.toLowerCase().includes('<script')) throw new Error('index.html loads a script the one-page build does not inline: check scripts/build-online.mjs');
 const cdn = `https://cdn.jsdelivr.net/npm/three@${THREE}/`;
 let app = read('app.js')
   .replace("import('./vendor/three.module.js')", `import('${cdn}+esm')`)
