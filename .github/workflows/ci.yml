@@ -9,6 +9,30 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request must include the latest release of its base branch. One made from an old main undoes what
+  # was fixed since, and conflicts. Lagging a few commits behind is fine: it only gets a notice.
+  base:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the branch as pushed, not the merge GitHub prepares (that one always contains the base branch)
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: The branch includes the latest release
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --quiet origin "+refs/heads/$BASE:refs/remotes/origin/$BASE" '+refs/tags/*:refs/tags/*'
+          behind=$(git rev-list --count HEAD..origin/$BASE)
+          tag=$(git tag --merged origin/$BASE --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          if [ -n "$tag" ] && ! git merge-base --is-ancestor "$tag" HEAD; then
+            echo "::error::This branch starts before $tag: it is $behind commits behind $BASE. Update it from $BASE (git fetch upstream && git rebase upstream/$BASE, or git merge upstream/$BASE), then push again."
+            exit 1
+          fi
+          if [ "$behind" -gt 0 ]; then echo "::notice::This branch includes $tag but is $behind commits behind $BASE."; else echo "Up to date with $BASE."; fi
+
   test:
     runs-on: ubuntu-latest
     strategy:

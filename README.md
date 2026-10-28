@@ -592,6 +592,8 @@ The tests start a real server on a temporary data folder, create one account per
 
 The `CI` workflow runs them on Node 20 and 22 on every push to `main` and every pull request. A change that touches the API must come with a test.
 
+A pull request must start from the latest release or later: the `base` job fails when the branch does not include the latest `v…` tag of `main`, and says how to update it (rebase or merge `main`). A few commits behind `main` only gets a notice.
+
 `npm run test:e2e` walks through the interface in Chromium with Playwright (`tests/e2e.mjs`): an admin loads the demo and sees the 3D model and the 2D diagram, a contributor proposes a change, an approver sees it highlighted and approves it. Any JavaScript error in a page fails it. The first time, install the browser with `npx playwright install chromium`. The `CI` workflow runs it too (`e2e` job). A change to the interface must keep it green.
 
 ### Releasing
