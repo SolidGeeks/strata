@@ -122,3 +122,37 @@ test('demo feed: builds the two Muster examples from the map', () => {
   assert.deepEqual(f[0].assets, ['file-01', 'pc-01']);
   assert.equal(f[1].params.cve, 'CVE-2021-44228');
 });
+
+test('Muster: a frozen playbook and its steps become a run on the map, answers apply their effects once', () => {
+  const s = site(), inc = I.empty();
+  assert.equal(I.isMuster(I.start({ ref: 'IR-1', name: 'x', params: {} }, I.PLAYBOOKS['PB-001'], 0)), false, 'an example is not a Muster incident');
+  assert.equal(I.isMuster({ source: 'muster' }), false, 'nor an example saved by an earlier version');
+  const m = { id: 'inc_1', ref: 'INC-1', name: 'Log4Shell', pbCode: 'PB-010', pbName: 'Exploited', v: 1, status: 'active', mode: 'live', severity: 'Critical', startedAt: 0,
+    graph: { nodes: [{ id: 'start', type: 'start', title: 'S' }, { id: 'found', type: 'decision', title: 'Found?', targets: ['vuln:{cve}'], effects: { Yes: ['suspected', 'vuln:{cve}'] } }, { id: 'act', type: 'action', title: 'Act', checklist: ['a', 'b'] }, { id: 'end', type: 'end', title: 'E' }],
+      edges: [{ id: 'e1', from: 'start', to: 'found', label: '' }, { id: 'e2', from: 'found', to: 'act', label: 'Yes' }, { id: 'e3', from: 'found', to: 'end', label: 'No' }, { id: 'e4', from: 'act', to: 'end', label: '' }] },
+    steps: [{ id: 'start', edge: 'e1' }, { id: 'found', edge: 'e2' }, { id: 'act' }], checks: { act: [false, true] }, strata: { site: 'lyon', assets: ['web-01'], params: { cve: 'CVE-2021-44228' } } };
+  const pb = I.fromGraph(m), run = I.runOf(m, pb);
+  assert.deepEqual(J(pb.edges[1]), ['found', 'act', 'Yes', 'e2']);
+  assert.equal(run.cur, 'act');
+  assert.deepEqual(J(run.answers), { found: 'Yes' });
+  assert.deepEqual(J(run.checks), { 'act:1': true });
+  assert.equal(I.isMuster(run), true);
+  const news = I.newAnswers(s, inc, pb, m, 0);
+  assert.deepEqual(J(news.map(a => a.marks)), [[['web-01', 'suspected']]]);
+  assert.deepEqual(J(I.newAnswers(s, inc, pb, m, 3)), [], 'answers already seen are not applied again');
+  assert.deepEqual(J(I.idsOf(s, ['web-01', 'db-01', 'nowhere'])), ['web-01', 'db-01']);
+  const { mine, other } = I.musterFor(Object.assign(s, { id: 'lyon' }), [m, { id: 'x', strata: { site: 'paris', assets: [], params: {} } }, { id: 'y', strata: null }]);
+  assert.deepEqual(J(mine.map(i => i.id)), ['inc_1']);
+  assert.deepEqual(J(other.map(i => i.id)), ['x', 'y']);
+});
+
+test('adopt: a new incident starts from its own assets, marks made by hand before any incident stay', () => {
+  const inc = I.clean({ marks: { a: 'compromised' }, cuts: ['f1'] });
+  assert.equal(I.adopt(inc, 'IR-1'), 0, 'marks made by hand are kept for the first incident');
+  assert.deepEqual(J(inc.marks), { a: 'compromised' });
+  assert.equal(I.adopt(inc, 'IR-1'), 0, 'opening the same incident again changes nothing');
+  assert.equal(I.adopt(inc, 'IR-2'), 1);
+  assert.deepEqual(J(inc.marks), {});
+  assert.deepEqual(J(inc.cuts), []);
+  assert.equal(I.clean(J(inc)).from, 'IR-2', 'kept when saved');
+});

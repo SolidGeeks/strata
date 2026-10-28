@@ -11,7 +11,7 @@ const TYPE_LABEL={server:'Server',dc:'Domain controller',db:'Database',hyperviso
 const SEV_RANK={none:0,low:1,med:2,high:3,crit:4};
 
 /* ---- Incident state of one IS ---- */
-// {on, marks:{assetId:state}, cuts:[flowId], run:null|{…}, log:[{at,msg,kind,by}]}
+// {on, marks:{assetId:state}, cuts:[flowId], run:null|{…}, log:[{at,msg,kind,by}], from: the incident the marks belong to}
 function empty(){return {on:false,marks:{},cuts:[],run:null,log:[]};}
 function clean(o){
   const e=empty();if(!o||typeof o!=='object')return e;
@@ -20,7 +20,16 @@ function clean(o){
   if(Array.isArray(o.cuts))e.cuts=o.cuts.filter(x=>typeof x==='string');
   if(o.run&&typeof o.run==='object')e.run=o.run;
   if(Array.isArray(o.log))e.log=o.log.slice(0,500);
+  if(typeof o.from==='string'&&o.from)e.from=o.from.slice(0,120);
   return e;
+}
+// Opening an incident on the map: the marks and cuts of another incident are put aside (an incident is its own
+// situation), those made by hand before any incident was opened stay (they are often the one being declared).
+// Returns how many marks were put aside.
+function adopt(inc,key){
+  let n=0;
+  if(inc.from&&inc.from!==key){n=Object.keys(inc.marks).length;inc.marks={};inc.cuts=[];}
+  inc.from=key;return n;
 }
 // Assets in the given states that still exist on the map
 function marked(site,inc,states){return Object.keys(inc.marks).filter(id=>site.byId[id]&&states.includes(inc.marks[id]));}
@@ -111,19 +120,61 @@ function callList(site,ids,withIs=true){
 const step=(pb,id)=>pb.steps.find(s=>s.id===id);
 const nextOf=(pb,id)=>pb.edges.filter(e=>e[0]===id);
 function start(sc,pb,now,by){
-  const run={ref:sc.ref,name:sc.name,pb:pb.code,v:pb.v,mode:sc.mode,severity:sc.severity,assets:(sc.assets||[]).slice(),params:Object.assign({},sc.params||{}),source:sc.source||'muster',
+  const run={ref:sc.ref,name:sc.name,pb:pb.code,v:pb.v,mode:sc.mode,severity:sc.severity,assets:(sc.assets||[]).slice(),params:Object.assign({},sc.params||{}),source:sc.source||'example',
     path:[pb.steps[0].id],cur:pb.steps[0].id,answers:{},checks:{},startedAt:now,closed:false};
   const n=nextOf(pb,run.cur)[0];if(n){run.path.push(n[1]);run.cur=n[1];}
   return run;
 }
-// Moves the run along an edge; returns the marks a decision asks for, as [[assetId,state]]
+// The marks a decision asks for once answered, as [[assetId,state]]: never back from compromised or contained
+function effects(site,inc,s,label,params){
+  const eff=s&&s.effects&&s.effects[label],out=[];
+  if(eff)selectAssets(site,inc,eff[1],params).forEach(id=>{const was=inc.marks[id];if(was!=='compromised'&&was!=='contained'&&was!==eff[0])out.push([id,eff[0]]);});
+  return out;
+}
+// Moves the run along an edge; returns the marks a decision asks for
 function advance(site,inc,pb,to,label){
-  const run=inc.run,s=step(pb,run.cur),changes=[];
-  if(label){run.answers[run.cur]=label;const eff=s.effects&&s.effects[label];
-    if(eff)selectAssets(site,inc,eff[1],run.params).forEach(id=>{const was=inc.marks[id];if(was!=='compromised'&&was!=='contained'&&was!==eff[0])changes.push([id,eff[0]]);});}
+  const run=inc.run,s=step(pb,run.cur),changes=label?effects(site,inc,s,label,run.params):[];
+  if(label)run.answers[run.cur]=label;
   run.path.push(to);run.cur=to;if(step(pb,to).type==='end')run.closed=true;
   return changes;
 }
+
+/* ---- A Muster incident, as the map runs it ---- */
+// A run that points to a real Muster incident (an example has no Muster id; older ones say source:'muster')
+const isMuster=r=>!!(r&&r.source==='muster'&&r.id);
+// The playbook frozen in the incident, in the shape above; edges keep their Muster id
+function fromGraph(m){
+  const g=m.graph||{nodes:[],edges:[]};
+  return {code:m.pbCode,name:m.pbName,v:m.v,severity:m.severity,
+    steps:g.nodes.map(n=>({id:n.id,type:n.type,title:n.title,phase:n.phase||'',role:n.role||'',sla:n.sla||0,desc:n.desc||'',checklist:n.checklist||[],targets:Array.isArray(n.targets)?n.targets:[],effects:n.effects||null})),
+    edges:g.edges.map(e=>[e.from,e.to,e.label||'',e.id])};
+}
+// Where the response stands: the steps taken, the answers given, the tasks ticked
+function runOf(m,pb){
+  const steps=m.steps||[],answers={},checks={};
+  steps.forEach(st=>{const e=st.edge&&pb.edges.find(x=>x[3]===st.edge),s=step(pb,st.id);if(e&&s&&s.type==='decision')answers[st.id]=e[2];});
+  Object.entries(m.checks||{}).forEach(([id,arr])=>(arr||[]).forEach((v,i)=>{if(v)checks[id+':'+i]=true;}));
+  const st=m.strata||{};
+  return {source:'muster',id:m.id,ref:m.ref,name:m.name,pb:m.pbCode,v:m.v,mode:m.mode,severity:m.severity,status:m.status,
+    assets:st.assets||[],params:st.params||{},path:steps.map(x=>x.id),cur:steps.length?steps[steps.length-1].id:null,answers,checks,startedAt:m.startedAt,closed:m.status!=='active'};
+}
+// Answers given since the map last looked (in Strata or in Muster), with the marks they ask for
+function newAnswers(site,inc,pb,m,seen){
+  const out=[],steps=m.steps||[];
+  for(let i=Math.max(0,seen||0);i<steps.length;i++){const st=steps[i],s=step(pb,st.id),e=st.edge&&pb.edges.find(x=>x[3]===st.edge);
+    if(s&&e&&s.type==='decision')out.push({step:s,label:e[2],marks:effects(site,inc,s,e[2],(m.strata||{}).params)});}
+  return out;
+}
+// Muster incidents that belong to this IS: linked to it, or naming one of its assets
+function musterFor(site,list){
+  const mine=[],other=[];
+  (list||[]).forEach(i=>{const st=i.strata||{};
+    const named=(st.assets||[]).some(a=>site.byId[a]||site.assets.some(x=>x.name===a));
+    (st.site===site.id||(!st.site&&named)?mine:other).push(i);});
+  return {mine,other};
+}
+// Asset ids from what Muster names: Strata ids, or names
+const idsOf=(site,names)=>[...new Set((names||[]).map(a=>site.byId[a]?a:(site.assets.find(x=>x.name===a)||{}).id).filter(Boolean))];
 // The most likely route ahead: the steps taken, then the first edge out of each step
 function route(pb,run){
   const seen=new Set(run.path),r=run.path.slice();let c=run.cur;
@@ -384,7 +435,7 @@ function yamlCheck(text){
   return {blocks,steps:types.length,bad:[...new Set(types.filter(t=>!['start','action','decision','escalation','end'].includes(t)))],targets:(String(text).match(/^\s*targets:/gm)||[]).length};
 }
 
-const api={STATES,empty,clean,marked,affected,reach,consumers,business,selectAssets,resolve,cutPoint,flowsToCut,callList,
-  PLAYBOOKS,step,nextOf,start,advance,route,demoFeed,placeholders,prompts,sensitive,leaks,reidentify,yamlCheck};
+const api={STATES,empty,clean,adopt,marked,affected,reach,consumers,business,selectAssets,resolve,cutPoint,flowsToCut,callList,
+  PLAYBOOKS,step,nextOf,start,effects,isMuster,advance,route,fromGraph,runOf,newAnswers,musterFor,idsOf,demoFeed,placeholders,prompts,sensitive,leaks,reidentify,yamlCheck};
 root.StrataIncident=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
