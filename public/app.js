@@ -330,6 +330,13 @@ function buildDemo(){
   out.wan=[['paris','dcw','MPLS',4200],['lyon','dcw','MPLS',2600],['nantes','dcw','MPLS',900],['bordeaux','dcw','IPsec',650],['paris','lyon','IPsec',800],
     ['nantes','lyon','IPsec IKEv1',120,true,'IKEv1 tunnel with a weak pre-shared key'],['bordeaux','paris','Direct link',60,true,'Unfiltered interconnection between the two IS']]
     .map(([a,b,tech,vol,risk,note],i)=>({id:'w-'+i,a,b,tech,vol,risk:!!risk,note:note||''}));
+  // For the dashboard: when each vulnerability was first seen, the assets a scanner knows, and devices nobody owns
+  const h=s=>{let x=2166136261;for(const c of s)x=Math.imul(x^c.charCodeAt(0),16777619);return ((x>>>0)%100000)/100000;},now=Date.now();
+  Object.entries(out.assets).forEach(([id,a])=>{
+    (a.vulns||[]).forEach(v=>{const days=3+Math.floor(Math.pow(h(id+v.id),1.5)*380)+(v.kev?45:0);v.firstSeen=new Date(now-days*86400000).toISOString().slice(0,10);});
+    if(['server','dc','db','hypervisor','workstation','gateway'].includes(a.type)&&h(id+'scan')<0.85)a.ext=Object.assign({},a.ext,{cyberwatch:1000+Math.floor(h(id)*9000)});
+    if(['camera','phone','iot','printer','ap'].includes(a.type)&&h(id+'own')<0.6)a.contacts=[];
+  });
   return out;
 }
 
@@ -1945,7 +1952,8 @@ async function act(name){
   if(name==='new-vlan')return vlanForm(null);
   if(name==='edit-site')return siteForm(SITE);
   if(name==='new-biz')return businessForm(null);
-  if(name==='demo'){if(SITES.length&&!confirmArm('demo'))return;await replaceAll(buildDemo(),'Loading the demo');return;}
+  if(name==='demo'){if(SITES.length&&!confirmArm('demo'))return;const d=buildDemo();await replaceAll(d,'Loading the demo');if(Store.mode==='local')kpiSeedDemo(d);return;}
+  if(name==='dashboard')return openDash();
   if(name==='wipe'){if(!confirmArm('wipe'))return;await replaceAll({si:{},assets:{},wan:[]},'Deleting');state.ovSelId=null;closeDet();return;}
   if(name==='export')return exportJson();
   if(name==='import'){$('#io').value='';$('#io').click();return;}
@@ -3955,6 +3963,147 @@ function exportSiem(){
   saveFile(`siem-plan_${fileStem(SITE.name)}_${today()}.csv`,'text/csv;charset=utf-8',csv(rows));
 }
 
+/* ================= Dashboard and KPIs ================= */
+// Key figures over time for a steering committee: exposure, vulnerability age, owner and scan coverage
+// (kpi.js). On a Strata server they are measured from the history of the map; in a browser-only map, from a
+// snapshot this page keeps each day.
+const KP=StrataKpi,KPI_KEY='strata-kpi';
+const DASH={scope:'all',period:'q',data:null,loading:false};
+const PERIODS={q:{label:'12 weeks',points:13,step:7},h:{label:'6 months',points:14,step:14},y:{label:'12 months',points:13,step:30}};
+const kpiLocal=()=>{try{return JSON.parse(localStorage.getItem(KPI_KEY)||'{}')||{};}catch(e){return {};}};
+const kpiSaveLocal=o=>{try{localStorage.setItem(KPI_KEY,JSON.stringify(o));}catch(e){}};
+const dayOf=t=>new Date(t).toISOString().slice(0,10);
+function kpiMeasureAll(r,at,seen){const out={total:KP.measure(r,at,seen),sites:{}};Object.keys(r.si||{}).forEach(id=>out.sites[id]=KP.measure(r,at,seen,id));return out;}
+// Browser-only map: note when each vulnerability is first seen, and keep one snapshot a day
+function kpiTrack(){
+  if(Store.mode!=='local'||Store.view||!Object.keys(liveRaw.si||{}).length)return;
+  const o=kpiLocal(),now=Date.now(),iso=new Date(now).toISOString();o.seen=o.seen||{};o.days=o.days||{};
+  Object.entries(liveRaw.assets).forEach(([id,a])=>(a.vulns||[]).forEach(v=>{const k=`${id}|${v.id||v.title||''}`;if(!o.seen[k])o.seen[k]={at:v.firstSeen||iso};}));
+  const m=kpiMeasureAll(liveRaw,now,o.seen);delete m.total.oldest;Object.values(m.sites).forEach(x=>delete x.oldest);
+  o.days[dayOf(now)]=m;
+  const keep=Object.keys(o.days).sort().slice(-400);o.days=Object.fromEntries(keep.map(k=>[k,o.days[k]]));
+  kpiSaveLocal(o);
+}
+// The demo comes with its past: the map as it was each week, rebuilt from the dates its vulnerabilities were found
+function kpiSeedDemo(data){
+  const o={seen:{},days:{},demo:true},now=Date.now();
+  for(let k=52;k>=1;k--){const at=now-k*7*KP.DAY,r={si:data.si,assets:{}};
+    Object.entries(data.assets).forEach(([id,a])=>{r.assets[id]=Object.assign({},a,{vulns:(a.vulns||[]).filter(v=>!v.firstSeen||Date.parse(v.firstSeen)<=at)});});
+    const m=kpiMeasureAll(r,at,{});delete m.total.oldest;Object.values(m.sites).forEach(x=>delete x.oldest);o.days[dayOf(at)]=m;}
+  kpiSaveLocal(o);
+}
+async function kpiLoad(){
+  const P=PERIODS[DASH.period];DASH.loading=true;
+  try{
+    if(Store.mode==='api'){const j=await Store.api('GET',`api/kpi?points=${P.points}&step=${P.step}`);DASH.data={points:j.points,since:j.since,source:'history'};}
+    else{
+      kpiTrack();const o=kpiLocal(),days=Object.keys(o.days||{}).sort(),now=Date.now(),pts=[];
+      KP.points(now,P.points,P.step).forEach((at,i,all)=>{
+        if(i===all.length-1){const m=kpiMeasureAll(liveRaw,now,o.seen||{});pts.push({at:new Date(now).toISOString(),total:m.total,sites:m.sites});return;}
+        // the last snapshot of the period, if there is one
+        const d=days.filter(x=>x<=dayOf(at)).pop();if(d&&Date.parse(d)>at-P.step*KP.DAY)pts.push(Object.assign({at:new Date(at).toISOString()},o.days[d]));});
+      DASH.data={points:pts,since:days[0]||null,source:o.demo?'demo':'local'};
+    }
+  }catch(e){DASH.data={points:[],error:e.message||'error'};}
+  DASH.loading=false;
+}
+async function openDash(){
+  $('#dash').hidden=false;document.body.classList.add('has-dash');
+  if(state.view==='site'&&SITE&&DASH.scope==='all'&&!DASH.chosen)DASH.scope=SITE.id;
+  $('#dashBody').innerHTML='<p class="muted">Measuring…</p>';await kpiLoad();renderDash();
+}
+function closeDash(){$('#dash').hidden=true;document.body.classList.remove('has-dash');}
+
+/* ---- Charts: inline SVG, one y axis, thin marks, a <title> on every mark for its value ---- */
+const fmtD=t=>new Date(t).toLocaleDateString(undefined,{day:'numeric',month:'short'});
+const W0=560,H0=210,PL=40,PR=74,PT=14,PB=30;
+function chartFrame(pts,max,unit){
+  const n=pts.length,X0=PL+14,X1=W0-PR-10,x=i=>X0+(n<2?(X1-X0)/2:i*(X1-X0)/(n-1)),y=v=>PT+(H0-PT-PB)*(1-v/max);
+  let g='';[0,0.25,0.5,0.75,1].forEach(k=>{const v=max*k,yy=y(v);g+=`<line x1="${PL}" x2="${W0-PR}" y1="${yy}" y2="${yy}" class="grid"/><text x="${PL-6}" y="${yy+3.5}" text-anchor="end" class="ax">${Math.round(v*10)/10}${unit||''}</text>`;});
+  const ticks=n<2?[0]:[0,Math.floor((n-1)/2),n-1];ticks.forEach(i=>g+=`<text x="${x(i)}" y="${H0-8}" text-anchor="middle" class="ax">${fmtD(pts[i].at)}</text>`);
+  return {x,y,g};
+}
+// The top of the axis: four equal round steps, just above the highest value
+const niceMax=(v,pct)=>{if(pct)return 100;const r=Math.max(1,v)/4,m=Math.pow(10,Math.floor(Math.log10(r)));return 4*[1,1.2,1.5,2,2.5,3,4,5,6,8,10].find(k=>k*m>=r)*m;};
+function lineChart(pts,series,{pct,unit}={}){
+  const vals=series.flatMap(s=>pts.map(p=>s.get(p))).filter(v=>v!=null),max=niceMax(Math.max(1,...vals),pct),F=chartFrame(pts,max,unit);
+  let o=F.g;
+  series.forEach(s=>{const P=pts.map((p,i)=>({x:F.x(i),v:s.get(p),at:p.at})).filter(q=>q.v!=null);if(!P.length)return;
+    o+=`<polyline points="${P.map(q=>`${q.x},${F.y(q.v)}`).join(' ')}" fill="none" stroke="var(${s.color})" stroke-width="2" stroke-linejoin="round"/>`;
+    P.forEach((q,i)=>o+=`<circle cx="${q.x}" cy="${F.y(q.v)}" r="${i===P.length-1?4:3}" fill="var(${s.color})" stroke="var(--panel)" stroke-width="2"><title>${esc(s.name)}, ${fmtD(q.at)}: ${q.v}${unit||''}</title></circle>`);
+    const L=P[P.length-1];o+=`<text x="${L.x+8}" y="${F.y(L.v)+4}" class="dl">${L.v}${unit||''}</text>`;});
+  return `<svg viewBox="0 0 ${W0} ${H0}" class="dchart" role="img" aria-label="${esc(series.map(s=>s.name).join(', '))} over time">${o}</svg>${series.length>1?`<p class="dleg">${series.map(s=>`<span><i style="background:var(${s.color})"></i>${esc(s.name)}</span>`).join('')}</p>`:''}`;
+}
+function stackChart(pts,buckets){
+  const tot=pts.map(p=>buckets.reduce((n,b)=>n+b.get(p),0)),max=niceMax(Math.max(1,...tot)),F=chartFrame(pts,max);
+  const n=pts.length,bw=Math.max(6,Math.min(26,(W0-PL-PR)/Math.max(1,n)*0.6));let o=F.g;
+  pts.forEach((p,i)=>{let acc=0;buckets.forEach(b=>{const v=b.get(p);if(!v)return;const y1=F.y(acc+v),y0=F.y(acc);acc+=v;
+    o+=`<rect x="${F.x(i)-bw/2}" y="${y1}" width="${bw}" height="${Math.max(0,y0-y1-2)}" rx="2" fill="var(${b.color})"><title>${fmtD(p.at)} · ${esc(b.name)}: ${v}</title></rect>`;});
+    if(i===n-1)o+=`<text x="${F.x(i)+bw/2+6}" y="${F.y(acc)+4}" class="dl">${acc}</text>`;});
+  return `<svg viewBox="0 0 ${W0} ${H0}" class="dchart" role="img" aria-label="Open critical and high vulnerabilities by age">${o}</svg><p class="dleg">${buckets.map(b=>`<span><i style="background:var(${b.color})"></i>${esc(b.name)}</span>`).join('')}</p>`;
+}
+function spark(vals){
+  const v=vals.filter(x=>x!=null);if(v.length<2)return '';const lo=Math.min(...v),hi=Math.max(...v),r=hi-lo||1;
+  return `<svg viewBox="0 0 100 24" class="spark" aria-hidden="true"><polyline points="${v.map((x,i)=>`${i*100/(v.length-1)},${22-20*(x-lo)/r}`).join(' ')}" fill="none" stroke="var(--k1)" stroke-width="1.5"/></svg>`;
+}
+
+function renderDash(){
+  const D=DASH.data||{points:[]},pts=D.points.map(p=>Object.assign({at:p.at},DASH.scope==='all'?p.total:(p.sites||{})[DASH.scope])).filter(p=>p&&p.assets!=null);
+  const cur=pts[pts.length-1],first=pts[0],sites=Object.entries(liveRaw.si||{}).sort((a,b)=>(a[1].order||0)-(b[1].order||0));
+  const scopeName=DASH.scope==='all'?'Whole map':`IS ${(liveRaw.si[DASH.scope]||{}).name||DASH.scope}`;
+  const head=`<div class="dash-bar panel"><div><span class="cap">Steering committee</span><b>Security dashboard · ${esc(scopeName)}</b></div><div class="dash-tools">
+    <select data-dash-scope aria-label="Scope"><option value="all">Whole map</option>${sites.map(([id,d])=>`<option value="${esc(id)}"${DASH.scope===id?' selected':''}>IS ${esc(d.name||id)}</option>`).join('')}</select>
+    <div class="seg three" role="group" aria-label="Period">${Object.entries(PERIODS).map(([k,p])=>`<button data-dash-period="${k}" aria-pressed="${DASH.period===k}">${p.label}</button>`).join('')}</div>
+    <button class="btn small" data-dash="csv">Export (CSV)</button><button class="btn small" data-dash="print">Print or PDF</button><button class="close" data-dash="close" aria-label="Close the dashboard">×</button></div></div>`;
+  if(!cur){$('#dashBody').innerHTML=head+`<p class="empty">${D.error?esc('Could not measure: '+D.error):'No IS on the map yet.'}</p>`;return;}
+  // a tile: the value now, its change over the period, said in words, and its trend
+  const tile=(label,get,{unit='',better='down',sub}={})=>{const v=get(cur),v0=get(first),d=v!=null&&v0!=null&&pts.length>1?Math.round((v-v0)*10)/10:null;
+    const good=d==null||d===0?null:(better==='down')===(d<0);
+    return `<div class="ktile"><span class="cap">${esc(label)}</span><b>${v==null?'—':v}${v==null?'':unit}</b>${sub?`<small>${sub}</small>`:''}
+      ${d==null?'<small class="kd">No earlier value</small>':`<small class="kd ${good==null?'':good?'good':'bad'}">${d===0?'No change':`${d>0?'▲ +':'▼ '}${d}${unit}`} since ${fmtD(first.at)}${good==null?'':good?' · better':' · worse'}</small>`}
+      ${spark(pts.map(get))}</div>`;};
+  const V=p=>p.vulns,E=p=>p.exposure;
+  const tiles=[
+    tile('Internet-facing assets',p=>E(p).assets,{sub:`${cur.exposure.share??0}% of ${cur.assets} assets · ${cur.exposure.ports} ports`}),
+    tile('Admin ports open to the Internet',p=>E(p).admin,{sub:'Assets with SSH, RDP, SMB, WinRM, VNC or Telnet reachable from the Internet'}),
+    tile('Open critical and high',p=>V(p).crit+V(p).high,{sub:`${cur.vulns.crit} critical · ${cur.vulns.high} high · ${cur.vulns.kev} on the CISA KEV list`}),
+    tile('Median age, critical and high',p=>V(p).median,{unit:' d',sub:'Days since first seen'}),
+    tile('Past their deadline',p=>V(p).late,{sub:`Critical over ${KP.SLA.crit} d, high over ${KP.SLA.high} d, medium over ${KP.SLA.med} d, low over ${KP.SLA.low} d`}),
+    tile('Owner coverage',p=>p.owners.share,{unit:'%',better:'up',sub:`${cur.owners.covered} of ${cur.assets} assets have a named owner · critical assets: ${cur.owners.critical?Math.round(100*cur.owners.criticalCovered/cur.owners.critical):'—'}%`}),
+    tile('Scan coverage',p=>p.scans.share,{unit:'%',better:'up',sub:`${cur.scans.covered} of ${cur.assets} assets known to a vulnerability scanner`}),
+  ];
+  const ageCols=['--a1','--a2','--a3','--a4'];
+  const ownCrit=p=>p.owners.critical?Math.round(1000*p.owners.criticalCovered/p.owners.critical)/10:null;
+  const charts=`<div class="dgrid">
+    <section class="dcard"><h3>Exposure to the Internet</h3><p class="muted">Assets the Internet reaches directly, and those with an administration port open to it</p>${lineChart(pts,[{name:'Internet-facing assets',get:p=>E(p).assets,color:'--k1'},{name:'With an admin port open',get:p=>E(p).admin,color:'--k2'}])}</section>
+    <section class="dcard"><h3>Age of open critical and high vulnerabilities</h3><p class="muted">How long they have been open, at the end of each period</p>${stackChart(pts,KP.AGES.map(([,,name],k)=>({name,get:p=>p.vulns.ages[k],color:ageCols[k]})))}</section>
+    <section class="dcard"><h3>Owner coverage</h3><p class="muted">Share of assets with a named technical or business owner</p>${lineChart(pts,[{name:'Every asset',get:p=>p.owners.share,color:'--k1'},{name:'Critical assets',get:ownCrit,color:'--k2'}],{pct:true,unit:'%'})}</section>
+    <section class="dcard"><h3>Scan coverage</h3><p class="muted">Share of assets a vulnerability scanner knows</p>${lineChart(pts,[{name:'Scan coverage',get:p=>p.scans.share,color:'--k1'}],{pct:true,unit:'%'})}</section></div>`;
+  // the IS side by side, now
+  const now=D.points[D.points.length-1],rows=sites.map(([id,d])=>[d.name||id,now.sites&&now.sites[id]]).filter(([,m])=>m&&m.assets);
+  const cmp=DASH.scope!=='all'||rows.length<2?'':`<section class="dcard wide"><h3>Information systems now</h3><div class="tablewrap"><table class="dtab"><thead><tr><th>IS</th><th>Assets</th><th>Internet-facing</th><th>Admin ports open</th><th>Critical and high</th><th>Median age</th><th>Past deadline</th><th>Owners</th><th>Scanned</th></tr></thead><tbody>
+    ${rows.map(([n,m])=>`<tr><td><b>${esc(n)}</b></td><td class="num">${m.assets}</td><td class="num">${m.exposure.assets}</td><td class="num${m.exposure.admin?' bad':''}">${m.exposure.admin}</td><td class="num">${m.vulns.crit+m.vulns.high}</td><td class="num">${m.vulns.median==null?'—':m.vulns.median+' d'}</td><td class="num${m.vulns.late?' bad':''}">${m.vulns.late}</td><td class="num">${m.owners.share??'—'}%</td><td class="num">${m.scans.share??'—'}%</td></tr>`).join('')}</tbody></table></div></section>`;
+  const old=(cur.oldest||[]).length?`<section class="dcard wide"><h3>Oldest open critical and high vulnerabilities</h3><div class="tablewrap"><table class="dtab"><thead><tr><th>Vulnerability</th><th>Asset</th><th>Severity</th><th>Open for</th><th>Deadline</th></tr></thead><tbody>
+    ${cur.oldest.map(v=>`<tr><td><b class="mono">${esc(v.id||'—')}</b> ${esc(v.title)}${v.kev?' <span class="kevtag">KEV</span>':''}</td><td>${esc(v.name)}</td><td>${tag(v.sev)}</td><td class="num">${v.approx?'≥ ':''}${v.days} d</td><td class="num${v.late?' bad':''}">${v.late?`${v.days-KP.SLA[v.sev]} d late`:'On time'}</td></tr>`).join('')}</tbody></table></div></section>`:'';
+  const note=`<p class="dnote">${D.source==='history'?`Measured on the map as it was at the end of each period, rebuilt from its history${D.since?` (kept since ${fmtD(D.since)})`:''}.`:D.source==='demo'?'The past of the demo map is rebuilt from the dates its vulnerabilities were first seen; exposure, owners and scans did not change.':'This map is kept in this browser: one snapshot is kept each day it is opened.'} A vulnerability's age counts from the first version where it appears, or the date its scanner gives${cur.vulns.approx?'; “≥” marks those already there when the history starts':''}. Deadlines: ${Object.entries(KP.SLA).map(([k,v])=>`${SEV[k].label.toLowerCase()} ${v} days`).join(', ')}. Generated ${new Date().toLocaleString()}.</p>`;
+  $('#dashBody').innerHTML=head+`<div class="ktiles">${tiles.join('')}</div>`+charts+cmp+old+note;
+}
+function exportDash(){
+  const D=DASH.data;if(!D||!D.points.length)return;
+  const rows=[['Date','Scope','Assets','Internet-facing assets','Internet-facing ports','Admin ports open to the Internet','Risky flows','Open vulnerabilities','Critical','High','Medium','Low','On CISA KEV','Median age of critical and high (days)','Critical and high under 30 d','30 to 90 d','90 to 180 d','Over 180 d','Past deadline','Assets with an owner','Owner coverage (%)','Assets scanned','Scan coverage (%)']];
+  const line=(at,scope,m)=>rows.push([at.slice(0,10),scope,m.assets,m.exposure.assets,m.exposure.ports,m.exposure.admin,m.exposure.risky,m.vulns.open,m.vulns.crit,m.vulns.high,m.vulns.med,m.vulns.low,m.vulns.kev,m.vulns.median??'',...m.vulns.ages,m.vulns.late,m.owners.covered,m.owners.share??'',m.scans.covered,m.scans.share??'']);
+  D.points.forEach(p=>{line(p.at,'Whole map',p.total);Object.entries(p.sites||{}).forEach(([id,m])=>line(p.at,(liveRaw.si[id]||{}).name||id,m));});
+  saveFile(`kpi_${today()}.csv`,'text/csv;charset=utf-8',csv(rows));
+}
+$('#dash').addEventListener('click',async e=>{
+  const b=e.target.closest('[data-dash]'),pd=e.target.closest('[data-dash-period]');
+  if(pd){DASH.period=pd.dataset.dashPeriod;await kpiLoad();renderDash();return;}
+  if(!b)return;const k=b.dataset.dash;
+  if(k==='close')closeDash();else if(k==='csv')exportDash();else if(k==='print')print();
+});
+$('#dash').addEventListener('change',e=>{if(e.target.hasAttribute('data-dash-scope')){DASH.scope=e.target.value;DASH.chosen=true;renderDash();}});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#dash').hidden)closeDash();});
+
 /* ================= Navigation ================= */
 let fly=null;
 function flyTo(target,dist){const off=camera.position.clone().sub(controls.target);off.setLength(dist||Math.min(off.length(),28));
@@ -4025,7 +4174,7 @@ function onData(){
   if(state.panel==='proposal'&&Store.prop)showProposal();
   // the risk settings follow the saved document, unless a label is being typed
   if(state.panel==='risksettings'&&!(det.contains(document.activeElement)&&document.activeElement.matches('input,textarea'))){RSD=clone(raw.risk||{});showRiskSettings(true);}
-  renderServiceLists();renderCollab();
+  renderServiceLists();renderCollab();kpiTrack();
   lastCount=SITES.length;renderCart();syncUI();renderEmpty();runPending();
 }
 function runPending(){if(pendingAfterData&&!onSave){const f=pendingAfterData;pendingAfterData=null;f();}}

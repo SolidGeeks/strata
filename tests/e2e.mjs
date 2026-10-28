@@ -286,5 +286,12 @@ test('risk register: threats per asset on the matrix, requirements applied, sett
   await bob.locator('#lensBody [data-goto-logs]').first().click();
   await bob.waitForSelector('#det #logsCap');
   assert.ok(await bob.locator('#det details.lgs').count() > 0);
+
+  // the dashboard for a steering committee: key figures measured from the history of the map
+  await bob.click('#ctl [data-act="dashboard"]');
+  await bob.waitForSelector('#dash .ktile');
+  assert.equal(await bob.locator('#dash .ktile').count(), 7);
+  assert.match(await bob.locator('#dash').textContent(), /Internet-facing assets[\s\S]*Scan coverage/);
+  await bob.click('#dash [data-dash="close"]');
   assert.deepEqual(errors, [], 'JavaScript errors in the pages');
 });

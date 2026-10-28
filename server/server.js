@@ -13,6 +13,9 @@ import { createConnectors } from './connectors/index.js';
 import { createStore } from './connectors/store.js';
 import { ID_RE as MODULE_ID_RE } from './connectors/modules.js';
 import { ssoConfig, createSso, loginPage } from './sso.js';
+// The key figures (exposure, vulnerability age, owner and scan coverage) are measured by the same code as the page
+import '../public/kpi.js';
+const KPI = globalThis.StrataKpi;
 import { createMuster } from './muster.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -506,6 +509,22 @@ async function api(req, res, parts, url, auth) {
   if (r1 === 'state' && method === 'GET') {
     const at = url.searchParams.get('at');
     return send(res, 200, at !== null ? stateAt(parseInt(at, 10)) : state);
+  }
+  // Key figures over time, for a steering committee: measured on the map as it was at the end of each period,
+  // rebuilt from the history. Vulnerability ages come from the first version where each one appears.
+  if (r1 === 'kpi' && method === 'GET') {
+    const int = (k, lo, hi, d) => { const v = parseInt(url.searchParams.get(k) || '', 10); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+    const count = int('points', 2, 60, 13), step = int('step', 1, 92, 7), now = Date.now();
+    const seen = KPI.firstSeen(history), first = history.length ? Date.parse(history[0].at) : now, out = [];
+    for (const at of KPI.points(now, count, step)) {
+      if (at < first && at < now) continue;
+      let rev = state.rev;
+      if (at < now) for (let i = history.length - 1; i >= 0; i--) if (Date.parse(history[i].at) <= at) { rev = history[i].rev; break; }
+      const s = rev === state.rev ? state : stateAt(rev), last = at === now;
+      const trim = m => { if (!last) delete m.oldest; return m; };
+      out.push({ at: new Date(at).toISOString(), rev, total: trim(KPI.measure(s, at, seen)), sites: Object.fromEntries(Object.keys(s.si).map(id => [id, trim(KPI.measure(s, at, seen, id))])) });
+    }
+    return send(res, 200, { step, since: history.length ? history[0].at : null, sla: KPI.SLA, points: out });
   }
   if (r1 === 'export' && method === 'GET') {
     const stamp = new Date().toISOString().slice(0, 10);

@@ -164,6 +164,24 @@ test('risk settings: approvers save them, contributors propose them, history and
   assert.ok(h.data.entries.some(e => e.kind === 'risk'));
 });
 
+test('key figures: measured now and at the end of each period, from the history', async () => {
+  const bob = as('bob');
+  await bob.put('/api/si/kpi-is', { name: 'KPI', flows: [{ id: 'k1', src: 'internet', dst: 'kpi-web', port: 'tcp/443' }] });
+  await bob.put('/api/assets/kpi-web', { site: 'kpi-is', name: 'kpi-web', crit: 3, vulns: [{ id: 'CVE-2024-0001', sev: 'crit' }], contacts: [{ name: 'Ops', role: 'Technical owner' }] });
+  const r = await as('vic').get('/api/kpi?points=3&step=7');
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const last = r.data.points[r.data.points.length - 1];
+  assert.equal(last.sites['kpi-is'].exposure.assets, 1);
+  assert.equal(last.sites['kpi-is'].vulns.crit, 1);
+  assert.equal(last.sites['kpi-is'].oldest[0].id, 'CVE-2024-0001');
+  assert.equal(last.sites['kpi-is'].owners.share, 100);
+  assert.ok(r.data.points.length >= 1 && r.data.points.length <= 3);
+  // earlier points (before the history starts here) are left out; only the last one lists the oldest vulnerabilities
+  r.data.points.slice(0, -1).forEach(p => assert.ok(!('oldest' in p.total)));
+  assert.equal(r.data.sla.crit, 15);
+  assert.equal((await as(null).get('/api/kpi')).status, 401);
+});
+
 test('proposals: nobody approves their own (four-eyes rule)', async () => {
   const bob = as('bob');
   const { data } = await bob.post('/api/proposals', { title: 'Mine', changes: { si: { paris: { name: 'Paris' } } } });

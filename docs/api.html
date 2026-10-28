@@ -115,6 +115,7 @@
       <tbody>
         <tr><td><code>GET /api/state</code></td><td>viewer</td><td>→ <code>{si, assets, wan, services, risk, rev, updatedAt}</code></td></tr>
         <tr><td><code>GET /api/state?at=REV</code></td><td>viewer</td><td>→ the same, as it was right after revision <code>REV</code></td></tr>
+        <tr><td><code>GET /api/kpi?points=N&amp;step=DAYS</code></td><td>viewer</td><td>→ <code>{step, since, sla, points: [{at, rev, total, sites: {id: …}}]}</code>: the key figures of the dashboard, measured on the map as it was at the end of each period (<code>points</code> 2 to 60, 13 by default; <code>step</code> 1 to 92 days, 7 by default), rebuilt from the history; periods before the history starts are left out. Each measure: <code>assets</code>, <code>exposure {assets, share, ports, admin, risky}</code>, <code>vulns {open, crit, high, med, low, kev, median, ages, late, lateSerious, approx}</code>, <code>owners {covered, share, critical, criticalCovered}</code>, <code>scans {covered, share}</code>, and on the last point <code>oldest</code>, the ten oldest open critical and high vulnerabilities</td></tr>
         <tr><td><code>GET /api/export</code></td><td>viewer</td><td>→ an export file (<code>Content-Disposition: attachment</code>): <code>{format: "strata", version: 3, exportedAt, si, assets, wan, services, risk}</code></td></tr>
         <tr><td><code>GET /api/si/{id}</code>, <code>GET /api/assets/{id}</code></td><td>viewer</td><td>→ the document, or <code>404</code></td></tr>
         <tr><td><code>PUT /api/si/{id}</code></td><td>approver</td><td>the IS document → <code>{ok, rev}</code>. Creates or replaces it whole.</td></tr>
@@ -274,6 +275,7 @@ curl -H "Authorization: Bearer $STRATA_TOKEN" \
         <tr><td><code>apps</code></td><td><code>[{name, version, ports, src?}]</code>, software and the ports it listens on</td></tr>
         <tr><td><code>contacts</code></td><td>As for the IS</td></tr>
         <tr><td><code>ext</code></td><td>Ids in connected tools: <code>{"glpi": "Computer/12", "cyberwatch": 101}</code></td></tr>
+        <tr><td><code>scannedAt</code></td><td>When a vulnerability scanner last saw it (ISO date): counts for scan coverage for 30 days, as does an id in <code>ext</code> from a scanner (<code>cyberwatch</code>, <code>tenable</code>, <code>qualys</code>…) or a vulnerability with a <code>src</code></td></tr>
         <tr><td><code>risk</code></td><td>The treatment of its risks: <code>{threats: {threatId: {reqs: {"baselineId/reqId": "applied"|"planned"|"na"}, decision?, note?}}, excluded?: [threatIds], added?: [threatIds], accept?: 0-3}</code>; <code>accept</code>: an acceptance threshold for this asset only; <code>decision</code>: <code>accept</code>, <code>transfer</code> or <code>avoid</code> (missing: treat)</td></tr>
       </tbody>
     </table></div>
