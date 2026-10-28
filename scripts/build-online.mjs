@@ -20,9 +20,9 @@ const read = f => fs.readFileSync(path.join(PUB, f), 'utf8');
 const js = s => s.replace(/<\/script/gi, '<\\/script');
 
 const html = read('index.html');
-// The page loads these three scripts; they are inlined below instead. Any other script tag stops the build.
+// The page loads these scripts; they are inlined below instead. Any other script tag stops the build.
 let body = html.slice(html.indexOf('<body>') + 6, html.indexOf('</body>'));
-for (const f of ['analysis.js', 'incident.js', 'app.js']) {
+for (const f of ['analysis.js', 'incident.js', 'risk.js', 'baselines.js', 'logs.js', 'kpi.js', 'app.js']) {
   const tag = `<script src="${f}"></script>`;
   if (!body.includes(tag)) throw new Error(`index.html no longer loads ${f}: check scripts/build-online.mjs`);
   body = body.replace(tag, '');
@@ -59,6 +59,18 @@ ${js(read('analysis.js'))}
 </script>
 <script>
 ${js(read('incident.js'))}
+</script>
+<script>
+${js(read('risk.js'))}
+</script>
+<script>
+${js(read('baselines.js'))}
+</script>
+<script>
+${js(read('logs.js'))}
+</script>
+<script>
+${js(read('kpi.js'))}
 </script>
 <script>
 ${js(app)}

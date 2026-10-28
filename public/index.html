@@ -22,7 +22,7 @@
 <div id="flat" hidden><svg id="flatSvg" role="application" aria-label="2D diagram of the information system: drag assets and plates, draw flows"></svg></div>
 <div id="lens" hidden><div id="lensBody"></div></div>
 <div id="viewSw" class="panel" hidden>
-  <div class="seg three" id="lensSeg" role="group" aria-label="Point of view"><button data-lens="physical" aria-pressed="true" title="The network: zones, VLANs, assets and flows">Physical</button><button data-lens="app" aria-pressed="false" title="Applications and who calls whom">Application</button><button data-lens="business" aria-pressed="false" title="Business services and what they rely on">Business</button></div>
+  <div class="seg four" id="lensSeg" role="group" aria-label="Point of view"><button data-lens="physical" aria-pressed="true" title="The network: zones, VLANs, assets and flows">Physical</button><button data-lens="app" aria-pressed="false" title="Applications and who calls whom">Application</button><button data-lens="business" aria-pressed="false" title="Business services and what they rely on">Business</button><button data-lens="risk" aria-pressed="false" title="The risk register: threats per asset, risk matrix, requirements">Risks</button></div>
   <div class="seg two" id="viewSeg" role="group" aria-label="View"><button data-v="3d" aria-pressed="true">3D model</button><button data-v="2d" aria-pressed="false">2D diagram</button></div>
   <div id="tools2d" hidden>
     <div class="seg three edit-only" role="group" aria-label="Tool"><button data-tool="move" aria-pressed="true" title="Select and move (V)">Move</button><button data-tool="flow" aria-pressed="false" title="Draw a flow from one asset to another (F)">+ Flow</button><button data-tool="asset" aria-pressed="false" title="Click on a plate to add an asset there (A)">+ Asset</button></div>
@@ -35,6 +35,7 @@
 
 <header id="cart" class="panel"></header>
 <div id="modebar" class="panel" hidden role="status"></div>
+<div id="focusBar" class="panel" hidden role="status"></div>
 <button id="toggleCtl" class="panel" aria-expanded="false" aria-controls="ctl">Controls</button>
 
 <aside id="ctl" class="panel" aria-label="Navigation, editing and display">
@@ -45,6 +46,10 @@
       <button class="btn small" data-act="new-site"><span>+ New IS</span></button>
       <button class="btn small" data-act="new-wan"><span>+ Inter-IS link</span></button>
     </div>
+  </div>
+  <div class="sec">
+    <h3 class="cap">Steering</h3>
+    <div class="btns"><button class="btn" data-act="dashboard" title="Exposure, vulnerability age, owner and scan coverage over time, ready for a steering committee"><span>Dashboard and KPIs</span></button></div>
   </div>
   <div class="sec collab" hidden>
     <h3 class="cap">Collaboration</h3>
@@ -170,13 +175,14 @@
     <div class="legend" id="legend"></div>
   </div>
   <div class="sec about">
-    <p>Strata <span id="appVer">0.9.0</span>, free software under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">GNU AGPL v3</a>. <a id="srcLink" href="https://github.com/SolidGeeks/strata" target="_blank" rel="noopener">Source code</a></p>
+    <p>Strata <span id="appVer">0.10.0</span>, free software under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">GNU AGPL v3</a>. <a id="srcLink" href="https://github.com/SolidGeeks/strata" target="_blank" rel="noopener">Source code</a></p>
   </div>
 </aside>
 
 <aside id="det" class="panel" hidden aria-live="polite"></aside>
 <section id="empty" class="panel" hidden></section>
 <div id="toast" class="panel" role="status" hidden></div>
+<section id="dash" hidden aria-label="Dashboard"><div id="dashBody"></div></section>
 <section id="plan" hidden aria-label="Architecture plan">
   <div class="plan-bar panel">
     <div class="plan-t"><span class="cap">Architecture plan</span><b id="planTitle"></b></div>
@@ -211,6 +217,10 @@
 
 <script src="analysis.js"></script>
 <script src="incident.js"></script>
+<script src="risk.js"></script>
+<script src="baselines.js"></script>
+<script src="logs.js"></script>
+<script src="kpi.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

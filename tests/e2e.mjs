@@ -203,3 +203,95 @@ test('incident mode: a Muster incident opens on the map, a contributor works it,
 
   assert.deepEqual(errors, [], 'JavaScript errors in the pages');
 });
+
+test('risk register: threats per asset on the matrix, requirements applied, settings saved', async () => {
+  const bob = await signIn('bob');
+  await openIs(bob, 'lyon');
+  await bob.click('#lensSeg [data-lens="risk"]');
+  await bob.waitForSelector('#lensBody .rk-tab tbody tr');
+  const rows = await bob.locator('#lensBody .rk-tab tbody tr').count();
+  assert.ok(rows > 20, `the register of Lyon lists only ${rows} risks`);
+  // a cell of the matrix filters the register
+  await bob.locator('#lensBody [data-cell^="residual:"]').filter({ hasText: /\d/ }).first().click();
+  assert.ok(await bob.locator('#lensBody .rk-tab tbody tr').count() < rows);
+  await bob.click('#lensBody [data-rk-clear]');
+
+  // the VPN gateway: compromise of a remote access, then its requirements applied one by one
+  await bob.fill('#search', 'vpn-gw');
+  await bob.press('#search', 'Enter');
+  await bob.click('#det [data-threat="remote-access"]');
+  await bob.waitForSelector('#det [data-req]');
+  const level = () => bob.locator('#det .kv dd').nth(2).textContent();
+  const before = await level();
+  const reqs = bob.locator('#det [data-req]'), n = await reqs.count();
+  for (let k = 0; k < n; k++) { await reqs.nth(k).selectOption('applied'); await bob.waitForTimeout(150); }
+  await bob.waitForTimeout(800);
+  assert.notEqual(await level(), before, 'the requirements applied lower the risk');
+  const vpn = Object.values((await api('bob', 'GET', 'api/state')).data.assets).find(a => a.site === 'lyon' && a.name === 'vpn-gw');
+  assert.equal(Object.values(vpn.risk.threats['remote-access'].reqs).filter(s => s === 'applied').length, n);
+
+  // the 2D plan of the asset lists its requirements by baseline, under the firewall rules
+  await bob.click('#det [data-threat-back]');
+  await bob.click('#det [data-plan-asset]');
+  await bob.waitForSelector('#planView svg');
+  assert.match(await bob.locator('#planView svg').textContent(), new RegExp(`REQUIREMENTS FOR VPN-GW · \\d+ · \\d+ APPLIED.*ANSSI`));
+  await bob.click('[data-plan="close"]');
+
+  // a click on a plate shows its VLAN alone, the other plates and their assets fade out
+  await bob.click('#lensSeg [data-lens="physical"]');
+  await bob.click('#viewSeg [data-v="2d"]');
+  await bob.waitForSelector('#flatSvg [data-plate]');
+  // a point of the first plate with no asset or flow over it
+  const spot = await bob.evaluate(() => {
+    const r = document.querySelector('#flatSvg [data-plate] rect').getBoundingClientRect();
+    for (let y = r.bottom - 4; y > r.top + 4; y -= 6) for (let x = r.left + 4; x < r.right - 4; x += 6) {
+      const e = document.elementFromPoint(x, y);
+      if (e && e.closest('[data-plate]') && !e.closest('[data-asset],[data-flow],[data-plate-handle]')) return [x, y];
+    }
+    return null;
+  });
+  assert.ok(spot, 'no free spot on the plate');
+  await bob.mouse.click(...spot);
+  await bob.waitForSelector('#focusBar:not([hidden])');
+  assert.equal(await bob.locator('#vlans input:checked').count(), 1);
+  // a click on an empty space brings every VLAN back
+  const empty = await bob.evaluate(() => {
+    for (let y = 880; y > 150; y -= 20) for (let x = 1380; x > 320; x -= 20) {
+      const e = document.elementFromPoint(x, y);
+      if (e && e.closest('#flatSvg') && !e.closest('[data-plate],[data-asset],[data-flow],[data-internet]')) return [x, y];
+    }
+    return null;
+  });
+  await bob.mouse.click(...empty);
+  await bob.waitForSelector('#focusBar', { state: 'hidden' });
+  assert.equal(await bob.locator('#vlans input:not(:checked)').count(), 0);
+  await bob.click('#viewSeg [data-v="3d"]');
+  await bob.click('#lensSeg [data-lens="risk"]');
+
+  // the settings: one more baseline, saved for every IS
+  await bob.click('#lensBody [data-rk-settings]');
+  await bob.locator('#det [data-rs-baseline="nist-csf"]').check();
+  await bob.waitForFunction(() => /NIST/.test(document.querySelector('#lensBody .lens-head')?.textContent || ''));
+  assert.deepEqual((await api('bob', 'GET', 'api/state')).data.risk.baselines, ['anssi', 'nist-csf']);
+
+  // the Baselines tab: overlapping requirements merged, one kept per group
+  await bob.click('#lensBody [data-rkv="baselines"]');
+  await bob.waitForSelector('#lensBody .ovg');
+  await bob.locator('#lensBody [data-ov-on]').check();
+  await bob.waitForFunction(() => /merged into another one/.test(document.querySelector('#lensBody .summary')?.textContent || ''));
+  assert.equal((await api('bob', 'GET', 'api/state')).data.risk.merge.on, true);
+
+  // the Logs tab: what each asset sends to the SIEM; an asset sheet lists its own
+  await bob.click('#lensBody [data-rkv="logs"]');
+  await bob.locator('#lensBody [data-goto-logs]').first().click();
+  await bob.waitForSelector('#det #logsCap');
+  assert.ok(await bob.locator('#det details.lgs').count() > 0);
+
+  // the dashboard for a steering committee: key figures measured from the history of the map
+  await bob.click('#ctl [data-act="dashboard"]');
+  await bob.waitForSelector('#dash .ktile');
+  assert.equal(await bob.locator('#dash .ktile').count(), 7);
+  assert.match(await bob.locator('#dash').textContent(), /Internet-facing assets[\s\S]*Scan coverage/);
+  await bob.click('#dash [data-dash="close"]');
+  assert.deepEqual(errors, [], 'JavaScript errors in the pages');
+});
