@@ -110,7 +110,8 @@ const THREATS=[
 /* ---- Risk matrix ----
    likelihood and impact: the labels of each level, lowest first; edges: where each level starts, from 0 to 1
    (the first is 0); cells[l][i]: the risk level of each cell, an index in LEVELS; accept: the highest risk
-   level that is acceptable without treatment */
+   level that is acceptable without treatment; acceptByCrit: the same per criticality (1 to 3) of the asset or of the
+   business services it would hit, where it differs. An asset can also set its own (asset.risk.accept). */
 const LEVELS=['low','med','high','crit'];
 const LEVEL_LBL={low:'Low',med:'Moderate',high:'High',crit:'Critical'};
 function defaultMatrix(n=4,m=n){
@@ -119,7 +120,7 @@ function defaultMatrix(n=4,m=n){
   const edges=k=>Array.from({length:k},(_,x)=>Math.round(100*x/k)/100);
   const cells=Array.from({length:n},(_,l)=>Array.from({length:m},(_,i)=>{
     const s=(l+1)/n+(i+1)/m;return s>=1.75?3:s>=1.25?2:s>=0.9?1:0;}));
-  return {likelihood:L[n]||L[4],impact:I[m]||I[4],lEdges:edges(n),iEdges:edges(m),cells,accept:1};
+  return {likelihood:L[n]||L[4],impact:I[m]||I[4],lEdges:edges(n),iEdges:edges(m),cells,accept:1,acceptByCrit:{3:0}};
 }
 // A matrix read from the settings: anything missing or out of shape falls back on the default of its size
 function cleanMatrix(x){
@@ -129,9 +130,17 @@ function cleanMatrix(x){
   const edges=(a,b)=>Array.isArray(a)&&a.length===b.length&&a.every((v,k)=>isFinite(v)&&v>=0&&v<1&&(k===0?v===0:v>a[k-1]))?a.map(Number):b;
   const cells=Array.isArray(x.cells)&&x.cells.length===n&&x.cells.every(r=>Array.isArray(r)&&r.length===m&&r.every(c=>[0,1,2,3].includes(c)))?x.cells:d.cells;
   return {likelihood:labels(x.likelihood,d.likelihood),impact:labels(x.impact,d.impact),lEdges:edges(x.lEdges,d.lEdges),iEdges:edges(x.iEdges,d.iEdges),cells,
-    accept:[0,1,2,3].includes(x.accept)?x.accept:d.accept};
+    accept:[0,1,2,3].includes(x.accept)?x.accept:d.accept,
+    acceptByCrit:x.acceptByCrit===undefined?d.acceptByCrit:Object.fromEntries(Object.entries(x.acceptByCrit&&typeof x.acceptByCrit==='object'?x.acceptByCrit:{}).filter(([c,v])=>['1','2','3'].includes(c)&&[0,1,2,3].includes(v)))};
 }
 const levelOf=(v,edges)=>{let k=0;edges.forEach((e,j)=>{if(v>=e)k=j;});return k;};
+// The highest level acceptable on an asset: its own, else that of its criticality, else that of the matrix
+function acceptFor(M,a,bizCrit){
+  const own=a&&a.risk&&a.risk.accept,crit=Math.max(+(a&&a.crit)||0,+bizCrit||0);
+  if([0,1,2,3].includes(own))return {level:own,from:'asset'};
+  if(M.acceptByCrit&&[0,1,2,3].includes(M.acceptByCrit[crit]))return {level:M.acceptByCrit[crit],from:'crit',crit};
+  return {level:M.accept,from:'matrix'};
+}
 const cellOf=(M,p,i)=>{const l=levelOf(p,M.lEdges),k=levelOf(i,M.iEdges);return {l,i:k,level:LEVELS[M.cells[l][k]]};};
 
 /* ---- Settings: the risk document shared by every IS ----
@@ -198,7 +207,7 @@ function assess(site,a,opts){
   const catalogue=[...THREATS,...S.customThreats].filter(t=>!S.disabled.has(t.id));
   const treat=(a.risk&&typeof a.risk==='object')?a.risk:{};
   const excluded=new Set(Array.isArray(treat.excluded)?treat.excluded:[]),added=new Set(Array.isArray(treat.added)?treat.added:[]);
-  const reqs=requirementsFor(S,opts.baselines);
+  const reqs=requirementsFor(S,opts.baselines),accept=acceptFor(M,a,opts.bizCrit).level;
   const vuln=1-(a.vulns||[]).reduce((p,v)=>p*(1-vulnP(v)),1);
   const exposure=EXPO_F[a.exp||'none'],hops=opts.hops,reach=hops===undefined||hops===null?0.3:Math.max(0.5,1-0.1*Math.max(0,hops-1));
   const crit=Math.max(CRIT_F[a.crit]||0.75,CRIT_F[opts.bizCrit||0]||0);
@@ -219,7 +228,7 @@ function assess(site,a,opts){
     const decision=['treat','accept','transfer','avoid'].includes(st.decision)?st.decision:'treat';
     out.push({threat:t,why,excluded:excluded.has(t.id),relevance:rel,factors:{base:t.base,context:ctx,vuln:t.vulns?vuln:null,actors:af,severity:t.severity,crit},
       p:p0,i:i0,inherent,residual,target,pResidual:p1,iResidual:i1,requirements:linked,decision,note:String(st.note||''),
-      acceptable:LEVELS.indexOf(residual.level)<=M.accept||decision==='accept'});
+      acceptable:LEVELS.indexOf(residual.level)<=accept||decision==='accept'});
   });
   return out.sort((x,y)=>(x.excluded-y.excluded)||LEVELS.indexOf(y.residual.level)-LEVELS.indexOf(x.residual.level)||y.pResidual*y.iResidual-x.pResidual*x.iResidual||x.threat.name.localeCompare(y.threat.name));
 }
@@ -246,6 +255,12 @@ function setTreatment(asset,threatId,change){
   if(r.added&&!r.added.length)delete r.added;
   return Object.keys(r).length?r:undefined;
 }
+// The acceptance threshold of one asset, changed (null: back to that of its criticality)
+function setAccept(asset,level){
+  const r=JSON.parse(JSON.stringify(asset.risk||{}));
+  if([0,1,2,3].includes(level))r.accept=level;else delete r.accept;
+  return Object.keys(r).length?r:undefined;
+}
 // The register of an IS: every asset's risks, counted per cell of the matrix
 function register(site,opts){
   const rows=[];
@@ -256,6 +271,6 @@ function register(site,opts){
   return {rows,inherent,residual};
 }
 
-const api={ACTORS,ENISA,THREATS,LEVELS,LEVEL_LBL,defaultMatrix,cleanMatrix,cellOf,settings,cleanThreat,cleanBaseline,matches,assess,requirementsFor,setTreatment,register};
+const api={ACTORS,ENISA,THREATS,LEVELS,LEVEL_LBL,defaultMatrix,cleanMatrix,cellOf,acceptFor,setAccept,settings,cleanThreat,cleanBaseline,matches,assess,requirementsFor,setTreatment,register};
 root.StrataRisk=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

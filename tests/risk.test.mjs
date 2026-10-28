@@ -136,3 +136,23 @@ test('the register of an IS counts each risk once per cell, without the excluded
   assert.equal(total(reg.inherent), reg.rows.length);
   assert.equal(total(reg.residual), reg.rows.length);
 });
+
+test('acceptance: the threshold of the matrix, of the criticality, then of the asset', () => {
+  const M = R.cleanMatrix({});
+  assert.equal(M.accept, 1, 'moderate is acceptable by default');
+  assert.equal(J(M.acceptByCrit)[3], 0, 'but only low on critical assets');
+  const s = site(), web = s.byId.web, pc = s.byId.pc;
+  assert.deepEqual(J(R.acceptFor(M, pc)), { level: 1, from: 'matrix' });
+  assert.deepEqual(J(R.acceptFor(M, web, 3)), { level: 0, from: 'crit', crit: 3 }, 'the criticality of the business services it would hit counts');
+  web.risk = R.setAccept(web, 2);
+  assert.deepEqual(J(R.acceptFor(M, web, 3)), { level: 2, from: 'asset' });
+  web.risk = R.setAccept(web, null);
+  assert.equal(web.risk, undefined);
+  assert.deepEqual(J(R.cleanMatrix({ acceptByCrit: { 2: 3, 4: 1, 1: 9 } }).acceptByCrit), { 2: 3 }, 'only criticalities 1 to 3 and levels 0 to 3');
+  assert.deepEqual(J(R.cleanMatrix({ acceptByCrit: {} }).acceptByCrit), {}, 'an empty table means the matrix threshold for everyone');
+  // a risk is open or not depending on the threshold of its asset
+  const row = () => R.assess(s, s.byId.vpn, opts({}, { hops: 1 })).find(r => r.threat.id === 'remote-access');
+  assert.equal(row().acceptable, false);
+  s.byId.vpn.risk = R.setAccept(s.byId.vpn, 3);
+  assert.equal(row().acceptable, true);
+});

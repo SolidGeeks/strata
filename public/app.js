@@ -3590,12 +3590,18 @@ function assetRiskHtml(a){
   const all=SITE.threats[a.id]||[],rows=all.filter(r=>!r.excluded).map(r=>Object.assign({asset:a},r)),ex=all.filter(r=>r.excluded);
   const left=RK.THREATS.concat(RS.customThreats).filter(t=>!RS.disabled.has(t.id)&&!all.some(r=>r.threat.id===t.id));
   if(!rows.length&&!ex.length)return `<p class="empty">No threat of the catalogue applies to this asset with what the map says about it (type, exposure, criticality, ports, system, vulnerabilities).</p>${addThreatHtml(a,left)}`;
-  const over=rows.filter(r=>!r.acceptable).length;
-  return `<div class="rmx-pair">${matrixHtml(RS.matrix,gridOf(rows,'inherent'),{title:'Before requirements'})}${matrixHtml(RS.matrix,gridOf(rows,'residual'),{title:'With the requirements applied'})}</div>
-  <p class="fhint">${over?`<b style="color:var(--crit)">${over}</b> ${over===1?'risk is':'risks are'} above the acceptance threshold (${RK.LEVEL_LBL[RK.LEVELS[RS.matrix.accept]]}) with no decision to accept it.`:'Every risk is at or below the acceptance threshold, or accepted.'} Open a risk to apply requirements.</p>
+  const over=rows.filter(r=>!r.acceptable).length,acc=RK.acceptFor(RS.matrix,a,SITE.bizCrit[a.id]);
+  return `${acceptHtml(a,acc)}<div class="rmx-pair">${matrixHtml(RS.matrix,gridOf(rows,'inherent'),{title:'Before requirements'})}${matrixHtml(RS.matrix,gridOf(rows,'residual'),{title:'With the requirements applied'})}</div>
+  <p class="fhint">${over?`<b style="color:var(--crit)">${over}</b> ${over===1?'risk is':'risks are'} above the acceptance threshold (${RK.LEVEL_LBL[RK.LEVELS[acc.level]]}) with no decision to accept it.`:'Every risk is at or below the acceptance threshold, or accepted.'} Open a risk to apply requirements.</p>
   <ul class="list">${rows.map(r=>riskRow(r,false)).join('')}</ul>
   ${ex.length?`<details class="rk-ex"><summary>${plural(ex.length,'threat')} set aside as not relevant</summary><ul class="list">${ex.map(r=>`<li class="rk"><button data-threat="${esc(r.threat.id)}" data-threat-asset="${esc(a.id)}"><b>${esc(r.threat.name)}</b><small>${esc(r.note||'No justification recorded')}</small></button></li>`).join('')}</ul></details>`:''}
   ${addThreatHtml(a,left)}`;
+}
+// The acceptance threshold of an asset: its own, or that of its criticality in the risk settings
+function acceptHtml(a,acc){
+  const from=acc.from==='asset'?'set on this asset':acc.from==='crit'?`for ${CRIT_LBL[acc.crit].toLowerCase()} criticality assets`:'for every asset',def=RK.acceptFor(RS.matrix,Object.assign({},a,{risk:null}),SITE.bizCrit[a.id]);
+  return `<div class="rk-acc"><span>Acceptable up to ${lvTag(RK.LEVELS[acc.level])} <small class="muted">${from}</small></span>
+  <select class="edit-only" data-accept-asset="${esc(a.id)}" aria-label="Acceptance threshold of this asset"${Store.canWrite?'':' disabled'}><option value="">As its criticality (${RK.LEVEL_LBL[RK.LEVELS[def.level]]})</option>${RK.LEVELS.map((l,k)=>`<option value="${k}"${acc.from==='asset'&&acc.level===k?' selected':''}>${RK.LEVEL_LBL[l]}</option>`).join('')}</select></div>`;
 }
 const addThreatHtml=(a,left)=>left.length?`<div class="f edit-only rk-add"><label for="rkAdd">Add a threat the map does not show</label><select id="rkAdd" data-threat-add="${esc(a.id)}"><option value="">Choose a threat…</option>${left.map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></div>`:'';
 async function saveTreatment(aid,tid,change){
@@ -3649,6 +3655,7 @@ det.addEventListener('click',e=>{
 });
 det.addEventListener('change',e=>{
   if(!SITE)return;const t=e.target;
+  if(t.dataset.acceptAsset){const d=clone(raw.assets[t.dataset.acceptAsset]);if(!d)return;const r=RK.setAccept(d,t.value===''?null:+t.value);if(r)d.risk=r;else delete d.risk;Store.putAsset(t.dataset.acceptAsset,d).catch(()=>{});return;}
   if(t.dataset.threatAdd!==undefined&&t.value){const aid=t.dataset.threatAdd,tid=t.value;saveTreatment(aid,tid,{add:true}).then(()=>{state.panel='threat';THREAT_FOR={aid,tid};scheduleData(0);});return;}
   if(state.panel!=='threat'||!THREAT_FOR)return;const {aid,tid}=THREAT_FOR;
   if(t.dataset.req)saveTreatment(aid,tid,{req:t.dataset.req,status:t.value});
@@ -3683,9 +3690,9 @@ lensEl.addEventListener('click',e=>{
 });
 lensEl.addEventListener('keydown',e=>{if(state.lens!=='risk'||(e.key!=='Enter'&&e.key!==' '))return;const t=e.target.closest('[data-cell],[data-threat]');if(t){e.preventDefault();t.click();}});
 function exportRegister(){
-  const rows=[['Asset','IP','Type','Threat','Applies because','MITRE ATT&CK','Likelihood before','Impact before','Level before','Level now','Level once planned','Requirements applied','Requirements planned','Requirements not applied','Decision','Justification']];
+  const rows=[['Asset','IP','Type','Threat','Applies because','MITRE ATT&CK','Likelihood before','Impact before','Level before','Level now','Level once planned','Requirements applied','Requirements planned','Requirements not applied','Acceptable up to','Decision','Justification']];
   const M=RS.matrix,refs=(r,s)=>r.requirements.filter(x=>(x.status||'')===s).map(x=>`${x.baselineName} ${x.ref}`).join(', ');
-  SITE.register.forEach(r=>rows.push([r.asset.name,r.asset.ip||'',TYPE_LABEL[r.asset.type]||r.asset.type,r.threat.name,r.why.join('; '),r.threat.attack.join(' '),M.likelihood[r.inherent.l],M.impact[r.inherent.i],RK.LEVEL_LBL[r.inherent.level],RK.LEVEL_LBL[r.residual.level],RK.LEVEL_LBL[r.target.level],refs(r,'applied'),refs(r,'planned'),refs(r,''),DECISION[r.decision].split(' (')[0],r.note]));
+  SITE.register.forEach(r=>rows.push([r.asset.name,r.asset.ip||'',TYPE_LABEL[r.asset.type]||r.asset.type,r.threat.name,r.why.join('; '),r.threat.attack.join(' '),M.likelihood[r.inherent.l],M.impact[r.inherent.i],RK.LEVEL_LBL[r.inherent.level],RK.LEVEL_LBL[r.residual.level],RK.LEVEL_LBL[r.target.level],refs(r,'applied'),refs(r,'planned'),refs(r,''),RK.LEVEL_LBL[RK.LEVELS[RK.acceptFor(M,r.asset,SITE.bizCrit[r.asset.id]).level]],DECISION[r.decision].split(' (')[0],r.note]));
   if(rows.length===1){toast('No risk on this IS.',true);return;}
   saveFile(`risk-register_${fileStem(SITE.name)}_${today()}.csv`,'text/csv;charset=utf-8',csv(rows));
 }
@@ -3717,9 +3724,10 @@ function showRiskSettings(keep){
   <h3 class="cap">Risk matrix</h3>
   <div class="rs-dims"><label>Likelihood levels ${sizes('l',M.likelihood.length)}</label><label>Impact levels ${sizes('i',M.impact.length)}</label>
   <label>Acceptable up to <select data-rs-accept${ro}>${RK.LEVELS.map((l,k)=>`<option value="${k}"${M.accept===k?' selected':''}>${RK.LEVEL_LBL[l]}</option>`).join('')}</select></label></div>
+  <div class="rs-dims"><span class="muted">By criticality of the asset or of the business services it would hit:</span>${[1,2,3].map(c=>`<label>${CRIT_LBL[c]} <select data-rs-accept-crit="${c}"${ro}><option value="">As above</option>${RK.LEVELS.map((l,k)=>`<option value="${k}"${M.acceptByCrit[c]===k?' selected':''}>${RK.LEVEL_LBL[l]}</option>`).join('')}</select></label>`).join('')}</div>
   <div class="rs-mx">${(()=>{let h='<table class="rmx edit"><tbody>';for(let l=M.likelihood.length-1;l>=0;l--){h+=`<tr><th scope="row"><input data-rs-label="likelihood:${l}" value="${esc(M.likelihood[l])}" aria-label="Likelihood level ${l+1}"${ro}></th>`;for(let i=0;i<M.impact.length;i++){const lv=RK.LEVELS[M.cells[l][i]];h+=`<td class="lv-${lv}"><button data-rs-cell="${l},${i}" title="Change the level of this cell"${ro}>${RK.LEVEL_LBL[lv]}</button></td>`;}h+='</tr>';}
     return h+`<tr><th></th>${M.impact.map((x,i)=>`<th scope="col"><input data-rs-label="impact:${i}" value="${esc(x)}" aria-label="Impact level ${i+1}"${ro}></th>`).join('')}</tr></tbody></table>`;})()}</div>
-  <p class="fhint">Rows: likelihood, highest at the top. Columns: impact. Click a cell to change its level. The levels split the scores evenly; a risk above the acceptable level needs requirements or a decision.</p>
+  <p class="fhint">Rows: likelihood, highest at the top. Columns: impact. Click a cell to change its level. The levels split the scores evenly; a risk above the acceptable level needs requirements or a decision. An asset sheet can set a threshold of its own.</p>
   <h3 class="cap">Baselines · ${S.baselines.length} enabled</h3>
   <ul class="list rs-bl">${all.map(b=>`<li><label class="chk plain"><input type="checkbox" data-rs-baseline="${esc(b.id)}"${S.baselines.includes(b.id)?' checked':''}${ro}> <span><b>${esc(b.name)}</b><small>${plural(b.requirements.length,'requirement')}${b.version?' · '+esc(b.version):''}${b.license?' · '+esc(b.license):''}${b.custom?' · custom':''}</small></span></label>${b.custom?`<button class="ibtn" data-rs-del-baseline="${esc(b.id)}"${ro}>Remove</button>`:''}</li>`).join('')||'<li class="empty">No baseline available.</li>'}</ul>
   <div class="actions edit-only"><button class="btn small" data-rs-import="baseline"${ro}>Import a custom baseline (JSON or CSV)</button><button class="btn small" data-rs-template>Template (CSV)</button></div>
@@ -3760,7 +3768,8 @@ det.addEventListener('click',e=>{
 });
 det.addEventListener('change',async e=>{
   if(state.panel!=='risksettings'||!RSD)return;const t=e.target;
-  if(t.dataset.rsSize){const M=rsMatrix(),n=t.dataset.rsSize==='l'?+t.value:M.likelihood.length,m=t.dataset.rsSize==='i'?+t.value:M.impact.length;RSD.matrix=Object.assign(RK.defaultMatrix(n,m),{accept:M.accept});rsSave();return;}
+  if(t.dataset.rsSize){const M=rsMatrix(),n=t.dataset.rsSize==='l'?+t.value:M.likelihood.length,m=t.dataset.rsSize==='i'?+t.value:M.impact.length;RSD.matrix=Object.assign(RK.defaultMatrix(n,m),{accept:M.accept,acceptByCrit:M.acceptByCrit});rsSave();return;}
+  if(t.dataset.rsAcceptCrit){const M=rsMatrix(),b=Object.assign({},M.acceptByCrit);if(t.value==='')delete b[t.dataset.rsAcceptCrit];else b[t.dataset.rsAcceptCrit]=+t.value;RSD.matrix=Object.assign(M,{acceptByCrit:b});rsSave();return;}
   if(t.hasAttribute('data-rs-accept')){RSD.matrix=Object.assign(rsMatrix(),{accept:+t.value});rsSave();return;}
   if(t.dataset.rsLabel){const [k,x]=t.dataset.rsLabel.split(':'),M=rsMatrix();M[k]=M[k].slice();M[k][+x]=t.value.trim()||M[k][+x];RSD.matrix=M;rsSave();return;}
   if(t.dataset.rsBaseline){const s=new Set(rsEnabled());t.checked?s.add(t.dataset.rsBaseline):s.delete(t.dataset.rsBaseline);RSD.baselines=[...s];rsSave();return;}

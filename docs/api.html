@@ -274,7 +274,7 @@ curl -H "Authorization: Bearer $STRATA_TOKEN" \
         <tr><td><code>apps</code></td><td><code>[{name, version, ports, src?}]</code>, software and the ports it listens on</td></tr>
         <tr><td><code>contacts</code></td><td>As for the IS</td></tr>
         <tr><td><code>ext</code></td><td>Ids in connected tools: <code>{"glpi": "Computer/12", "cyberwatch": 101}</code></td></tr>
-        <tr><td><code>risk</code></td><td>The treatment of its risks: <code>{threats: {threatId: {reqs: {"baselineId/reqId": "applied"|"planned"|"na"}, decision?, note?}}, excluded?: [threatIds], added?: [threatIds]}</code>; <code>decision</code>: <code>accept</code>, <code>transfer</code> or <code>avoid</code> (missing: treat)</td></tr>
+        <tr><td><code>risk</code></td><td>The treatment of its risks: <code>{threats: {threatId: {reqs: {"baselineId/reqId": "applied"|"planned"|"na"}, decision?, note?}}, excluded?: [threatIds], added?: [threatIds], accept?: 0-3}</code>; <code>accept</code>: an acceptance threshold for this asset only; <code>decision</code>: <code>accept</code>, <code>transfer</code> or <code>avoid</code> (missing: treat)</td></tr>
       </tbody>
     </table></div>
 
@@ -282,7 +282,7 @@ curl -H "Authorization: Bearer $STRATA_TOKEN" \
     <div class="tablewrap"><table>
       <thead><tr><th scope="col">Field</th><th scope="col">Content</th></tr></thead>
       <tbody>
-        <tr><td><code>matrix</code></td><td><code>{likelihood: [labels], impact: [labels], cells: [[0-3]], accept: 0-3, lEdges?, iEdges?}</code>: 3 to 5 levels each way, lowest first; <code>cells[l][i]</code>: low, moderate, high or critical; <code>accept</code>: the highest level acceptable without a decision. Missing or out of shape: the 4×4 default</td></tr>
+        <tr><td><code>matrix</code></td><td><code>{likelihood: [labels], impact: [labels], cells: [[0-3]], accept: 0-3, lEdges?, iEdges?}</code>: 3 to 5 levels each way, lowest first; <code>cells[l][i]</code>: low, moderate, high or critical; <code>accept</code>: the highest level acceptable without a decision; <code>acceptByCrit</code>: <code>{1-3: 0-3}</code>, the same for assets of that criticality (their own, or that of the business services they would hit), by default <code>{3: 0}</code>. Missing or out of shape: the 4×4 default</td></tr>
         <tr><td><code>baselines</code></td><td>Ids of the enabled baselines: <code>anssi</code>, <code>nist-csf</code>, <code>cis-v8</code>, <code>iso27001</code>, <code>custom:…</code>. Missing: ANSSI and every custom one</td></tr>
         <tr><td><code>custom</code></td><td>Custom baselines: <code>[{id, name, version?, requirements: [{id, ref?, title, text?, threats: [[threatId, share 0.05-0.9, "likelihood"|"impact"]]}]}]</code></td></tr>
         <tr><td><code>threats</code></td><td><code>{custom: [{id, name, desc, base 1-4, severity 1-4, when, attack?, actors?}], disabled: [threatIds]}</code>. <code>when</code>: <code>types</code>, <code>exposure</code>, <code>critMin</code>, <code>ports</code>, <code>kev</code>, <code>vulnTitle</code>, <code>role</code>, <code>os</code> (patterns), <code>outbound</code>, <code>svcCat</code>; all must hold, or one with <code>any: true</code></td></tr>

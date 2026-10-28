@@ -617,3 +617,5 @@ li.req.st-na{opacity:.6}
 .rs-dims{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;margin:6px 0}
 .rs-mx{overflow-x:auto}
 @media (max-width:760px){.rk-tab th:nth-child(5),.rk-tab td:nth-child(5),.rk-tab th:nth-child(7),.rk-tab td:nth-child(7){display:none}}
+.rk-acc{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:6px 0 4px;font-size:12.5px}
+.rk-acc select{max-width:210px}
