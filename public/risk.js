@@ -145,7 +145,7 @@ const cellOf=(M,p,i)=>{const l=levelOf(p,M.lEdges),k=levelOf(i,M.iEdges);return 
 
 /* ---- Settings: the risk document shared by every IS ----
    {matrix, baselines: [enabled ids], threats: {custom: [...], disabled: [ids]}, custom: [custom baselines]} */
-function settings(doc,builtinBaselines){
+function settings(doc,builtinBaselines,extra){
   const d=doc&&typeof doc==='object'?doc:{};
   const custom=(Array.isArray(d.custom)?d.custom:[]).filter(b=>b&&b.id&&b.name).map(b=>cleanBaseline(b,true));
   const ids=new Set([...(builtinBaselines||[]).map(b=>b.id),...custom.map(b=>b.id)]);
@@ -153,7 +153,8 @@ function settings(doc,builtinBaselines){
   const threats=d.threats&&typeof d.threats==='object'?d.threats:{};
   return {matrix:cleanMatrix(d.matrix),baselines:enabled,custom,
     customThreats:(Array.isArray(threats.custom)?threats.custom:[]).filter(t=>t&&t.id&&t.name).map(cleanThreat),
-    disabled:new Set(Array.isArray(threats.disabled)?threats.disabled.filter(x=>typeof x==='string'):[])};
+    disabled:new Set(Array.isArray(threats.disabled)?threats.disabled.filter(x=>typeof x==='string'):[]),
+    merge:cleanMerge(d.merge,enabled),weights:(extra&&extra.weights)||{}};
 }
 const clamp4=v=>Math.min(4,Math.max(1,Math.round(+v)||2));
 function cleanThreat(t){
@@ -220,7 +221,9 @@ function assess(site,a,opts){
     const ctx=(exposure+reach)/2,vf=t.vulns?0.5+0.5*vuln:1,af=t.actors.length?[0,0.5,0.75,1][Math.min(3,rel)]:1;
     const p0=Math.min(1,(t.base/4)*(0.4+0.6*ctx)*vf*af),i0=Math.min(1,(t.severity/4)*crit);
     const st=(treat.threats&&treat.threats[t.id])||{},statuses=st.reqs||{};
-    const linked=reqs.filter(r=>r.threats.some(x=>x.id===t.id)).map(r=>{const m=r.threats.find(x=>x.id===t.id);return Object.assign({},r,{strength:m.strength,effect:m.effect,status:statuses[r.key]||''});});
+    // a kept requirement takes the status given to any of those it stands for
+    const statusOf=r=>statuses[r.key]||(r.aliases||[]).map(k=>statuses[k]).find(Boolean)||'';
+    const linked=reqs.filter(r=>r.threats.some(x=>x.id===t.id)).map(r=>{const m=r.threats.find(x=>x.id===t.id);return Object.assign({},r,{strength:m.strength,effect:m.effect,status:statusOf(r)});});
     const left=(st,field)=>linked.filter(r=>r.effect===field&&st.includes(r.status)).reduce((x,r)=>x*(1-r.strength),1);
     const p1=p0*left(['applied'],'likelihood'),i1=i0*left(['applied'],'impact');
     const p2=p0*left(['applied','planned'],'likelihood'),i2=i0*left(['applied','planned'],'impact');
@@ -233,9 +236,84 @@ function assess(site,a,opts){
   return out.sort((x,y)=>(x.excluded-y.excluded)||LEVELS.indexOf(y.residual.level)-LEVELS.indexOf(x.residual.level)||y.pResidual*y.iResidual-x.pResidual*x.iResidual||x.threat.name.localeCompare(y.threat.name));
 }
 // The requirements of the enabled baselines, each with a key unique across baselines
+// With merging on, the requirements kept in each overlapping group stand for the others: they take the union of
+// their threats (the strongest share of each), and the others are no longer offered.
 function requirementsFor(S,builtin){
+  const all=allRequirements(S,builtin);
+  if(!S.merge.on)return all;
+  const plan=mergePlan(S,builtin);
+  return all.filter(r=>!plan.removed.has(r.key)).map(r=>{const g=plan.byKeep[r.key];if(!g)return r;
+    const th={};g.members.forEach(m=>m.threats.forEach(t=>{if(!th[t.id]||t.strength>th[t.id].strength)th[t.id]=t;}));
+    return Object.assign({},r,{threats:Object.values(th),merged:g.members.filter(m=>m.key!==r.key).map(m=>({key:m.key,baselineName:m.baselineName,ref:m.ref,title:m.title})),aliases:g.members.map(m=>m.key)});});
+}
+function allRequirements(S,builtin){
   const all=[...(builtin||[]).map(b=>cleanBaseline(b,false)),...S.custom];
-  return all.filter(b=>S.baselines.includes(b.id)).flatMap(b=>b.requirements.map(r=>Object.assign({},r,{key:`${b.id}/${r.id}`,baseline:b.id,baselineName:b.name})));
+  return S.baselines.map(id=>all.find(b=>b.id===id)).filter(Boolean).flatMap(b=>b.requirements.map(r=>Object.assign({},r,{key:`${b.id}/${r.id}`,baseline:b.id,baselineName:b.name})));
+}
+
+/* ---- Overlapping requirements ----
+   Two requirements of different baselines overlap when they reduce the same threats by similar shares and say
+   much the same thing. Each group holds at most one requirement per baseline; one of them is kept, by a
+   criterion or by hand, and stands for the others.
+   merge: {on, criterion: strict | coverage | fit | baseline, threshold 0.3-0.8, priority: [baseline ids],
+   choices: {group key: kept requirement key}, separate: [group keys]} */
+const CRITERIA={strict:'Most demanding',coverage:'Widest coverage',fit:'Best fit for this map',baseline:'Preferred baseline'};
+function cleanMerge(m,enabled){
+  const x=m&&typeof m==='object'?m:{};
+  const t=+x.threshold;
+  return {on:!!x.on,criterion:CRITERIA[x.criterion]?x.criterion:'strict',threshold:isFinite(t)&&t>=0.3&&t<=0.8?t:0.45,
+    priority:[...new Set([...(Array.isArray(x.priority)?x.priority.filter(id=>enabled.includes(id)):[]),...enabled])],
+    choices:x.choices&&typeof x.choices==='object'?x.choices:{},separate:new Set(Array.isArray(x.separate)?x.separate:[])};
+}
+const STOP=new Set('the and for with that from their each every into about which where them they this these those are its all any ensure make keep have has not can more than other based using used such also within when what whether should shall must being been only both across before after there here your our'.split(' '));
+const words=s=>new Set(String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[^a-z0-9]+/).filter(w=>w.length>=4&&!STOP.has(w)).map(w=>w.replace(/(ing|ed|es|s)$/,'')));
+const jac=(a,b)=>{let n=0;a.forEach(x=>{if(b.has(x))n++;});const u=a.size+b.size-n;return u?n/u:0;};
+// How much two requirements overlap, from 0 to 1: their threats (weighted by share) for 60%, their words for 40%
+function similarity(a,b){
+  const ta=a._t||(a._t=Object.fromEntries(a.threats.map(t=>[t.id,t.strength]))),tb=b._t||(b._t=Object.fromEntries(b.threats.map(t=>[t.id,t.strength])));
+  let mn=0,mx=0,shared=0;new Set([...Object.keys(ta),...Object.keys(tb)]).forEach(k=>{const x=ta[k]||0,y=tb[k]||0;mn+=Math.min(x,y);mx+=Math.max(x,y);if(x&&y)shared++;});
+  if(!shared)return 0;
+  const wa=a._w||(a._w=words(`${a.title} ${a.text||''}`)),wb=b._w||(b._w=words(`${b.title} ${b.text||''}`));
+  return 0.6*(mx?mn/mx:0)+0.4*jac(wa,wb);
+}
+let OV_CACHE=null;
+function overlaps(reqs,threshold){
+  const sig=threshold+'|'+reqs.map(r=>r.key+':'+r.threats.length).join(',');
+  if(OV_CACHE&&OV_CACHE.sig===sig)return OV_CACHE.groups;
+  const pool=reqs.filter(r=>r.threats.length),used=new Set(),groups=[];
+  const bases=[...new Set(pool.map(r=>r.baseline))];
+  pool.slice().sort((a,b)=>b.threats.length-a.threats.length||a.key.localeCompare(b.key)).forEach(seed=>{
+    if(used.has(seed.key))return;
+    const members=[seed];
+    bases.filter(b=>b!==seed.baseline).forEach(b=>{
+      let best=null,bs=threshold;
+      pool.forEach(r=>{if(r.baseline!==b||used.has(r.key))return;const v=similarity(seed,r);if(v>=bs){bs=v;best=r;}});
+      if(best)members.push(Object.assign(best,{_score:bs}));
+    });
+    if(members.length>1){members.forEach(m=>used.add(m.key));groups.push({key:members.map(m=>m.key).sort().join('+'),members});}
+  });
+  OV_CACHE={sig,groups};
+  return groups;
+}
+// The requirement a criterion keeps in a group, and why
+function chooseKeep(g,criterion,{weights={},priority=[]}={}){
+  const sum=r=>r.threats.reduce((n,t)=>n+t.strength,0),fit=r=>r.threats.reduce((n,t)=>n+(weights[t.id]||0)*t.strength,0),rank=r=>{const k=priority.indexOf(r.baseline);return k<0?99:k;};
+  const by={strict:r=>[sum(r),r.threats.length,-rank(r)],coverage:r=>[r.threats.length,sum(r),-rank(r)],fit:r=>[fit(r),sum(r),-rank(r)],baseline:r=>[-rank(r),sum(r),r.threats.length]}[criterion]||(r=>[sum(r)]);
+  const cmp=(a,b)=>{const x=by(a),y=by(b);for(let k=0;k<x.length;k++)if(x[k]!==y[k])return y[k]-x[k];return a.key.localeCompare(b.key);};
+  const keep=g.members.slice().sort(cmp)[0];
+  const why={strict:`most demanding: reduction score ${sum(keep).toFixed(2)}`,coverage:`widest: covers ${keep.threats.length} threats`,fit:`fits this map best: weight ${Math.round(fit(keep)*10)/10}`,baseline:`preferred baseline: ${keep.baselineName}`}[criterion];
+  return {keep,why};
+}
+// Every group with its kept requirement: a choice made by hand wins, a group kept separate merges nothing
+function mergePlan(S,builtin){
+  const all=allRequirements(S,builtin),M=S.merge,groups=overlaps(all,M.threshold),removed=new Set(),byKeep={};
+  const out=groups.map(g=>{
+    const separate=M.separate.has(g.key),hand=g.members.find(m=>m.key===M.choices[g.key]);
+    const c=hand?{keep:hand,why:'chosen by hand'}:chooseKeep(g,M.criterion,{weights:S.weights,priority:M.priority});
+    if(!separate){byKeep[c.keep.key]=g;g.members.forEach(m=>{if(m.key!==c.keep.key)removed.add(m.key);});}
+    return {key:g.key,members:g.members,keep:c.keep,why:c.why,manual:!!hand,separate};
+  });
+  return {groups:out,removed,byKeep,total:all.length};
 }
 // The treatment of one threat on an asset, changed: what is written back into the asset document
 function setTreatment(asset,threatId,change){
@@ -271,6 +349,6 @@ function register(site,opts){
   return {rows,inherent,residual};
 }
 
-const api={ACTORS,ENISA,THREATS,LEVELS,LEVEL_LBL,defaultMatrix,cleanMatrix,cellOf,acceptFor,setAccept,settings,cleanThreat,cleanBaseline,matches,assess,requirementsFor,setTreatment,register};
+const api={ACTORS,ENISA,THREATS,LEVELS,LEVEL_LBL,defaultMatrix,cleanMatrix,cellOf,acceptFor,setAccept,CRITERIA,allRequirements,overlaps,similarity,chooseKeep,mergePlan,settings,cleanThreat,cleanBaseline,matches,assess,requirementsFor,setTreatment,register};
 root.StrataRisk=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

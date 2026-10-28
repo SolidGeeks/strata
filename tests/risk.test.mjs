@@ -6,8 +6,8 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 const ctx = {};
-for (const f of ['risk.js', 'baselines.js']) runInNewContext(readFileSync(new URL(`../public/${f}`, import.meta.url), 'utf8'), ctx);
-const R = ctx.StrataRisk, B = ctx.StrataBaselines;
+for (const f of ['risk.js', 'baselines.js', 'logs.js']) runInNewContext(readFileSync(new URL(`../public/${f}`, import.meta.url), 'utf8'), ctx);
+const R = ctx.StrataRisk, B = ctx.StrataBaselines, L = ctx.StrataLogs;
 const J = x => JSON.parse(JSON.stringify(x));
 
 // A small compiled IS: a web server published on the Internet with a known exploited flaw, a VPN gateway,
@@ -155,4 +155,87 @@ test('acceptance: the threshold of the matrix, of the criticality, then of the a
   assert.equal(row().acceptable, false);
   s.byId.vpn.risk = R.setAccept(s.byId.vpn, 3);
   assert.equal(row().acceptable, true);
+});
+
+test('overlapping requirements: grouped across baselines, one kept by a criterion or by hand', () => {
+  const all = ['anssi', 'nist-csf', 'cis-v8', 'iso27001'];
+  const plan = R.mergePlan(R.settings({ baselines: all, merge: { on: true } }, B), B);
+  assert.ok(plan.groups.length > 30, `only ${plan.groups.length} groups`);
+  for (const g of plan.groups) {
+    assert.equal(new Set(g.members.map(m => m.baseline)).size, g.members.length, 'one requirement per baseline in a group');
+    assert.ok(g.members.length >= 2);
+  }
+  // the backup requirements of the four baselines end up together
+  const backups = plan.groups.find(g => g.members.some(m => m.key === 'cis-v8/11.2'));
+  assert.ok(backups && backups.members.some(m => m.key === 'iso27001/8.13'), 'CIS 11.2 and ISO 8.13 overlap');
+  // the criteria
+  const g = plan.groups[0], keep = c => R.chooseKeep(g, c, { priority: ['iso27001', 'anssi', 'nist-csf', 'cis-v8'] }).keep;
+  const sum = r => r.threats.reduce((n, t) => n + t.strength, 0);
+  assert.equal(sum(keep('strict')), Math.max(...g.members.map(sum)));
+  assert.equal(keep('coverage').threats.length, Math.max(...g.members.map(m => m.threats.length)));
+  const order = ['iso27001', 'anssi', 'nist-csf', 'cis-v8'];
+  assert.equal(keep('baseline').baseline, order.find(b => g.members.some(m => m.baseline === b)));
+  // fit: the threats found on the map weigh
+  const t0 = g.members.find(m => m.key !== keep('strict').key);
+  const w = Object.fromEntries(t0.threats.map(t => [t.id, 100]));
+  const fit = r => r.threats.reduce((n, t) => n + (w[t.id] || 0) * t.strength, 0);
+  assert.equal(fit(R.chooseKeep(g, 'fit', { weights: w }).keep), Math.max(...g.members.map(fit)));
+});
+
+test('merging: the kept requirement stands for the others, by hand or kept separate', () => {
+  const doc = { baselines: ['anssi', 'cis-v8'], merge: { on: true } };
+  const S = R.settings(doc, B), plan = R.mergePlan(S, B), g = plan.groups[0];
+  const offered = R.requirementsFor(S, B), keys = new Set(offered.map(r => r.key));
+  assert.equal(offered.length, plan.total - plan.removed.size);
+  assert.ok(keys.has(g.keep.key));
+  g.members.filter(m => m.key !== g.keep.key).forEach(m => assert.ok(!keys.has(m.key), `${m.key} is still offered`));
+  const kept = offered.find(r => r.key === g.keep.key);
+  const union = new Set(g.members.flatMap(m => m.threats.map(t => t.id)));
+  assert.equal(kept.threats.length, union.size, 'the kept one takes all their threats');
+  assert.equal(kept.merged.length, g.members.length - 1);
+  // by hand
+  const other = g.members.find(m => m.key !== g.keep.key);
+  const byHand = R.mergePlan(R.settings({ ...doc, merge: { on: true, choices: { [g.key]: other.key } } }, B), B).groups.find(x => x.key === g.key);
+  assert.equal(byHand.keep.key, other.key);
+  assert.equal(byHand.manual, true);
+  // kept separate: nothing merged in that group
+  const sep = R.requirementsFor(R.settings({ ...doc, merge: { on: true, separate: [g.key] } }, B), B);
+  g.members.forEach(m => assert.ok(sep.some(r => r.key === m.key)));
+  // off: everything offered
+  assert.equal(R.requirementsFor(R.settings({ baselines: ['anssi', 'cis-v8'] }, B), B).length, plan.total);
+});
+
+test('a status given to a merged requirement still counts once it is merged', () => {
+  const s = site(), a = s.byId.vpn, doc = { baselines: ['anssi', 'cis-v8'] };
+  const row = d => R.assess(s, a, opts(d, { hops: 1 })).find(r => r.threat.id === 'remote-access');
+  const plan = R.mergePlan(R.settings({ ...doc, merge: { on: true } }, B), B);
+  const g = plan.groups.find(x => x.members.every(m => m.threats.some(t => t.id === 'remote-access')));
+  assert.ok(g, 'a group on remote access');
+  const gone = g.members.find(m => m.key !== g.keep.key);
+  a.risk = R.setTreatment(a, 'remote-access', { req: gone.key, status: 'applied' });
+  const merged = row({ ...doc, merge: { on: true } });
+  assert.equal(merged.requirements.find(r => r.key === g.keep.key).status, 'applied');
+});
+
+test('logs for the SIEM: the sources an asset has, the events of its threats, at the verbosity of its risks', () => {
+  const known = new Set(R.THREATS.map(t => t.id));
+  for (const src of L.SOURCES) for (const ev of src.events) {
+    assert.ok([1, 2, 3].includes(ev.v), `${src.id}/${ev.id}: verbosity`);
+    ev.threats.forEach(t => assert.ok(known.has(t), `${src.id}/${ev.id}: unknown threat ${t}`));
+    assert.ok(src.settings[ev.v], `${src.id}: no setting for level ${ev.v}`);
+  }
+  for (const t of known) assert.ok(L.SOURCES.some(s => s.events.some(e => e.threats.includes(t))), `no log helps see ${t}`);
+  const s = site(), logs = id => L.forAsset(s.byId[id], R.assess(s, s.byId[id], opts({}, { hops: s.expo[id] })), { outbound: id === 'web' });
+  const vpn = logs('vpn');
+  assert.ok(vpn.sources.some(x => x.source.id === 'vpn'), 'a VPN gateway sends its authentications');
+  assert.ok(!vpn.sources.some(x => x.source.id === 'win-security'), 'no Windows log on a gateway');
+  assert.ok(logs('web').sources.some(x => x.source.id === 'linux'), 'a Debian web server sends its auth and audit logs');
+  assert.ok(logs('web').sources.some(x => x.source.id === 'web'), 'and its web access logs');
+  // the verbosity follows the residual risk: with every risk low, only minimal events
+  const low = R.assess(s, s.byId.web, opts({}, { hops: 1 })).map(r => ({ ...r, residual: { ...r.residual, level: 'low' } }));
+  const lw = L.forAsset(s.byId.web, low, { outbound: true });
+  assert.ok(lw.sources.every(x => x.level === 1 && x.events.every(e => e.event.v === 1)));
+  assert.equal(lw.retention, 6);
+  assert.equal(logs('web').retention, 12, 'a year when a high or critical risk remains');
+  assert.deepEqual(J(L.forAsset(s.byId.pc, [], {}).sources), []);
 });

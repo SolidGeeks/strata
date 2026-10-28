@@ -230,11 +230,30 @@ test('risk register: threats per asset on the matrix, requirements applied, sett
   const vpn = Object.values((await api('bob', 'GET', 'api/state')).data.assets).find(a => a.site === 'lyon' && a.name === 'vpn-gw');
   assert.equal(Object.values(vpn.risk.threats['remote-access'].reqs).filter(s => s === 'applied').length, n);
 
+  // the 2D plan of the asset lists its requirements by baseline, under the firewall rules
+  await bob.click('#det [data-threat-back]');
+  await bob.click('#det [data-plan-asset]');
+  await bob.waitForSelector('#planView svg');
+  assert.match(await bob.locator('#planView svg').textContent(), new RegExp(`REQUIREMENTS FOR VPN-GW · \\d+ · \\d+ APPLIED.*ANSSI`));
+  await bob.click('[data-plan="close"]');
+
   // the settings: one more baseline, saved for every IS
-  await bob.click('#lensSeg [data-lens="risk"]');
   await bob.click('#lensBody [data-rk-settings]');
   await bob.locator('#det [data-rs-baseline="nist-csf"]').check();
   await bob.waitForFunction(() => /NIST/.test(document.querySelector('#lensBody .lens-head')?.textContent || ''));
   assert.deepEqual((await api('bob', 'GET', 'api/state')).data.risk.baselines, ['anssi', 'nist-csf']);
+
+  // the Baselines tab: overlapping requirements merged, one kept per group
+  await bob.click('#lensBody [data-rkv="baselines"]');
+  await bob.waitForSelector('#lensBody .ovg');
+  await bob.locator('#lensBody [data-ov-on]').check();
+  await bob.waitForFunction(() => /merged into another one/.test(document.querySelector('#lensBody .summary')?.textContent || ''));
+  assert.equal((await api('bob', 'GET', 'api/state')).data.risk.merge.on, true);
+
+  // the Logs tab: what each asset sends to the SIEM; an asset sheet lists its own
+  await bob.click('#lensBody [data-rkv="logs"]');
+  await bob.locator('#lensBody [data-goto-logs]').first().click();
+  await bob.waitForSelector('#det #logsCap');
+  assert.ok(await bob.locator('#det details.lgs').count() > 0);
   assert.deepEqual(errors, [], 'JavaScript errors in the pages');
 });
