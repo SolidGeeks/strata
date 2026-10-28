@@ -2591,7 +2591,7 @@ flatSvg.addEventListener('pointermove',e=>{
 flatSvg.addEventListener('pointerup',e=>{
   const d=flatDrag;flatDrag=null;flatSvg.classList.remove('panning');if(!d)return;
   const [wx,wy]=toWorld(e);
-  if(d.kind==='pan'){if(!d.moved&&state.panel!=='form'){if(d.plate)focusVlan(d.plate);else if(state.selId)select(null);else if(state.panel==='flow')closeDet();}return;}
+  if(d.kind==='pan'){if(!d.moved&&state.panel!=='form'){if(d.plate)focusVlan(d.plate);else if(state.focus){if(state.selId)select(null);unfocusVlan();}else if(state.selId)select(null);else if(state.panel==='flow')closeDet();}return;}
   if(d.kind==='asset'){if(!d.moved){if(state.panel!=='form')select(byId[d.id],false);return;}dropAsset(d.id,d.wx,d.wy);return;}
   if(d.kind==='plate'){if(!d.moved){if(state.panel!=='form')focusVlan(d.id);else renderFlat();return;}dropPlate(d.id,wx,wy,d);return;}
   if(d.kind==='svc'){if(!d.moved&&state.panel!=='form'&&SVC[d.id])showService(SVC[d.id]);return;}
@@ -4034,20 +4034,35 @@ function afterSave(fn){onSave=null;onCancel=null;pendingAfterData=fn;scheduleDat
 
 /* ================= One VLAN alone ================= */
 // A click on a plate shows that VLAN alone: the other plates and their assets disappear, with the flows to them.
-// The VLANs shown before come back with "Show every VLAN", Escape, or a second click on the plate.
+// The VLANs shown before, and the view, come back with "Show every VLAN", Escape, a click on an empty space or a
+// second click on the plate.
 function focusVlan(id){
   if(!vlanById[id])return;
   if(state.focus&&state.focus.vlan===id){unfocusVlan();return;}
-  const prev=state.focus?state.focus.prev:new Set(state.hidden);
-  state.focus={vlan:id,prev};state.hidden=new Set(VLANS.map(v=>v.id).filter(x=>x!==id));
+  // the view before the first VLAN shown alone, to come back to it
+  const was=state.focus||{prev:new Set(state.hidden),view3d:{t:controls.target.clone(),c:camera.position.clone()},view2d:Object.assign({},flatView)};
+  state.focus=Object.assign({},was,{vlan:id});state.hidden=new Set(VLANS.map(v=>v.id).filter(x=>x!==id));
   const a=selAsset();if(a&&a.vlan!==id)select(null);
   renderVlanList();refresh();renderFocusBar();
-  const fl=floors[id];if(fl&&!state.flat){const c=new THREE.Box3().setFromObject(fl.slab).getCenter(new THREE.Vector3());flyTo(c,Math.max(18,Math.max(fl.w,fl.D)*1.3));}
+  if(state.flat){const P=FL&&FL.plates[id];if(P){const vp=flatViewport(),k=Math.max(6,Math.min(60,Math.min(vp.w/(P.w+2),vp.h/(P.h+3))));
+    glideFlat({k,tx:vp.x+(vp.w-P.w*k)/2-P.x*k,ty:vp.y+(vp.h-P.h*k)/2-P.y*k});}}
+  else{const fl=floors[id];if(fl){const c=new THREE.Box3().setFromObject(fl.slab).getCenter(new THREE.Vector3());flyTo(c,Math.max(18,Math.max(fl.w,fl.D)*1.3));}}
+}
+// The 2D diagram moves to a view in a quarter of a second, as the 3D camera flies
+let glide=0;
+function glideFlat(to){
+  cancelAnimationFrame(glide);const from=Object.assign({},flatView),t0=performance.now(),dur=reduceMotion?1:300;
+  const step=t=>{const k=Math.min(1,(t-t0)/dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+    flatView={k:from.k+(to.k-from.k)*e,tx:from.tx+(to.tx-from.tx)*e,ty:from.ty+(to.ty-from.ty)*e};applyFlatView();if(k<1)glide=requestAnimationFrame(step);};
+  glide=requestAnimationFrame(step);
 }
 function unfocusVlan(){
   if(!state.focus)return;
-  state.hidden=new Set([...state.focus.prev].filter(id=>vlanById[id]));state.focus=null;
+  const f=state.focus;state.hidden=new Set([...f.prev].filter(id=>vlanById[id]));state.focus=null;
   renderVlanList();refresh();renderFocusBar();
+  // back to the view from before, zooming out as it zoomed in
+  if(state.flat){if(f.view2d&&f.view2d.k)glideFlat(f.view2d);else fitFlat();}
+  else if(f.view3d)fly={t0:performance.now(),dur:reduceMotion?1:800,fromT:controls.target.clone(),fromC:camera.position.clone(),toT:f.view3d.t.clone(),toC:f.view3d.c.clone()};
 }
 function renderFocusBar(){
   const b=$('#focusBar'),v=state.focus&&state.view==='site'&&vlanById[state.focus.vlan];
@@ -4095,6 +4110,7 @@ renderer.domElement.addEventListener('pointerup',e=>{
   else if(u&&u.plate&&!state.arrange)focusVlan(u.plate);
   else if(u&&u.svc)showService(u.svc);
   else if(u&&u.flow)showFlow(u.flow);
+  else if(!u&&state.focus){if(state.selId)select(null);unfocusVlan();}
   else if(state.selId)select(null);else if(state.panel==='flow')closeDet();});
 renderer.domElement.addEventListener('pointermove',e=>{
   if(drag){

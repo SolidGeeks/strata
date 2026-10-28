@@ -237,7 +237,7 @@ test('risk register: threats per asset on the matrix, requirements applied, sett
   assert.match(await bob.locator('#planView svg').textContent(), new RegExp(`REQUIREMENTS FOR VPN-GW · \\d+ · \\d+ APPLIED.*ANSSI`));
   await bob.click('[data-plan="close"]');
 
-  // a click on a plate shows its VLAN alone, the other plates and their assets fade out; a second click brings them back
+  // a click on a plate shows its VLAN alone, the other plates and their assets fade out
   await bob.click('#lensSeg [data-lens="physical"]');
   await bob.click('#viewSeg [data-v="2d"]');
   await bob.waitForSelector('#flatSvg [data-plate]');
@@ -254,7 +254,15 @@ test('risk register: threats per asset on the matrix, requirements applied, sett
   await bob.mouse.click(...spot);
   await bob.waitForSelector('#focusBar:not([hidden])');
   assert.equal(await bob.locator('#vlans input:checked').count(), 1);
-  await bob.mouse.click(...spot);
+  // a click on an empty space brings every VLAN back
+  const empty = await bob.evaluate(() => {
+    for (let y = 880; y > 150; y -= 20) for (let x = 1380; x > 320; x -= 20) {
+      const e = document.elementFromPoint(x, y);
+      if (e && e.closest('#flatSvg') && !e.closest('[data-plate],[data-asset],[data-flow],[data-internet]')) return [x, y];
+    }
+    return null;
+  });
+  await bob.mouse.click(...empty);
   await bob.waitForSelector('#focusBar', { state: 'hidden' });
   assert.equal(await bob.locator('#vlans input:not(:checked)').count(), 0);
   await bob.click('#viewSeg [data-v="3d"]');
