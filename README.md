@@ -1,4 +1,4 @@
-# Strata — v0.9
+# Strata — v0.10
 
 [![Release](https://img.shields.io/github/v/release/SolidGeeks/strata)](https://github.com/SolidGeeks/strata/releases) [![License AGPL-3.0](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/license-agpl.svg)](LICENSE) [![Signed releases](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/signed-releases.svg)](#2-quick-start-with-docker) [![Tests](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml)
 
@@ -15,9 +15,18 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 | [0.7.0](https://github.com/SolidGeeks/strata/milestone/1) ✅ | Hardening and tests: limit failed sign-ins, a security review, a browser test of the interface. Released on 2026-10-26 |
 | [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) ✅ | Connector modules and a module store, three.js 0.186. Released on 2026-10-26 |
 | [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) ✅ | The last breaking changes: single sign-on, pre-releases, an API reference, the old product name removed. Released on 2026-10-26 |
+| 0.10.0 ✅ | Incident mode with Muster, the risk register with baselines, logs for the SIEM, the steering dashboard. Released on 2026-10-28 |
 | [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
 
 Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
+
+## New in v0.10: incident mode with Muster, the risk register, the steering dashboard
+
+- **Incident mode, with Muster** (*Incident* in the controls of an IS): mark assets compromised, suspected or contained; the incident sheet lists who to call, the flows to cut and the firewall where to cut each, the business services and assets that depend on them, what the attacker reaches next. A Muster incident opens on the map and its playbook decisions point at the assets. Each asset also has anonymised *AI prompts*: its major risks, and a guide for an AI to write the response playbooks of its plausible incidents in Muster's format.
+- **Risk register** (the *Risks* view of an IS, and *Risks* on each asset sheet): each asset gets the threats that fit it, from its exposure, criticality, ports, system and vulnerabilities and from the threat landscape of its IS (EBIOS RM risk sources, ENISA Threat Landscape, MITRE ATT&CK). Each risk sits on a risk matrix of its own, 3×3 to 5×5 and configurable, before and after the requirements applied. For each risk, apply, plan or set aside the requirements of the ANSSI hygiene guide, NIST CSF 2.0, CIS Controls v8.1, ISO 27001 Annex A or your own baselines, or accept, transfer or avoid the risk; requirements that overlap between baselines merge into the one a criterion (most demanding, widest coverage, best fit, preferred baseline) or you choose. For each asset, the minimum logs to send to a SIEM and their verbosity. The register and the SIEM plan export as CSV.
+- **Dashboard and KPIs** (*Steering › Dashboard and KPIs*): exposure to the Internet, the age of open vulnerabilities against remediation deadlines, owner coverage and scan coverage, over 12 weeks, 6 months or 12 months, for the whole map or one IS, rebuilt from the history of the map. Each figure with its trend and whether it got better; the IS side by side; the oldest open vulnerabilities. Prints to PDF for a steering committee, exports as CSV.
+- **On the map**: a click on a plate shows its VLAN alone; selecting an asset zooms on it and highlights it; a click on an empty space zooms back out. The 2D plan of an asset lists the requirements against its risks under its firewall rules.
+- **One-page build** (`npm run build:online`): the whole interface without a server, the map kept in the browser.
 
 ## New in v0.9: single sign-on, API tokens, an API reference
 
@@ -43,9 +52,6 @@ Connectors are now **modules**: a folder with a manifest (`strata-module.json`: 
 - **Attack paths** (*Analysis*): which critical assets an attacker could reach from the Internet, every path to each one along the allowed flows, most likely first, and **where to cut** (the assets to harden and the equipment whose rules to tighten, that every path to a critical asset goes through). Hover a path to pick it out on the model, in 3D or in 2D.
 - **Blast radius**: pick an asset (in the panel, or *Blast radius* on its sheet) and see everything an attacker holding it could reach, the most likely way to each asset, and the business services hit.
 - A step counts for the highest of: the vulnerabilities of the asset taken over (as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service; a path for the product of its steps. Both lists export as CSV.
-- **Incident mode, with Muster** (*Incident* in the controls of an IS): mark assets compromised, suspected or contained; the incident sheet lists who to call, the flows to cut and the firewall where to cut each, the business services and assets that depend on them, what the attacker reaches next. A Muster incident opens on the map and its playbook decisions point at the assets. Each asset also has anonymised *AI prompts*: its major risks, and a guide for an AI to write the response playbooks of its plausible incidents in Muster's format.
-- **Dashboard and KPIs** (*Steering › Dashboard and KPIs*): exposure to the Internet, the age of open vulnerabilities against remediation deadlines, owner coverage and scan coverage, over 12 weeks, 6 months or 12 months, for the whole map or one IS, rebuilt from the history of the map. Each figure with its trend and whether it got better; the IS side by side; the oldest open vulnerabilities. Prints to PDF for a steering committee, exports as CSV.
-- **Risk register** (the *Risks* view of an IS, and *Risks* on each asset sheet): each asset gets the threats that fit it, from its exposure, criticality, ports, system and vulnerabilities and from the threat landscape of its IS (EBIOS RM risk sources, ENISA Threat Landscape, MITRE ATT&CK). Each risk sits on a risk matrix of its own, 3×3 to 5×5 and configurable, before and after the requirements applied. For each risk, apply, plan or set aside the requirements of the ANSSI hygiene guide, NIST CSF 2.0, CIS Controls v8.1, ISO 27001 Annex A or your own baselines, or accept, transfer or avoid the risk; requirements that overlap between baselines merge into the one a criterion (most demanding, widest coverage, best fit, preferred baseline) or you choose. For each asset, the minimum logs to send to a SIEM and their verbosity. The register and the SIEM plan export as CSV.
 - **Architecture file**: one document per IS (*Analysis › Architecture file*, or the IS summary), in the shape audits and security accreditation expect: cover and sign-off table, summary, scope, network diagram, zones and VLANs, applications, asset inventory, flow matrix, the rules each firewall needs, exposure, vulnerabilities and remediation order, attack paths, plans of the exposed and critical assets, incident contacts, change history and method. *Download* saves it as one HTML file, with no outside resource, that prints to A4 PDF from the browser.
 - **Nix and NixOS**: the repository is a flake, with a package and a hardened `services.strata` module (section 6, *Nix and NixOS*).
 - **Failed sign-ins are limited** per account and per client address (`429`), and passwords can be read from files (`EDIT_PASS_FILE`, `VIEW_PASS_FILE`): section 3.
@@ -188,7 +194,7 @@ Or use the prebuilt image published with each release (tag `vX.Y.Z`, see the `Re
 Every published image is **signed**: an attestation proves it was built by this repository's `Release` workflow, from the code of the tag. To check it before deploying (you need the [GitHub CLI](https://cli.github.com/)):
 
 ```bash
-gh attestation verify oci://ghcr.io/solidgeeks/strata:0.9.0 --owner SolidGeeks
+gh attestation verify oci://ghcr.io/solidgeeks/strata:0.10.0 --owner SolidGeeks
 ```
 
 The command must print `Verification succeeded!`. If it fails, do not use the image, and report it (see [SECURITY.md](SECURITY.md)). Images older than 0.5.4 are not signed.
@@ -568,7 +574,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 
 ---
 
-## 13. Limits of v0.9
+## 13. Limits of v0.10
 
 - Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
 - Sessions of single sign-on are kept in memory: restarting Strata signs SSO users out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 8 by default), or at once with *End all single sign-on sessions*. LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).
@@ -582,6 +588,8 @@ This map describes your weak spots precisely: treat it as sensitive data.
 - GLPI: one call per asset (plus one per technician and per unknown software, cached); allow a few minutes for several thousand assets. The new GLPI 11 API (`/api.php/v2`) is not supported yet.
 - NetFlow is not read yet: a module could do it ([MODULES.md](MODULES.md)). NetBox and Nmap come as modules from the store.
 - A connector module's process is kept away from the data files and from the server's settings, but not from the network; the Node.js permission model it relies on guards against mistakes, not against code written to escape it. Review a module before installing it outside the store.
+- The risk register, the requirements linked to each threat (and the share of risk each removes), the grouping of overlapping requirements and the catalogue of SIEM logs are Strata's own judgement, not an official mapping of ANSSI, NIST, CIS or ISO: review them with your compliance and SOC teams. CIS Controls and ISO 27001 come as numbering and paraphrased titles only.
+- On a server, the dashboard goes back as far as the kept history (the last `HISTORY_KEEP` changes, 5000 by default); in a map kept in a browser, as far as its daily snapshots.
 - Business dependencies follow the recorded flows: a dependency with no flow on the map (a licence server reached through a proxy, a shared storage mounted by hand) is not seen. Log and monitoring flows (syslog, SNMP traps, NetFlow) are left out on purpose.
 - Attack paths follow the recorded flows only: a flow missing from the map is a path Strata does not see, and a flow recorded but blocked in practice is a path it shows. The likelihoods are a way to rank paths, not a measured probability. Paths below 0.1% or longer than 8 steps are left out of the lists (the most likely way to each asset is always given).
 - The risk score uses the EPSS and KEV values recorded on each vulnerability: Strata does not fetch the FIRST and CISA feeds, so keep them up to date through the Cyberwatch connector or an import. A vulnerability is not tied to a port, so any open flow to its asset counts as a way to reach it.
@@ -602,7 +610,7 @@ A pull request must start from the latest release or later: the `base` job fails
 
 ### Releasing
 
-1. Merge a pull request that sets the new version in `package.json` (`npm version 0.9.0 --no-git-tag-version`), `docker-compose.yml`, the interface and the docs, and dates its CHANGELOG section.
+1. Merge a pull request that sets the new version in `package.json` (`npm version 0.10.0 --no-git-tag-version`), `docker-compose.yml`, the interface and the docs, and dates its CHANGELOG section.
 2. *Actions › Release › Run workflow*, on `main`. The workflow reads the version from `package.json` and creates the `vX.Y.Z` tag itself, so there is nothing to type. It waits for a maintainer's approval (the `release` environment), then runs the tests, publishes the signed image and the GitHub release with its notes.
 
 Pushing a `vX.Y.Z` tag, or publishing a release from the web page with a new tag on `main`, still works: the tag must then be exactly `v` and the version (`v0.9.0`, not `V0.9.0` or `v.0.9.0`).

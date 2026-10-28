@@ -2,7 +2,7 @@
 
 All notable changes to Strata. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.10.0] - 2026-10-28
 ### Added
 - **Incident mode, with Muster** (*Incident* in the controls of an IS). Mark assets compromised, suspected or contained, from their sheet or from a playbook decision. The incident sheet then shows:
   - **who to call**: the contacts of the assets hit, on-call and 24/7 first, the owners of the business services they run, the IS contacts;
@@ -36,6 +36,8 @@ All notable changes to Strata. Versions follow [Semantic Versioning](https://sem
 - **One VLAN alone**: a click on a plate, in 3D or in the 2D diagram, shows that VLAN alone: the other plates and their assets disappear, with the flows to them, and the view zooms in on it. *Show every VLAN*, Escape, a click on an empty space or a second click on the plate brings back the VLANs shown before, and the view zooms back out to where it was.
 - **API**: `GET /api/kpi` (the key figures over time), `PUT /api/risk` (approvers), `risk` in `GET /api/state`, the export, the import and proposals; `landscape` on IS documents, `risk` on asset documents.
 - **One-page build**: `npm run build:online` writes `dist-online/strata.html`, the whole interface without a server (map kept in the browser, three.js from jsDelivr).
+### Changed
+- The 3D model is no longer drawn while a lens (Application, Business, Risks) or the 2D diagram covers it: those views stay smooth on modest machines.
 
 ## [0.9.0] - 2026-10-26
 ### Added
@@ -216,6 +218,7 @@ All notable changes to Strata. Versions follow [Semantic Versioning](https://sem
 ## [0.1.0]
 - First release: 3D map of IS, zones, VLANs, assets, flows, exposure, vulnerabilities and incident contacts.
 
+[0.10.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.10.0
 [0.9.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.9.0
 [0.8.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.8.0
 [0.7.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.7.0

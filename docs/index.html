@@ -123,7 +123,7 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
     <div class="txt">
       <h3>What to fix first</h3>
       <p>One risk score per asset, from CVSS, EPSS, the CISA list of known exploited vulnerabilities, exposure, reachability from the Internet and criticality. The result is a remediation list in the right order, exported as CSV, and a “Why?” on every asset that shows how its score was made.</p>
-      <ul class="facts"><li>EPSS and KEV from the Cyberwatch connector</li><li>Works offline: no feed to download</li><li>Attack paths from the Internet to the critical assets, and where to cut them</li><li>Blast radius: everything an attacker holding one asset could reach</li></ul>
+      <ul class="facts"><li>EPSS and KEV from the Cyberwatch connector</li><li>Works offline: no feed to download</li><li>Attack paths from the Internet to the critical assets, and where to cut them</li><li>Blast radius: everything an attacker holding one asset could reach</li><li>A risk register: the threats of each asset on a risk matrix, and the requirements of ANSSI, NIST CSF 2.0, CIS Controls v8.1, ISO 27001 or your own baselines against them</li><li>The logs each asset must send to a SIEM, at the right verbosity</li><li>A dashboard for the steering committee: exposure, vulnerability age, owner and scan coverage over time</li></ul>
     </div>
     <figure class="shot"><img src="assets/img/risk-1200.webp" srcset="assets/img/risk-1200.webp 1200w, assets/img/risk.webp 2400w" sizes="(min-width: 1000px) 60vw, 100vw" width="2400" height="1500" alt="Risk priorities of the Lyon site: the fixes in order, each with its KEV, EPSS, CVSS and exposure" loading="lazy"><figcaption>Risk priorities: a firewall flaw known to be exploited comes first.</figcaption></figure>
   </article>
@@ -212,7 +212,7 @@ nano .env    # EDIT_PASS=a-long-passphrase</code></pre><button class="copy" type
     <a href="https://solidgeeks.github.io/SolidGeeks/"> <img src="https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/footer/solid-geeks-footer.gif" alt="Solid Geeks: open source the world." width="100%"> </a>
   </div>
   <div class="wrap">
-    <p>Strata 0.9.0 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a></p>
+    <p>Strata 0.10.0 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a></p>
     <p>Cyberwatch, GLPI, phpIPAM and Palo Alto Networks are trademarks of their owners; Strata is not affiliated with them.</p>
   </div>
 </footer>
