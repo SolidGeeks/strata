@@ -142,6 +142,28 @@ test('proposals: a contributor proposes, an approver publishes, the map changes 
   assert.match(h.data.entries[0].label, /Add the ERP server.*approved by bob/);
 });
 
+test('risk settings: approvers save them, contributors propose them, history and export keep them', async () => {
+  const alice = as('alice'), bob = as('bob');
+  const doc = { baselines: ['anssi', 'cis-v8'], matrix: { likelihood: ['Low', 'Mid', 'High'], impact: ['Low', 'Mid', 'High'] } };
+  assert.equal((await alice.put('/api/risk', { risk: doc })).status, 403, 'contributors go through a proposal');
+  assert.equal((await bob.put('/api/risk', { risk: [] })).status, 400);
+  const r = await bob.put('/api/risk', { risk: doc });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.deepEqual((await alice.get('/api/state')).data.risk, doc);
+  assert.deepEqual((await bob.get('/api/export')).data.risk, doc);
+  const prev = r.data.rev;
+  const p = await alice.post('/api/proposals', { title: 'Enable NIST', changes: { risk: { ...doc, baselines: ['nist-csf'] } } });
+  assert.equal(p.status, 200, JSON.stringify(p.data));
+  assert.equal(p.data.proposal.changes.risk.baselines[0], 'nist-csf');
+  await alice.post(`/api/proposals/${p.data.proposal.id}/submit`);
+  const ok = await bob.post(`/api/proposals/${p.data.proposal.id}/approve`);
+  assert.equal(ok.status, 200, JSON.stringify(ok.data));
+  assert.deepEqual((await bob.get('/api/state')).data.risk.baselines, ['nist-csf']);
+  assert.deepEqual((await bob.get(`/api/state?at=${prev}`)).data.risk.baselines, ['anssi', 'cis-v8'], 'older versions keep their risk settings');
+  const h = await bob.get('/api/history?limit=3');
+  assert.ok(h.data.entries.some(e => e.kind === 'risk'));
+});
+
 test('proposals: nobody approves their own (four-eyes rule)', async () => {
   const bob = as('bob');
   const { data } = await bob.post('/api/proposals', { title: 'Mine', changes: { si: { paris: { name: 'Paris' } } } });

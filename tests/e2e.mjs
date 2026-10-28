@@ -203,3 +203,38 @@ test('incident mode: a Muster incident opens on the map, a contributor works it,
 
   assert.deepEqual(errors, [], 'JavaScript errors in the pages');
 });
+
+test('risk register: threats per asset on the matrix, requirements applied, settings saved', async () => {
+  const bob = await signIn('bob');
+  await openIs(bob, 'lyon');
+  await bob.click('#lensSeg [data-lens="risk"]');
+  await bob.waitForSelector('#lensBody .rk-tab tbody tr');
+  const rows = await bob.locator('#lensBody .rk-tab tbody tr').count();
+  assert.ok(rows > 20, `the register of Lyon lists only ${rows} risks`);
+  // a cell of the matrix filters the register
+  await bob.locator('#lensBody [data-cell^="residual:"]').filter({ hasText: /\d/ }).first().click();
+  assert.ok(await bob.locator('#lensBody .rk-tab tbody tr').count() < rows);
+  await bob.click('#lensBody [data-rk-clear]');
+
+  // the VPN gateway: compromise of a remote access, then its requirements applied one by one
+  await bob.fill('#search', 'vpn-gw');
+  await bob.press('#search', 'Enter');
+  await bob.click('#det [data-threat="remote-access"]');
+  await bob.waitForSelector('#det [data-req]');
+  const level = () => bob.locator('#det .kv dd').nth(2).textContent();
+  const before = await level();
+  const reqs = bob.locator('#det [data-req]'), n = await reqs.count();
+  for (let k = 0; k < n; k++) { await reqs.nth(k).selectOption('applied'); await bob.waitForTimeout(150); }
+  await bob.waitForTimeout(800);
+  assert.notEqual(await level(), before, 'the requirements applied lower the risk');
+  const vpn = Object.values((await api('bob', 'GET', 'api/state')).data.assets).find(a => a.site === 'lyon' && a.name === 'vpn-gw');
+  assert.equal(Object.values(vpn.risk.threats['remote-access'].reqs).filter(s => s === 'applied').length, n);
+
+  // the settings: one more baseline, saved for every IS
+  await bob.click('#lensSeg [data-lens="risk"]');
+  await bob.click('#lensBody [data-rk-settings]');
+  await bob.locator('#det [data-rs-baseline="nist-csf"]').check();
+  await bob.waitForFunction(() => /NIST/.test(document.querySelector('#lensBody .lens-head')?.textContent || ''));
+  assert.deepEqual((await api('bob', 'GET', 'api/state')).data.risk.baselines, ['anssi', 'nist-csf']);
+  assert.deepEqual(errors, [], 'JavaScript errors in the pages');
+});

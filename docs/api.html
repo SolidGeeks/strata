@@ -109,13 +109,13 @@
     </table></div>
 
     <h2 id="map" style="--edge:var(--s4)">The map</h2>
-    <p>The map is four parts: the IS documents (<code>si</code>, by id), the assets (by id), the links between IS (<code>wan</code>) and the shared Internet services (<code>services</code>). Their content is in <a href="#format">Data format</a>. Every change makes a new revision and an entry in the history.</p>
+    <p>The map is four parts: the IS documents (<code>si</code>, by id), the assets (by id), the links between IS (<code>wan</code>), the shared Internet services (<code>services</code>) and the risk settings (<code>risk</code>). Their content is in <a href="#format">Data format</a>. Every change makes a new revision and an entry in the history.</p>
     <div class="tablewrap"><table>
       <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
       <tbody>
-        <tr><td><code>GET /api/state</code></td><td>viewer</td><td>→ <code>{si, assets, wan, services, rev, updatedAt}</code></td></tr>
+        <tr><td><code>GET /api/state</code></td><td>viewer</td><td>→ <code>{si, assets, wan, services, risk, rev, updatedAt}</code></td></tr>
         <tr><td><code>GET /api/state?at=REV</code></td><td>viewer</td><td>→ the same, as it was right after revision <code>REV</code></td></tr>
-        <tr><td><code>GET /api/export</code></td><td>viewer</td><td>→ an export file (<code>Content-Disposition: attachment</code>): <code>{format: "strata", version: 3, exportedAt, si, assets, wan, services}</code></td></tr>
+        <tr><td><code>GET /api/export</code></td><td>viewer</td><td>→ an export file (<code>Content-Disposition: attachment</code>): <code>{format: "strata", version: 3, exportedAt, si, assets, wan, services, risk}</code></td></tr>
         <tr><td><code>GET /api/si/{id}</code>, <code>GET /api/assets/{id}</code></td><td>viewer</td><td>→ the document, or <code>404</code></td></tr>
         <tr><td><code>PUT /api/si/{id}</code></td><td>approver</td><td>the IS document → <code>{ok, rev}</code>. Creates or replaces it whole.</td></tr>
         <tr><td><code>DELETE /api/si/{id}</code></td><td>approver</td><td>→ <code>{ok, rev}</code>. Its assets stay.</td></tr>
@@ -123,7 +123,8 @@
         <tr><td><code>DELETE /api/assets/{id}</code></td><td>approver</td><td>→ <code>{ok, rev}</code></td></tr>
         <tr><td><code>PUT /api/wan</code></td><td>approver</td><td><code>{links: [...]}</code> → <code>{ok, rev}</code>. Replaces all the links.</td></tr>
         <tr><td><code>PUT /api/services</code></td><td>approver</td><td><code>{services: [...]}</code> → <code>{ok, rev}</code>. Replaces the shared catalogue.</td></tr>
-        <tr><td><code>POST /api/import</code></td><td>approver</td><td><code>{si, assets, wan?, services?}</code> (an export file works as is) → <code>{ok, rev}</code>. Replaces the whole map; a backup is taken first.</td></tr>
+        <tr><td><code>PUT /api/risk</code></td><td>approver</td><td><code>{risk: {...}}</code> → <code>{ok, rev}</code>. Replaces the risk settings shared by every IS (see <a href="#format">Data format</a>).</td></tr>
+        <tr><td><code>POST /api/import</code></td><td>approver</td><td><code>{si, assets, wan?, services?, risk?}</code> (an export file works as is) → <code>{ok, rev}</code>. Replaces the whole map; a backup is taken first.</td></tr>
       </tbody>
     </table></div>
     <p>Documents are replaced whole: to change one field, read the document, change it, send it back. To add a flow or a VLAN, change the IS document (<code>si.flows</code>, <code>si.vlans</code>).</p>
@@ -138,14 +139,14 @@
     <div class="tablewrap"><table>
       <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
       <tbody>
-        <tr><td><code>GET /api/history?before=REV&amp;limit=N</code></td><td>viewer</td><td>→ <code>{rev, oldest, entries}</code>, newest first, older than <code>before</code> if given; <code>limit</code> 120 by default, 500 at most. Each entry: <code>{rev, at, user, batch, label, kind, id, op, name, site}</code>; <code>kind</code>: <code>si</code>, <code>assets</code>, <code>wan</code>, <code>services</code> or <code>all</code>; <code>op</code>: <code>created</code>, <code>updated</code> or <code>deleted</code>. <code>oldest</code>: the oldest revision the history still holds.</td></tr>
+        <tr><td><code>GET /api/history?before=REV&amp;limit=N</code></td><td>viewer</td><td>→ <code>{rev, oldest, entries}</code>, newest first, older than <code>before</code> if given; <code>limit</code> 120 by default, 500 at most. Each entry: <code>{rev, at, user, batch, label, kind, id, op, name, site}</code>; <code>kind</code>: <code>si</code>, <code>assets</code>, <code>wan</code>, <code>services</code>, <code>risk</code> or <code>all</code>; <code>op</code>: <code>created</code>, <code>updated</code> or <code>deleted</code>. <code>oldest</code>: the oldest revision the history still holds.</td></tr>
         <tr><td><code>GET /api/history/{rev}</code></td><td>viewer</td><td>→ <code>{rev, entries}</code>: the changes of that revision, each with its <code>before</code> and <code>after</code> document</td></tr>
         <tr><td><code>POST /api/rollback</code></td><td>approver</td><td><code>{rev}</code> → <code>{ok, rev}</code>. Puts the map back as it was at <code>rev</code>, as a new revision (nothing is erased); a backup is taken first.</td></tr>
       </tbody>
     </table></div>
 
     <h2 id="proposals" style="--edge:var(--s6)">Proposals</h2>
-    <p>A proposal is a set of changes that an approver merges into the map, or not. Its <code>changes</code> are <code>{si: {id: doc}, assets: {id: doc}, wan?: [...], services?: [...]}</code>, where a document set to <code>null</code> deletes it. Its <code>status</code> goes <code>draft</code> → <code>submitted</code> → <code>approved</code> or <code>rejected</code>; a submitted proposal can be withdrawn back to <code>draft</code>, and editing a rejected one makes it a draft again.</p>
+    <p>A proposal is a set of changes that an approver merges into the map, or not. Its <code>changes</code> are <code>{si: {id: doc}, assets: {id: doc}, wan?: [...], services?: [...], risk?: {...}}</code>, where a document set to <code>null</code> deletes it. Its <code>status</code> goes <code>draft</code> → <code>submitted</code> → <code>approved</code> or <code>rejected</code>; a submitted proposal can be withdrawn back to <code>draft</code>, and editing a rejected one makes it a draft again.</p>
     <div class="tablewrap"><table>
       <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
       <tbody>
@@ -239,7 +240,8 @@ curl -H "Authorization: Bearer $STRATA_TOKEN" \
   "si":       { "&lt;IS id&gt;": { IS document } },
   "assets":   { "&lt;asset id&gt;": { asset document } },
   "wan":      [ { link } ],
-  "services": [ { Internet service } ]
+  "services": [ { Internet service } ],
+  "risk":     { risk settings }
 }</code></pre><button class="copy" type="button">Copy</button></div>
     <p>The export of a single IS (<em>Export this IS (JSON)</em>) adds <code>"scope": "si"</code> and holds that IS, its assets and the shared services. The interface imports it by replacing that IS only; <code>POST /api/import</code> always replaces the whole map, so to load one IS from a script, send its documents with <code>PUT /api/si/{id}</code> and <code>PUT /api/assets/{id}</code>.</p>
 
@@ -255,6 +257,7 @@ curl -H "Authorization: Bearer $STRATA_TOKEN" \
         <tr><td><code>contacts</code></td><td><code>[{name, role, phone, email, dispo, src?}]</code>, who to call for the IS</td></tr>
         <tr><td><code>business</code></td><td><code>[{id, name, crit, owner, notes, assets}]</code>: business services and the assets they run on</td></tr>
         <tr><td><code>services</code></td><td>Internet services used by this IS only, as below</td></tr>
+        <tr><td><code>landscape</code></td><td><code>{actors: {id: 0-3}}</code>: how relevant each risk source is to this IS (<code>crime-gain</code>, <code>amateur</code>, <code>activist</code>, <code>state-spy</code>, <code>state-prepo</code>, <code>competitor</code>, <code>insider</code>, <code>supplier</code>); missing: the default</td></tr>
       </tbody>
     </table></div>
 
@@ -271,6 +274,18 @@ curl -H "Authorization: Bearer $STRATA_TOKEN" \
         <tr><td><code>apps</code></td><td><code>[{name, version, ports, src?}]</code>, software and the ports it listens on</td></tr>
         <tr><td><code>contacts</code></td><td>As for the IS</td></tr>
         <tr><td><code>ext</code></td><td>Ids in connected tools: <code>{"glpi": "Computer/12", "cyberwatch": 101}</code></td></tr>
+        <tr><td><code>risk</code></td><td>The treatment of its risks: <code>{threats: {threatId: {reqs: {"baselineId/reqId": "applied"|"planned"|"na"}, decision?, note?}}, excluded?: [threatIds], added?: [threatIds]}</code>; <code>decision</code>: <code>accept</code>, <code>transfer</code> or <code>avoid</code> (missing: treat)</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Risk settings</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Field</th><th scope="col">Content</th></tr></thead>
+      <tbody>
+        <tr><td><code>matrix</code></td><td><code>{likelihood: [labels], impact: [labels], cells: [[0-3]], accept: 0-3, lEdges?, iEdges?}</code>: 3 to 5 levels each way, lowest first; <code>cells[l][i]</code>: low, moderate, high or critical; <code>accept</code>: the highest level acceptable without a decision. Missing or out of shape: the 4×4 default</td></tr>
+        <tr><td><code>baselines</code></td><td>Ids of the enabled baselines: <code>anssi</code>, <code>nist-csf</code>, <code>cis-v8</code>, <code>iso27001</code>, <code>custom:…</code>. Missing: ANSSI and every custom one</td></tr>
+        <tr><td><code>custom</code></td><td>Custom baselines: <code>[{id, name, version?, requirements: [{id, ref?, title, text?, threats: [[threatId, share 0.05-0.9, "likelihood"|"impact"]]}]}]</code></td></tr>
+        <tr><td><code>threats</code></td><td><code>{custom: [{id, name, desc, base 1-4, severity 1-4, when, attack?, actors?}], disabled: [threatIds]}</code>. <code>when</code>: <code>types</code>, <code>exposure</code>, <code>critMin</code>, <code>ports</code>, <code>kev</code>, <code>vulnTitle</code>, <code>role</code>, <code>os</code> (patterns), <code>outbound</code>, <code>svcCat</code>; all must hold, or one with <code>any: true</code></td></tr>
       </tbody>
     </table></div>
     <p><code>src</code> on a vulnerability, application or contact names the connector it came from; entries without one were typed by hand.</p>

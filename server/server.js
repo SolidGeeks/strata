@@ -83,7 +83,7 @@ const own = (o, k) => (o != null && Object.hasOwn(o, k) ? o[k] : undefined);
 const httpError = (status, message, extra) => Object.assign(new Error(message), { status, extra });
 
 /* ---------------- Storage ---------------- */
-let state = { si: {}, assets: {}, wan: [], services: [], rev: 0, updatedAt: null };
+let state = { si: {}, assets: {}, wan: [], services: [], risk: {}, rev: 0, updatedAt: null };
 
 // The data files describe the weak spots of the network, the accounts and the connector secrets: readable by
 // the server's own user only. Files written by older versions with the default mode are tightened at start.
@@ -100,6 +100,7 @@ function loadState() {
   state = {
     si: isObj(p.si) ? p.si : {}, assets: isObj(p.assets) ? p.assets : {},
     wan: Array.isArray(p.wan) ? p.wan : [], services: Array.isArray(p.services) ? p.services : [],
+    risk: isObj(p.risk) ? p.risk : {},
     rev: Number.isInteger(p.rev) ? p.rev : 0, updatedAt: p.updatedAt || null,
   };
   log(`Loaded ${Object.keys(state.si).length} IS, ${Object.keys(state.assets).length} assets, rev ${state.rev}`);
@@ -128,7 +129,7 @@ async function backup(reason) {
 
 /* ---------------- History ----------------
    One line per changed document: {rev, at, user, batch, label, kind, id, before, after}.
-   kind: si | assets | wan | services | all (whole map, for imports). Rolling back replays the
+   kind: si | assets | wan | services | risk | all (whole map, for imports). Rolling back replays the
    "before" of later lines, and is itself recorded, so a rollback can be undone too. */
 let history = [];
 function loadHistory() {
@@ -171,16 +172,17 @@ function applyDoc(s, kind, id, value) {
   if (kind === 'si' || kind === 'assets') { if (value == null) delete s[kind][id]; else s[kind][id] = clone(value); }
   else if (kind === 'wan') s.wan = clone(value || []);
   else if (kind === 'services') s.services = clone(value || []);
-  else if (kind === 'all') { const v = value || {}; s.si = clone(v.si || {}); s.assets = clone(v.assets || {}); s.wan = clone(v.wan || []); s.services = clone(v.services || []); }
+  else if (kind === 'risk') s.risk = clone(value || {});
+  else if (kind === 'all') { const v = value || {}; s.si = clone(v.si || {}); s.assets = clone(v.assets || {}); s.wan = clone(v.wan || []); s.services = clone(v.services || []); s.risk = clone(v.risk || {}); }
 }
-const docOf = (s, kind, id) => (kind === 'si' || kind === 'assets') ? (own(s[kind], id) ?? null) : kind === 'wan' ? s.wan : kind === 'services' ? s.services : { si: s.si, assets: s.assets, wan: s.wan, services: s.services };
+const docOf = (s, kind, id) => (kind === 'si' || kind === 'assets') ? (own(s[kind], id) ?? null) : kind === 'wan' ? s.wan : kind === 'services' ? s.services : kind === 'risk' ? s.risk : { si: s.si, assets: s.assets, wan: s.wan, services: s.services, risk: s.risk };
 const change = (kind, id, after) => ({ kind, id, before: clone(docOf(state, kind, id)), after: clone(after) });
 // The map as it was right after revision `rev`
 function stateAt(rev) {
   if (rev >= state.rev) return clone(state);
   const oldest = history.length ? history[0].rev - 1 : state.rev;
   if (rev < oldest) throw httpError(410, `Version ${rev} is older than the kept history (oldest: ${oldest})`);
-  const s = clone({ si: state.si, assets: state.assets, wan: state.wan, services: state.services });
+  const s = clone({ si: state.si, assets: state.assets, wan: state.wan, services: state.services, risk: state.risk });
   for (let i = history.length - 1; i >= 0 && history[i].rev > rev; i--) applyDoc(s, history[i].kind, history[i].id, history[i].before);
   return Object.assign(s, { rev });
 }
@@ -193,6 +195,7 @@ function diffTo(target) {
   }
   if (!same(state.wan, target.wan || [])) out.push(change('wan', null, target.wan || []));
   if (!same(state.services, target.services || [])) out.push(change('services', null, target.services || []));
+  if (!same(state.risk, target.risk || {})) out.push(change('risk', null, target.risk || {}));
   return out;
 }
 const nameOfDoc = (kind, doc) => !doc ? '' : kind === 'si' ? (doc.name || '') : kind === 'assets' ? (doc.name || '') : '';
@@ -234,6 +237,7 @@ function cleanChanges(c) {
   }
   if (Array.isArray(c.wan)) out.wan = c.wan.filter(isObj);
   if (Array.isArray(c.services)) out.services = c.services.filter(isObj);
+  if (isObj(c.risk)) out.risk = c.risk;
   return out;
 }
 function fillBase(p) {
@@ -241,18 +245,21 @@ function fillBase(p) {
   for (const kind of ['si', 'assets']) for (const id of Object.keys(p.changes[kind])) if (!Object.hasOwn(p.base[kind], id)) p.base[kind][id] = clone(own(state[kind], id) ?? null);
   if (p.changes.wan && !('wan' in p.base)) p.base.wan = clone(state.wan);
   if (p.changes.services && !('services' in p.base)) p.base.services = clone(state.services);
+  if (p.changes.risk && !('risk' in p.base)) p.base.risk = clone(state.risk);
   // forget the base of documents no longer in the change set
   for (const kind of ['si', 'assets']) for (const id of Object.keys(p.base[kind])) if (!Object.hasOwn(p.changes[kind], id)) delete p.base[kind][id];
   if (!p.changes.wan) delete p.base.wan;
   if (!p.changes.services) delete p.base.services;
+  if (!p.changes.risk) delete p.base.risk;
 }
-const countChanges = c => Object.keys(c.si).length + Object.keys(c.assets).length + (c.wan ? 1 : 0) + (c.services ? 1 : 0);
+const countChanges = c => Object.keys(c.si).length + Object.keys(c.assets).length + (c.wan ? 1 : 0) + (c.services ? 1 : 0) + (c.risk ? 1 : 0);
 const summaryOf = p => ({ id: p.id, title: p.title, description: p.description, author: p.author, siteId: p.siteId, status: p.status, createdAt: p.createdAt, updatedAt: p.updatedAt, submittedAt: p.submittedAt || null, reviewedBy: p.reviewedBy || null, reviewedAt: p.reviewedAt || null, mergedRev: p.mergedRev || null, changes: countChanges(p.changes), comments: (p.comments || []).length, source: p.source || 'editor', connector: p.connector || null });
 function conflictsOf(p) {
   const out = [];
   for (const kind of ['si', 'assets']) for (const [id, b] of Object.entries(p.base[kind] || {})) if (!same(own(state[kind], id), b)) out.push({ kind, id, name: nameOfDoc(kind, own(state[kind], id) || b) });
   if ('wan' in p.base && !same(state.wan, p.base.wan)) out.push({ kind: 'wan', id: null, name: 'Inter-IS links' });
   if ('services' in p.base && !same(state.services, p.base.services)) out.push({ kind: 'services', id: null, name: 'Internet services catalogue' });
+  if ('risk' in p.base && !same(state.risk, p.base.risk)) out.push({ kind: 'risk', id: null, name: 'Risk settings' });
   return out;
 }
 
@@ -502,7 +509,7 @@ async function api(req, res, parts, url, auth) {
   }
   if (r1 === 'export' && method === 'GET') {
     const stamp = new Date().toISOString().slice(0, 10);
-    return send(res, 200, { format: 'strata', version: 3, exportedAt: new Date().toISOString(), si: state.si, assets: state.assets, wan: state.wan, services: state.services },
+    return send(res, 200, { format: 'strata', version: 3, exportedAt: new Date().toISOString(), si: state.si, assets: state.assets, wan: state.wan, services: state.services, risk: state.risk },
       { 'Content-Disposition': `attachment; filename="strata-${stamp}.json"` });
   }
   if (r1 === 'events' && method === 'GET') {
@@ -566,6 +573,12 @@ async function api(req, res, parts, url, auth) {
     if (!isObj(body) || !Array.isArray(body.services)) throw httpError(400, 'Body must be {"services": [...]}');
     return ok(await commitChanges([change('services', null, body.services.filter(isObj))], auth, batchMeta(req)));
   }
+  if (r1 === 'risk' && method === 'PUT') {
+    need(auth, 'approver');
+    const body = await readBody(req, CONFIG.maxDocBytes);
+    if (!isObj(body) || !isObj(body.risk)) throw httpError(400, 'Body must be {"risk": {...}}');
+    return ok(await commitChanges([change('risk', null, body.risk)], auth, batchMeta(req)));
+  }
   if (r1 === 'import' && method === 'POST') {
     need(auth, 'approver');
     const body = await readBody(req, CONFIG.maxImportBytes);
@@ -573,7 +586,7 @@ async function api(req, res, parts, url, auth) {
     const bad = [...Object.keys(body.si), ...Object.keys(body.assets)].find(k => !ID_RE.test(k));
     if (bad) throw httpError(400, `Invalid id: ${bad}`);
     await backup('before import');
-    const next = { si: body.si, assets: body.assets, wan: Array.isArray(body.wan) ? body.wan.filter(isObj) : [], services: Array.isArray(body.services) ? body.services.filter(isObj) : [] };
+    const next = { si: body.si, assets: body.assets, wan: Array.isArray(body.wan) ? body.wan.filter(isObj) : [], services: Array.isArray(body.services) ? body.services.filter(isObj) : [], risk: isObj(body.risk) ? body.risk : {} };
     return ok(await commitChanges([change('all', null, next)], auth, Object.assign(batchMeta(req), { label: batchMeta(req).label || 'Whole map replaced (import)' })));
   }
 
@@ -675,6 +688,7 @@ async function api(req, res, parts, url, auth) {
       for (const kind of ['si', 'assets']) for (const [did, doc] of Object.entries(p.changes[kind])) ch.push(change(kind, did, doc));
       if (p.changes.wan) ch.push(change('wan', null, p.changes.wan));
       if (p.changes.services) ch.push(change('services', null, p.changes.services));
+      if (p.changes.risk) ch.push(change('risk', null, p.changes.risk));
       const rev = await commitChanges(ch, auth, { batch: `proposal-${p.id}`, label: `Proposal “${p.title}” by ${p.author}, approved by ${auth.user || 'admin'}` });
       p.status = 'approved'; p.reviewedBy = auth.user; p.reviewedAt = p.updatedAt = new Date().toISOString(); p.mergedRev = rev;
       note(auth.user, b?.text || 'Approved', 'approve');

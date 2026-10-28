@@ -26,7 +26,10 @@ const F=(id,title,cvss,sev)=>Object.assign({id,title,cvss:cvss==null?null:cvss,s
 const TYPE_LABEL={server:'Server',dc:'Domain controller',db:'Database',hypervisor:'Hypervisor / storage',firewall:'Firewall',gateway:'VPN gateway',router:'Router / L3 core',switch:'Switch / load balancer',workstation:'Workstation',printer:'Printer',phone:'IP phone',ap:'Wi-Fi access point',camera:'IP camera',plc:'PLC',iot:'IoT device'};
 // Interconnection equipment: flows can be routed through these
 const INTERCO=new Set(['firewall','router','switch','gateway']);
-const SA=StrataAnalysis,IR=StrataIncident;
+const SA=StrataAnalysis,IR=StrataIncident,RK=StrataRisk;
+// Baselines shipped with Strata (baselines.js), and the risk settings shared by every IS, read at each compile
+const BASELINES=()=>(typeof StrataBaselines!=='undefined'&&Array.isArray(StrataBaselines))?StrataBaselines:[];
+let RS=null;
 // Colours of the "Per flow" mode: --f0 to --f9 in app.css
 const FLOW_PAL=10;
 // Internet endpoints: the Internet as a whole, or a named service (ESET updates, Ubuntu mirrors…) as "svc:<id>"
@@ -333,16 +336,16 @@ function buildDemo(){
 /* ================= Storage =================
    'api'   : served by the Strata server (shared data, live updates over SSE)
    'local' : page opened on its own; data kept in this browser only */
-let raw={si:{},assets:{},wan:[],services:[]};
+let raw={si:{},assets:{},wan:[],services:[],risk:{}};
 const LS_KEY='strata-v1';
 // The live map, then what is shown: the live map, a draft applied over it, a proposal under review,
 // or an older version (read-only)
 let liveRaw=raw;
 function overlay(base,ch){
-  const o={si:Object.assign({},base.si),assets:Object.assign({},base.assets),wan:base.wan,services:base.services};
+  const o={si:Object.assign({},base.si),assets:Object.assign({},base.assets),wan:base.wan,services:base.services,risk:base.risk||{}};
   if(!ch)return o;
   ['si','assets'].forEach(k=>Object.entries(ch[k]||{}).forEach(([id,doc])=>{if(doc==null)delete o[k][id];else o[k][id]=doc;}));
-  if(ch.wan)o.wan=ch.wan;if(ch.services)o.services=ch.services;
+  if(ch.wan)o.wan=ch.wan;if(ch.services)o.services=ch.services;if(ch.risk)o.risk=ch.risk;
   return o;
 }
 const Store={
@@ -363,7 +366,7 @@ const Store={
       await this.pull();this.listen();return;
     }
     this.mode='local';
-    try{const s=localStorage.getItem(LS_KEY);if(s){const o=JSON.parse(s);liveRaw={si:o.si||{},assets:o.assets||{},wan:o.wan||[],services:o.services||[]};}}catch(e){}
+    try{const s=localStorage.getItem(LS_KEY);if(s){const o=JSON.parse(s);liveRaw={si:o.si||{},assets:o.assets||{},wan:o.wan||[],services:o.services||[],risk:o.risk||{}};}}catch(e){}
     this.loaded=true;this.applyView();
   },
   applyView(delay){
@@ -375,7 +378,7 @@ const Store={
       const r=await fetch('api/state',{cache:'no-store',credentials:'same-origin'});
       if(!r.ok)throw new Error('HTTP '+r.status);
       const s=await r.json();
-      liveRaw={si:s.si||{},assets:s.assets||{},wan:Array.isArray(s.wan)?s.wan:[],services:Array.isArray(s.services)?s.services:[]};this.rev=s.rev||0;
+      liveRaw={si:s.si||{},assets:s.assets||{},wan:Array.isArray(s.wan)?s.wan:[],services:Array.isArray(s.services)?s.services:[],risk:s.risk&&typeof s.risk==='object'?s.risk:{}};this.rev=s.rev||0;
       this.loaded=true;this.applyView(this.bulk?null:0);
     }catch(e){toast('Could not read the saved data. Check that the server is running, then reload.',true);}
   },
@@ -402,20 +405,20 @@ const Store={
     return j;
   },
   saveLocal(){try{localStorage.setItem(LS_KEY,JSON.stringify(liveRaw));}catch(e){toast('This browser refused to save the data (storage full or disabled).',true);}},
-  // kind: si | assets | wan | services ; value null = delete
+  // kind: si | assets | wan | services | risk ; value null = delete
   async write(kind,id,value){
     if(this.view==='preview'||this.view==='review'){toast(this.view==='preview'?'You are looking at an older version: it is read-only.':'A proposal under review is read-only.',true);throw new Error('readonly');}
     if(this.view==='draft')return this.writeDraft(kind,id,value);
     if(!this.liveWrite){toast(this.features.proposals?'Your role cannot change the map directly: start a proposal (Proposals › New).':'You have read-only access.',true);throw new Error('readonly');}
     const local=()=>{
       if(kind==='si'||kind==='assets'){liveRaw[kind]=Object.assign({},liveRaw[kind]);if(value==null)delete liveRaw[kind][id];else liveRaw[kind][id]=clone(value);}
-      else liveRaw[kind]=clone(value||[]);
+      else liveRaw[kind]=clone(value||(kind==='risk'?{}:[]));
     };
     if(this.mode==='local'){local();this.saveLocal();this.applyView(0);return;}
-    const url=kind==='wan'?'api/wan':kind==='services'?'api/services':`api/${kind}/${encodeURIComponent(id)}`;
+    const url=kind==='wan'?'api/wan':kind==='services'?'api/services':kind==='risk'?'api/risk':`api/${kind}/${encodeURIComponent(id)}`;
     try{
       if(value==null&&(kind==='si'||kind==='assets'))await this.api('DELETE',url);
-      else await this.api('PUT',url,kind==='wan'?{links:value}:kind==='services'?{services:value}:value);
+      else await this.api('PUT',url,kind==='wan'?{links:value}:kind==='services'?{services:value}:kind==='risk'?{risk:value||{}}:value);
       local();this.applyView(this.bulk?null:0);
     }catch(e){
       if(e.status===403)toast(e.message||'You cannot change this.',true);
@@ -430,7 +433,7 @@ const Store={
     if(kind==='si'||kind==='assets'){
       // a document brought back to its live state leaves the change set
       if(JSON.stringify(liveRaw[kind][id]??null)===JSON.stringify(value??null))delete ch[kind][id];else ch[kind][id]=value==null?null:clone(value);
-    }else{if(JSON.stringify(liveRaw[kind]||[])===JSON.stringify(value||[]))delete ch[kind];else ch[kind]=clone(value||[]);}
+    }else{const e=kind==='risk'?{}:[];if(JSON.stringify(liveRaw[kind]||e)===JSON.stringify(value||e))delete ch[kind];else ch[kind]=clone(value||e);}
     this.applyView(this.bulk?null:0);
     clearTimeout(this._dt);this._dt=setTimeout(()=>this.saveDraft(),this.bulk?900:350);
     return Promise.resolve();
@@ -446,6 +449,7 @@ const Store={
   delAsset(id){return this.write('assets',id,null);},
   putWan(links){return this.write('wan',null,links);},
   putServices(list){return this.write('services',null,list);},
+  putRisk(doc){return this.write('risk',null,doc);},
   async many(tasks,label){
     this.bulk=true;this.batch={id:'b'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),label};let done=0;const total=tasks.length;
     toast(`${label}: 0 / ${total}`,false,true);
@@ -456,7 +460,7 @@ const Store={
 };
 // Replace the whole map (demo, import, delete everything) in one request
 async function replaceAll(data,label){
-  const next={si:clone(data.si||{}),assets:clone(data.assets||{}),wan:clone(data.wan||[]),services:clone(data.services||[])};
+  const next={si:clone(data.si||{}),assets:clone(data.assets||{}),wan:clone(data.wan||[]),services:clone(data.services||[]),risk:clone(data.risk||{})};
   if(Store.view){toast('Leave the draft, review or older version first.',true);return;}
   if(!Store.liveWrite){toast('You cannot replace the map with your role.',true);return;}
   if(Store.mode==='local'){liveRaw=next;Store.saveLocal();Store.applyView(0);toast(`${label}: done.`);return;}
@@ -514,6 +518,7 @@ const maxExp=(a,b)=>EXP[a].rank>=EXP[b].rank?a:b;
 const epssOf=v=>{if(v==null||v==='')return null;const n=parseFloat(String(v).trim().replace(/,/g,'.'));return isFinite(n)&&n>=0?(n>1?Math.min(1,n/100):n):null;};
 function compile(){
   const list=Object.entries(raw.si).map(([id,d])=>({id,d})).sort((a,b)=>(a.d.order||0)-(b.d.order||0)||String(a.d.name).localeCompare(String(b.d.name)));
+  RS=RK.settings(raw.risk,BASELINES());
   SITES=list.map(({id,d},si)=>{
     const s={id,name:d.name||'Untitled IS',kind:d.kind||'',order:d.order||0,planche:pad(si+1),contacts:(d.contacts||[]).map(c=>Object.assign({},c,{role:roleEn(c.role)})),raw:d};
     s.zones=(d.zones&&d.zones.length?d.zones:[{id:'z-def',name:'Main zone'}]).map(z=>({id:z.id,name:z.name,vlans:[]}));
@@ -569,6 +574,12 @@ function compile(){
     // Attack paths: the critical assets (their own criticality, or that of a business service they
     // would hit) and what an attacker coming from the Internet could reach
     s.bizCrit=bizCrit;s.critIds=s.assets.filter(a=>a.crit===3||bizCrit[a.id]===3).map(a=>a.id);s.atkOut=SA.blastRadius(s,SA.outside(s));
+    // Risk register: the threats that apply to each asset, scored on the matrix of the risk settings
+    s.landscape=d.landscape&&typeof d.landscape==='object'?d.landscape:{};s.threats={};s.register=[];
+    s.assets.forEach(a=>{s.threats[a.id]=RK.assess(s,a,{settings:RS,baselines:BASELINES(),landscape:s.landscape,hops:s.expo[a.id],bizCrit:bizCrit[a.id],labels:TYPE_LABEL});
+      s.threats[a.id].forEach(r=>{if(!r.excluded)s.register.push(Object.assign({asset:a},r));});});
+    const lv=c=>RK.LEVELS.indexOf(c.level);
+    s.register.sort((x,y)=>lv(y.residual)-lv(x.residual)||y.pResidual*y.iResidual-x.pResidual*x.iResidual||x.asset.name.localeCompare(y.asset.name));
     s.usedSvc=new Set(s.flows.flatMap(f=>[f.src,f.dst]).filter(id=>id!=='internet'&&isNet(id)));
     const cnt=k=>s.assets.filter(a=>a.exp===k).length;
     s.stats={vlans:s.vlans.length,assets:s.assets.length,crit:s.assets.reduce((n,a)=>n+a.vulns.filter(v=>v.sev==='crit').length,0),
@@ -1119,7 +1130,7 @@ function placeSelRing(){
 const det=$('#det');
 const tag=k=>`<span class="tag" style="color:var(${SEV[k].css})"><i style="background:var(${SEV[k].css})"></i>${SEV[k].label}</span>`;
 const xtag=k=>`<span class="xtag" style="color:var(${EXP[k].css})">${EXP[k].label}</span>`;
-function openDet(html,panel){det.classList.toggle('wide',panel==='incident'||panel==='ai');det.innerHTML=html;det.hidden=false;det.scrollTop=0;document.body.classList.add('has-det');const wasAtk=state.panel==='attack'&&panel!=='attack';state.panel=panel;renderEmpty();syncUI();placeLens();if(wasAtk&&state.view==='site')refresh();}
+function openDet(html,panel){det.classList.toggle('wide',panel==='incident'||panel==='ai'||panel==='risksettings');det.innerHTML=html;det.hidden=false;det.scrollTop=0;document.body.classList.add('has-det');const wasAtk=state.panel==='attack'&&panel!=='attack';state.panel=panel;renderEmpty();syncUI();placeLens();if(wasAtk&&state.view==='site')refresh();}
 function closeDet(){const wasFlow=state.panel==='flow'||state.panel==='attack';det.hidden=true;document.body.classList.remove('has-det');state.panel=null;state.attackHl=null;renderEmpty();syncUI();placeLens();if(wasFlow&&state.view==='site')refresh();}
 function contactsHtml(list){
   return `<ul class="list">${list.map(c=>`<li class="contact"><div class="who"><b>${esc(c.name||'Contact')}</b><span>${esc(c.role||'')}${c.dispo?' · '+esc(c.dispo):''}</span></div>
@@ -1189,6 +1200,7 @@ function showAsset(a){
   </dl>
   <div id="riskWhy" hidden></div>
   <h3 class="cap">Business services impacted · ${impactOf(a).length}</h3>${impactHtml(a)}
+  <h3 class="cap">Risks · ${(SITE.threats[a.id]||[]).filter(r=>!r.excluded).length}</h3>${assetRiskHtml(a)}
   <h3 class="cap">Inside · ${plural((a.apps||[]).length,'application')}</h3>${insideHtml(a)}
   <h3 class="cap">Incident contacts</h3>${contacts}
   ${a.notes?`<h3 class="cap">Notes</h3><p style="margin:0;white-space:pre-wrap">${esc(a.notes)}</p>`:''}
@@ -1574,7 +1586,7 @@ ${afTable(['Name','Role','Phone','Email','Availability'],s.contacts.map(c=>[esc(
 ${afTable(['Asset','Name','Role','Phone','Email','Availability'],ASSETS.flatMap(a=>a.contacts.filter(c=>c.name||c.phone||c.email).map((c,i)=>[i?'':`<b>${esc(a.name)}</b>`,esc(c.name),esc(c.role),`<span class="mono">${esc(c.phone||'')}</span>`,esc(c.email||''),esc(c.dispo||'')])))}
 
 ${H('hist')}
-${hist?afTable(['Version','Date','By','Change'],hist.map(h=>[`<span class="mono">v${esc(h.rev)}</span>`,esc(new Date(h.at).toLocaleString()),esc(h.user||'—'),esc(h.label||`${{si:'IS',assets:'asset',wan:'inter-IS links',services:'Internet services',all:'whole map'}[h.kind]||h.kind} ${h.name?'“'+h.name+'” ':''}${h.op||''}`)])):'<p class="muted">No history: this map is kept in a browser only. On a Strata server, every change is recorded with its author and date, and listed here.</p>'}
+${hist?afTable(['Version','Date','By','Change'],hist.map(h=>[`<span class="mono">v${esc(h.rev)}</span>`,esc(new Date(h.at).toLocaleString()),esc(h.user||'—'),esc(h.label||`${{si:'IS',assets:'asset',wan:'inter-IS links',services:'Internet services',risk:'risk settings',all:'whole map'}[h.kind]||h.kind} ${h.name?'“'+h.name+'” ':''}${h.op||''}`)])):'<p class="muted">No history: this map is kept in a browser only. On a Strata server, every change is recorded with its author and date, and listed here.</p>'}
 
 ${H('method')}
 <p><b>Source.</b> Everything in this file comes from the Strata map of the IS: entered by hand, imported, or read by the connectors (Cyberwatch, GLPI, phpIPAM, Palo Alto) and approved before publication. A flow missing from the map is missing here.</p>
@@ -1945,7 +1957,7 @@ function confirmArm(key){
 }
 document.addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(b&&!b.closest('#det'))act(b.dataset.act);});
 async function exportJson(){
-  const data=JSON.stringify({format:'strata',version:3,exportedAt:new Date().toISOString(),si:raw.si,assets:raw.assets,wan:raw.wan,services:raw.services||[]},null,2);
+  const data=JSON.stringify({format:'strata',version:3,exportedAt:new Date().toISOString(),si:raw.si,assets:raw.assets,wan:raw.wan,services:raw.services||[],risk:raw.risk||{}},null,2);
   await saveFile(`strata-${today()}.json`,'application/json',data);
 }
 $('#io').addEventListener('change',e=>{
@@ -1960,10 +1972,11 @@ $('#io').addEventListener('change',e=>{
       Object.entries(ch.si).forEach(([id,d])=>tasks.push(()=>Store.putSite(id,d)));
       Object.entries(ch.assets).forEach(([id,d])=>tasks.push(()=>d?Store.putAsset(id,d):Store.delAsset(id)));
       if(ch.services)tasks.push(()=>Store.putServices(ch.services));
+      if(ch.risk)tasks.push(()=>Store.putRisk(ch.risk));
       if(!tasks.length){toast('This file is identical to the map.');return;}
       await Store.many(tasks,`Import of IS ${Object.values(o.si)[0].name||''}`);return;
     }
-    await replaceAll({si:o.si,assets:o.assets,wan:Array.isArray(o.wan)?o.wan:[],services:Array.isArray(o.services)?o.services:[]},'Import');
+    await replaceAll({si:o.si,assets:o.assets,wan:Array.isArray(o.wan)?o.wan:[],services:Array.isArray(o.services)?o.services:[],risk:o.risk&&typeof o.risk==='object'?o.risk:{}},'Import');
   };
   r.readAsText(f);
 });
@@ -2614,7 +2627,7 @@ function placeLens(){
 addEventListener('resize',placeLens);
 function renderLens(){
   if(state.view!=='site'||state.lens==='physical')return;
-  if(state.lens==='app')renderAppLens();else renderBizLens();
+  if(state.lens==='app')renderAppLens();else if(state.lens==='risk')renderRiskLens();else renderBizLens();
   placeLens();
 }
 const worstOf=ids=>ids.reduce((m,id)=>byId[id]&&SEV[byId[id].sev].rank>SEV[m].rank?byId[id].sev:m,'none');
@@ -2781,13 +2794,14 @@ function computeDiff(){
     if(b){const f=changedFields(b,doc,['vlans','flows','services']);if(f.length)items.push({kind:'site',op:'modified',id:sid,site:sid,label:'IS '+doc.name,fields:f});}});
   if(ch.services)diffList(liveRaw.services,ch.services,x=>x.name,'service',null,{},items);
   if(ch.wan)items.push({kind:'wan',op:'modified',label:'Inter-IS links'});
+  if(ch.risk)items.push({kind:'risk',op:'modified',label:'Risk settings'});
   DIFF={A,F,V,items};
 }
 const DIFF_COL={added:'--low',modified:'--med',removed:'--crit'};
-const KIND_LBL={asset:'Asset',flow:'Flow',vlan:'VLAN',site:'IS',service:'Internet service',wan:'WAN'};
+const KIND_LBL={asset:'Asset',flow:'Flow',vlan:'VLAN',site:'IS',service:'Internet service',wan:'WAN',risk:'Risk'};
 function diffHtml(){
   if(!DIFF||!DIFF.items.length)return '<p class="empty">No change yet. Edit the map (2D diagram, sheets, forms): every change goes into this draft.</p>';
-  const order={site:0,vlan:1,asset:2,flow:3,service:4,wan:5};
+  const order={site:0,vlan:1,asset:2,flow:3,service:4,wan:5,risk:6};
   return `<ul class="list">${DIFF.items.slice().sort((a,b)=>order[a.kind]-order[b.kind]).map(it=>`<li class="chg ${it.op}"><span class="op" style="color:var(${DIFF_COL[it.op]})">${it.op}</span><span class="what"><small>${KIND_LBL[it.kind]}</small>${it.kind==='asset'&&it.op!=='removed'?`<button data-goto="${esc(it.id)}">${esc(it.label)}</button>`:it.kind==='flow'&&it.op!=='removed'?`<button data-show-flow="${esc(it.id)}">${esc(it.label)}</button>`:esc(it.label)}${it.fields&&it.fields.length?`<em>${esc(it.fields.join(', '))}</em>`:''}</span></li>`).join('')}</ul>`;
 }
 let PROPS=[];
@@ -2827,7 +2841,7 @@ function proposalForm(){
       let o;try{o=JSON.parse(await f.text());}catch(e){return formErr('This file is not valid JSON.');}
       if(!o||typeof o.si!=='object'||typeof o.assets!=='object')return formErr('Unexpected format: a Strata export has the “si” and “assets” keys.');
       changes=changesFromFile(o);const ks=Object.keys(o.si);if(ks.length===1)siteId=ks[0];
-      if(!Object.keys(changes.si).length&&!Object.keys(changes.assets).length&&!changes.services)return formErr('This file is identical to the map: nothing to propose.');
+      if(!Object.keys(changes.si).length&&!Object.keys(changes.assets).length&&!changes.services&&!changes.risk)return formErr('This file is identical to the map: nothing to propose.');
     }
     try{const j=await Store.api('POST','api/proposals',{title,description:$('#fDesc').value.trim(),siteId,changes,source:from});
       onSave=null;toast(from==='file'?'Proposal created from the file: check it, then submit it.':'Draft opened: your changes now go into it.');enterProp(j.proposal,'draft');}
@@ -2841,6 +2855,7 @@ function changesFromFile(o){
   Object.entries(o.assets||{}).forEach(([id,a])=>{if(a&&sites.includes(a.site)&&J(liveRaw.assets[id])!==J(a))ch.assets[id]=a;});
   Object.entries(liveRaw.assets).forEach(([id,a])=>{if(sites.includes(a.site)&&!(id in (o.assets||{})))ch.assets[id]=null;});
   if(Array.isArray(o.services)&&J(o.services)!==J(liveRaw.services||[]))ch.services=o.services;
+  if(o.risk&&typeof o.risk==='object'&&J(o.risk)!==J(liveRaw.risk||{}))ch.risk=o.risk;
   return ch;
 }
 async function openProposal(id,keepView){
@@ -2918,7 +2933,7 @@ async function showHistory(more){
   const siteOnly=state.view==='site'&&!HIST.all&&SITE;
   const list=HIST.entries.filter(h=>!siteOnly||h.site===SITE.id);
   const groups=[];list.forEach(h=>{const g=groups[groups.length-1];if(g&&g.batch===h.batch&&g.rev===h.rev||g&&g.batch===h.batch&&h.batch&&!/^r\d+$/.test(h.batch))g.items.push(h);else groups.push({batch:h.batch,rev:h.rev,at:h.at,user:h.user,label:h.label,items:[h]});});
-  const KL={si:'IS',assets:'asset',wan:'inter-IS links',services:'Internet services',all:'whole map'};
+  const KL={si:'IS',assets:'asset',wan:'inter-IS links',services:'Internet services',risk:'risk settings',all:'whole map'};
   const sum=g=>g.label||(g.items.length===1?`${KL[g.items[0].kind]} ${g.items[0].name?'“'+g.items[0].name+'” ':''}${g.items[0].op}`:`${g.items.length} changes: ${[...new Set(g.items.map(h=>h.name).filter(Boolean))].slice(0,4).join(', ')}`);
   const canRestore=Store.liveWrite&&!Store.view;
   openDet(`<div class="d-head"><div><span class="cap">Collaboration</span><h2>History</h2><p>Version ${HIST.rev}${siteOnly?` · IS ${esc(SITE.name)}`:' · whole map'}</p></div><button class="close" data-close aria-label="Close">×</button></div>
@@ -2933,7 +2948,7 @@ async function showHistory(more){
 async function previewVersion(rev){
   let s;try{s=await Store.api('GET','api/state?at='+rev);}catch(e){toast(e.message,true);return;}
   const g=HIST.entries.find(h=>h.rev===rev)||{};
-  Store.view='preview';Store.prop=null;Store.preview={rev,at:g.at,user:g.user,raw:{si:s.si||{},assets:s.assets||{},wan:s.wan||[],services:s.services||[]}};
+  Store.view='preview';Store.prop=null;Store.preview={rev,at:g.at,user:g.user,raw:{si:s.si||{},assets:s.assets||{},wan:s.wan||[],services:s.services||[],risk:s.risk||{}}};
   Store.applyView(0);renderModeBar();
   pendingAfterData=()=>{if(state.view==='site'&&!siteById[state.siteId])backToOverview();closeDet();};
 }
@@ -3546,6 +3561,238 @@ det.addEventListener('change',e=>{
   if(t.hasAttribute('data-ai-answer')){AI_ANSWER=t.value;showPrompts(a,true);}
 });
 
+/* ================= Risk register ================= */
+// The threats that apply to each asset (its exposure, criticality, ports, system, vulnerabilities and the
+// threat landscape of its IS), placed on the risk matrix of the settings before and after the requirements
+// of the enabled baselines. Treatments are saved on the asset (field risk), settings in the shared document risk.
+const lvTag=l=>`<span class="tag" style="color:var(--${l})"><i style="background:var(--${l})"></i>${RK.LEVEL_LBL[l]}</span>`;
+const REQ_ST={'':'Not applied',planned:'Planned',applied:'Applied',na:'Not applicable'};
+const DECISION={treat:'Treat (apply requirements)',accept:'Accept the risk',transfer:'Transfer (insurance, contract)',avoid:'Avoid (remove the cause)'};
+const pctR=x=>Math.round(x*100)+'%';
+// A risk matrix: likelihood upwards, impact rightwards, a count in each cell
+function matrixHtml(M,counts,{click,on,title}={}){
+  const n=M.likelihood.length,m=M.impact.length;let h=`<figure class="rmx-f">${title?`<figcaption class="cap">${esc(title)}</figcaption>`:''}<table class="rmx"><tbody>`;
+  for(let l=n-1;l>=0;l--){h+=`<tr><th scope="row">${esc(M.likelihood[l])}</th>`;
+    for(let i=0;i<m;i++){const lv=RK.LEVELS[M.cells[l][i]],c=counts?counts[l][i]:0;
+      h+=`<td class="lv-${lv}${on&&on(l,i)?' on':''}"${click?` data-cell="${click}:${l},${i}" tabindex="0" role="button"`:''} title="${esc(M.likelihood[l])} likelihood × ${esc(M.impact[i])} impact: ${RK.LEVEL_LBL[lv]}${counts?' · '+plural(c,'risk'):''}">${c||''}</td>`;}
+    h+='</tr>';}
+  return h+`<tr><th></th>${M.impact.map(x=>`<th scope="col">${esc(x)}</th>`).join('')}</tr></tbody></table><p class="rmx-ax"><span>↑ Likelihood</span><span>Impact →</span></p></figure>`;
+}
+const gridOf=(rows,k)=>{const M=RS.matrix,g=M.cells.map(r=>r.map(()=>0));rows.forEach(r=>g[r[k].l][r[k].i]++);return g;};
+const reqCount=r=>{const ap=r.requirements.filter(x=>x.status==='applied').length,pl=r.requirements.filter(x=>x.status==='planned').length;return {ap,pl,n:r.requirements.filter(x=>x.status!=='na').length};};
+function riskRow(r,withAsset){
+  const c=reqCount(r);
+  return `<li class="rk"><button data-threat="${esc(r.threat.id)}" data-threat-asset="${esc(r.asset?r.asset.id:'')}"><b>${esc(withAsset?r.asset.name+' · ':'')}${esc(r.threat.name)}</b><small>${esc(r.why.join(' · '))}${r.requirements.length?` · ${c.ap}/${c.n} requirements applied${c.pl?`, ${c.pl} planned`:''}`:''}${r.decision!=='treat'?` · ${esc(DECISION[r.decision].split(' (')[0])}`:''}</small></button>
+  <span class="rk-lv">${lvTag(r.inherent.level)}${r.residual.level!==r.inherent.level||r.inherent.l!==r.residual.l||r.inherent.i!==r.residual.i?`<span class="ar">→</span>${lvTag(r.residual.level)}`:''}</span></li>`;
+}
+// The asset sheet: its own matrix and its risks
+function assetRiskHtml(a){
+  const all=SITE.threats[a.id]||[],rows=all.filter(r=>!r.excluded).map(r=>Object.assign({asset:a},r)),ex=all.filter(r=>r.excluded);
+  const left=RK.THREATS.concat(RS.customThreats).filter(t=>!RS.disabled.has(t.id)&&!all.some(r=>r.threat.id===t.id));
+  if(!rows.length&&!ex.length)return `<p class="empty">No threat of the catalogue applies to this asset with what the map says about it (type, exposure, criticality, ports, system, vulnerabilities).</p>${addThreatHtml(a,left)}`;
+  const over=rows.filter(r=>!r.acceptable).length;
+  return `<div class="rmx-pair">${matrixHtml(RS.matrix,gridOf(rows,'inherent'),{title:'Before requirements'})}${matrixHtml(RS.matrix,gridOf(rows,'residual'),{title:'With the requirements applied'})}</div>
+  <p class="fhint">${over?`<b style="color:var(--crit)">${over}</b> ${over===1?'risk is':'risks are'} above the acceptance threshold (${RK.LEVEL_LBL[RK.LEVELS[RS.matrix.accept]]}) with no decision to accept it.`:'Every risk is at or below the acceptance threshold, or accepted.'} Open a risk to apply requirements.</p>
+  <ul class="list">${rows.map(r=>riskRow(r,false)).join('')}</ul>
+  ${ex.length?`<details class="rk-ex"><summary>${plural(ex.length,'threat')} set aside as not relevant</summary><ul class="list">${ex.map(r=>`<li class="rk"><button data-threat="${esc(r.threat.id)}" data-threat-asset="${esc(a.id)}"><b>${esc(r.threat.name)}</b><small>${esc(r.note||'No justification recorded')}</small></button></li>`).join('')}</ul></details>`:''}
+  ${addThreatHtml(a,left)}`;
+}
+const addThreatHtml=(a,left)=>left.length?`<div class="f edit-only rk-add"><label for="rkAdd">Add a threat the map does not show</label><select id="rkAdd" data-threat-add="${esc(a.id)}"><option value="">Choose a threat…</option>${left.map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></div>`:'';
+async function saveTreatment(aid,tid,change){
+  const d=clone(raw.assets[aid]);if(!d)return;
+  const r=RK.setTreatment(d,tid,change);if(r)d.risk=r;else delete d.risk;
+  try{await Store.putAsset(aid,d);}catch(e){}
+}
+
+// One risk of one asset: why it applies, how it is scored, the requirements against it and the decision
+let THREAT_FOR=null;
+function showThreat(aid,tid,keep){
+  const a=byId[aid],r=a&&(SITE.threats[aid]||[]).find(x=>x.threat.id===tid);if(!r){if(a)showAsset(a);return;}
+  THREAT_FOR={aid,tid};const top=keep?det.scrollTop:0,t=r.threat,M=RS.matrix,ro=Store.canWrite?'':' disabled',F=r.factors;
+  const cell=c=>`${lvTag(c.level)} <small class="muted">${esc(M.likelihood[c.l])} × ${esc(M.impact[c.i])}</small>`;
+  const byB={};r.requirements.forEach(q=>(byB[q.baseline]=byB[q.baseline]||{name:q.baselineName,list:[]}).list.push(q));
+  const act=RK.ACTORS.filter(x=>t.actors.includes(x.id)),en=RK.ENISA.filter(x=>t.enisa.includes(x.id));
+  const manual=Array.isArray((a.risk||{}).added)&&a.risk.added.includes(t.id);
+  openDet(`<div class="d-head"><div><span class="cap">Risk · ${esc(a.name)}</span><h2>${esc(t.name)}</h2><p>${esc(t.desc)}</p></div><button class="close" data-threat-back="${esc(a.id)}" aria-label="Back to the asset sheet">×</button></div>
+  <div class="d-body">
+  <dl class="kv">
+    <dt>Applies because</dt><dd>${esc(r.why.join(' · '))}</dd>
+    <dt>Before requirements</dt><dd>${cell(r.inherent)}</dd>
+    <dt>Requirements applied</dt><dd>${cell(r.residual)}</dd>
+    <dt>Once planned ones too</dt><dd>${cell(r.target)}</dd>
+    ${act.length?`<dt>Risk sources</dt><dd>${act.map(x=>`${esc(x.name)} <small class="muted">(relevance ${(SITE.landscape.actors||{})[x.id]??x.relevance}/3)</small>`).join(', ')}</dd>`:''}
+    ${t.attack.length?`<dt>MITRE ATT&amp;CK</dt><dd>${t.attack.map(x=>`<a class="mono" href="https://attack.mitre.org/techniques/${x.replace('.','/')}/" target="_blank" rel="noopener">${x}</a>`).join(' ')}</dd>`:''}
+    ${en.length?`<dt>ENISA landscape</dt><dd>${en.map(x=>esc(x.name)).join(', ')}</dd>`:''}
+  </dl>
+  <details class="rk-why"><summary>How it is scored</summary><dl class="kv riskwhy">
+    <dt>Likelihood</dt><dd>${t.base}/4 for the threat × ${pctR(0.4+0.6*F.context)} exposure and reachability${F.vuln!=null?` × ${pctR(0.5+0.5*F.vuln)} from its vulnerabilities`:''}${t.actors.length?` × ${pctR(F.actors)} from the relevance of its sources`:''} = <b>${pctR(r.p)}</b>${r.pResidual!==r.p?`, ${pctR(r.pResidual)} with the requirements`:''}</dd>
+    <dt>Impact</dt><dd>${t.severity}/4 for the threat × ${pctR(F.crit)} criticality of the asset or of the business services it would hit = <b>${pctR(r.i)}</b>${r.iResidual!==r.i?`, ${pctR(r.iResidual)} with the requirements`:''}</dd>
+    <dt>Requirements</dt><dd>Each requirement applied lowers the likelihood or the impact by its share; planned ones count in the last line only.</dd></dl></details>
+  <h3 class="cap">Decision</h3>
+  <div class="f"><label for="rkDec">What is done about this risk</label><select id="rkDec" data-threat-decision${ro}>${Object.entries(DECISION).map(([k,v])=>`<option value="${k}"${r.decision===k?' selected':''}>${esc(v)}</option>`).join('')}</select></div>
+  <div class="f"><label for="rkNote">Justification</label><textarea id="rkNote" rows="2" data-threat-note${ro} placeholder="Why this decision, who took it, until when">${esc(r.note)}</textarea></div>
+  <label class="chk plain"><input type="checkbox" data-threat-exclude${r.excluded?' checked':''}${ro}> Not relevant for this asset: leave it out of the register</label>
+  ${manual?`<div class="actions edit-only"><button class="btn small" data-threat-unadd>Remove this threat added by hand</button></div>`:''}
+  <h3 class="cap">Requirements · ${r.requirements.length}</h3>
+  ${!RS.baselines.length?'<p class="empty">No baseline is enabled. Choose them in the risk settings (Risks view › Settings).</p>':!r.requirements.length?'<p class="empty">No requirement of the enabled baselines addresses this threat.</p>':
+    Object.entries(byB).map(([id,b])=>`<h4 class="rk-b">${esc(b.name)}</h4><ul class="list reqs">${b.list.map(q=>`<li class="req st-${q.status||'none'}"><div><b class="mono">${esc(q.ref)}</b> ${esc(q.title)}<small>−${Math.round(q.strength*100)}% on the ${q.effect}${q.text?` · <span title="${esc(q.text)}">details</span>`:''}</small></div>
+      <select data-req="${esc(q.key)}" aria-label="Status of ${esc(q.ref)}"${ro}>${Object.entries(REQ_ST).map(([k,v])=>`<option value="${k}"${q.status===k?' selected':''}>${v}</option>`).join('')}</select></li>`).join('')}</ul>`).join('')}
+  </div>`,'threat');
+  if(keep)det.scrollTop=top;
+}
+det.addEventListener('click',e=>{
+  if(!SITE)return;const q=s=>e.target.closest(s);
+  if(q('[data-threat]')){const b=q('[data-threat]');showThreat(b.dataset.threatAsset||state.selId,b.dataset.threat);return;}
+  if(state.panel!=='threat'||!THREAT_FOR)return;
+  if(q('[data-threat-back]')){const a=byId[THREAT_FOR.aid];if(a)select(a);return;}
+  if(q('[data-threat-unadd]')){const {aid,tid}=THREAT_FOR;saveTreatment(aid,tid,{add:false}).then(()=>{if(byId[aid])select(byId[aid]);});}
+});
+det.addEventListener('change',e=>{
+  if(!SITE)return;const t=e.target;
+  if(t.dataset.threatAdd!==undefined&&t.value){const aid=t.dataset.threatAdd,tid=t.value;saveTreatment(aid,tid,{add:true}).then(()=>{state.panel='threat';THREAT_FOR={aid,tid};scheduleData(0);});return;}
+  if(state.panel!=='threat'||!THREAT_FOR)return;const {aid,tid}=THREAT_FOR;
+  if(t.dataset.req)saveTreatment(aid,tid,{req:t.dataset.req,status:t.value});
+  else if(t.hasAttribute('data-threat-decision'))saveTreatment(aid,tid,{decision:t.value});
+  else if(t.hasAttribute('data-threat-note'))saveTreatment(aid,tid,{note:t.value});
+  else if(t.hasAttribute('data-threat-exclude'))saveTreatment(aid,tid,{exclude:t.checked});
+});
+
+// The Risks view: the register of the IS
+let RKF=null;   // filter: {k: 'inherent'|'residual', l, i}
+function renderRiskLens(){
+  const rows=SITE.register,M=RS.matrix,shown=RKF?rows.filter(r=>r[RKF.k].l===RKF.l&&r[RKF.k].i===RKF.i):rows;
+  const by=k=>RK.LEVELS.slice().reverse().map(l=>`<b style="color:var(--${l})">${rows.filter(r=>r[k].level===l).length}</b> ${RK.LEVEL_LBL[l].toLowerCase()}`).join(' · ');
+  const open=rows.filter(r=>!r.acceptable).length,assets=new Set(rows.map(r=>r.asset.id)).size;
+  lensBody.innerHTML=`<div class="lens-head"><h2>Risk register</h2><p>The threats that apply to each asset, from its exposure, criticality, ports, system and vulnerabilities, and from the threat landscape of this IS. Each is placed on the risk matrix before and after the requirements of the enabled baselines (${RS.baselines.length?esc(RS.baselines.map(id=>(BASELINES().concat(RS.custom).find(b=>b.id===id)||{}).name||id).join(', ')):'none yet'}).</p>
+  <div class="btns rk-tools"><button class="btn small" data-rk-settings>Settings</button><button class="btn small" data-rk-landscape>Threat landscape of this IS</button><button class="btn small" data-csv-register>Register (CSV)</button></div></div>
+  ${rows.length?`<p class="summary">${plural(rows.length,'risk')} on ${plural(assets,'asset')}. Before requirements: ${by('inherent')}. With the requirements applied: ${by('residual')}. <b style="color:var(--crit)">${open}</b> above the acceptance threshold and not accepted.</p>
+  <div class="rmx-pair">${matrixHtml(M,gridOf(rows,'inherent'),{title:'Before requirements',click:'inherent',on:(l,i)=>RKF&&RKF.k==='inherent'&&RKF.l===l&&RKF.i===i})}${matrixHtml(M,gridOf(rows,'residual'),{title:'With the requirements applied',click:'residual',on:(l,i)=>RKF&&RKF.k==='residual'&&RKF.l===l&&RKF.i===i})}</div>
+  ${RKF?`<p class="fhint">Showing the ${plural(shown.length,'risk')} ${RKF.k==='inherent'?'before requirements':'with requirements applied'} at ${esc(M.likelihood[RKF.l])} likelihood × ${esc(M.impact[RKF.i])} impact. <button class="linkbtn" data-rk-clear>Show all</button></p>`:'<p class="fhint">Click a cell to list its risks.</p>'}
+  <table class="rk-tab"><thead><tr><th>Asset</th><th>Threat</th><th>Before</th><th>Now</th><th>Planned</th><th>Requirements</th><th>Decision</th></tr></thead><tbody>
+  ${shown.map(r=>{const c=reqCount(r);return `<tr data-threat="${esc(r.threat.id)}" data-threat-asset="${esc(r.asset.id)}" tabindex="0"${r.acceptable?'':' class="open"'}><td><b>${esc(r.asset.name)}</b><small>${esc(TYPE_LABEL[r.asset.type]||'')}</small></td><td>${esc(r.threat.name)}</td><td>${lvTag(r.inherent.level)}</td><td>${lvTag(r.residual.level)}</td><td>${lvTag(r.target.level)}</td><td class="mono">${r.requirements.length?`${c.ap}/${c.n}${c.pl?` +${c.pl}`:''}`:'—'}</td><td>${esc(DECISION[r.decision].split(' (')[0])}</td></tr>`;}).join('')}
+  </tbody></table>`:`<div class="bizempty"><p>No risk yet: no threat of the catalogue applies to the assets of this IS with what the map says about them. Record flows (exposure), criticality, systems and vulnerabilities, or add threats by hand from an asset sheet.</p></div>`}`;
+}
+lensEl.addEventListener('click',e=>{
+  if(state.lens!=='risk'||!SITE)return;const q=s=>e.target.closest(s);
+  if(q('[data-cell]')){const [k,v]=q('[data-cell]').dataset.cell.split(':'),[l,i]=v.split(',').map(Number);RKF=RKF&&RKF.k===k&&RKF.l===l&&RKF.i===i?null:{k,l,i};renderRiskLens();return;}
+  if(q('[data-rk-clear]')){RKF=null;renderRiskLens();return;}
+  if(q('[data-threat]')){const b=q('[data-threat]');state.selId=b.dataset.threatAsset;showThreat(b.dataset.threatAsset,b.dataset.threat);return;}
+  if(q('[data-rk-settings]')){showRiskSettings();return;}
+  if(q('[data-rk-landscape]')){showLandscape();return;}
+  if(q('[data-csv-register]'))exportRegister();
+});
+lensEl.addEventListener('keydown',e=>{if(state.lens!=='risk'||(e.key!=='Enter'&&e.key!==' '))return;const t=e.target.closest('[data-cell],[data-threat]');if(t){e.preventDefault();t.click();}});
+function exportRegister(){
+  const rows=[['Asset','IP','Type','Threat','Applies because','MITRE ATT&CK','Likelihood before','Impact before','Level before','Level now','Level once planned','Requirements applied','Requirements planned','Requirements not applied','Decision','Justification']];
+  const M=RS.matrix,refs=(r,s)=>r.requirements.filter(x=>(x.status||'')===s).map(x=>`${x.baselineName} ${x.ref}`).join(', ');
+  SITE.register.forEach(r=>rows.push([r.asset.name,r.asset.ip||'',TYPE_LABEL[r.asset.type]||r.asset.type,r.threat.name,r.why.join('; '),r.threat.attack.join(' '),M.likelihood[r.inherent.l],M.impact[r.inherent.i],RK.LEVEL_LBL[r.inherent.level],RK.LEVEL_LBL[r.residual.level],RK.LEVEL_LBL[r.target.level],refs(r,'applied'),refs(r,'planned'),refs(r,''),DECISION[r.decision].split(' (')[0],r.note]));
+  if(rows.length===1){toast('No risk on this IS.',true);return;}
+  saveFile(`risk-register_${fileStem(SITE.name)}_${today()}.csv`,'text/csv;charset=utf-8',csv(rows));
+}
+
+// The threat landscape of an IS: how relevant each risk source is to it (EBIOS RM, workshop 2)
+function showLandscape(){
+  const L=SITE.landscape.actors||{},ro=Store.canWrite?'':' disabled';
+  openDet(`<div class="d-head"><div><span class="cap">Threat landscape · IS ${esc(SITE.name)}</span><h2>Risk sources</h2><p>How relevant each risk source and its objective is to this IS. A source rated 0 takes its threats out of the register; 3 keeps them at full likelihood.</p></div><button class="close" data-close aria-label="Close">×</button></div>
+  <div class="d-body"><ul class="list rk-src">${RK.ACTORS.map(x=>{const v=L[x.id]??x.relevance;return `<li><div><b>${esc(x.name)}</b><small>${esc(x.origin)} · ${esc(x.objective)}</small></div><select data-actor="${esc(x.id)}" aria-label="Relevance of ${esc(x.name)}"${ro}>${['0 · Not relevant','1 · Low','2 · Medium','3 · High'].map((t,k)=>`<option value="${k}"${v===k?' selected':''}>${t}${k===x.relevance?' (default)':''}</option>`).join('')}</select></li>`;}).join('')}</ul>
+  <p class="fhint">Defaults follow the ENISA Threat Landscape: cybercrime is the most likely source for any organisation. Raise state-sponsored sources for operators of essential services or defence suppliers.</p></div>`,'landscape');
+}
+det.addEventListener('change',e=>{
+  const s=e.target.closest('[data-actor]');if(!s||state.panel!=='landscape'||!SITE)return;
+  const d=clone(raw.si[SITE.id]),L=Object.assign({},(d.landscape&&d.landscape.actors)||{});L[s.dataset.actor]=+s.value;
+  const def=RK.ACTORS.find(x=>x.id===s.dataset.actor);if(def&&def.relevance===+s.value)delete L[s.dataset.actor];
+  d.landscape=Object.assign({},d.landscape,{actors:L});if(!Object.keys(L).length)delete d.landscape.actors;if(!Object.keys(d.landscape).length)delete d.landscape;
+  Store.putSite(SITE.id,d).catch(()=>{});
+});
+
+// Risk settings: the matrix, the baselines in use, the threat catalogue. Edited on a copy, saved at once.
+let RSD=null;
+function showRiskSettings(keep){
+  if(!keep)RSD=clone(raw.risk||{});
+  const S=RK.settings(RSD,BASELINES()),M=S.matrix,ro=Store.canWrite?'':' disabled',top=keep?det.scrollTop:0;
+  const all=BASELINES().map(b=>RK.cleanBaseline(b,false)).concat(S.custom),cat=RK.THREATS.concat(S.customThreats);
+  const sizes=(k,n)=>`<select data-rs-size="${k}"${ro}>${[3,4,5].map(x=>`<option${x===n?' selected':''}>${x}</option>`).join('')}</select>`;
+  openDet(`<div class="d-head"><div><span class="cap">Risks · every IS</span><h2>Risk settings</h2><p>The matrix, the baselines whose requirements are offered against each threat, and the threat catalogue</p></div><button class="close" data-close aria-label="Close">×</button></div>
+  <div class="d-body">
+  <h3 class="cap">Risk matrix</h3>
+  <div class="rs-dims"><label>Likelihood levels ${sizes('l',M.likelihood.length)}</label><label>Impact levels ${sizes('i',M.impact.length)}</label>
+  <label>Acceptable up to <select data-rs-accept${ro}>${RK.LEVELS.map((l,k)=>`<option value="${k}"${M.accept===k?' selected':''}>${RK.LEVEL_LBL[l]}</option>`).join('')}</select></label></div>
+  <div class="rs-mx">${(()=>{let h='<table class="rmx edit"><tbody>';for(let l=M.likelihood.length-1;l>=0;l--){h+=`<tr><th scope="row"><input data-rs-label="likelihood:${l}" value="${esc(M.likelihood[l])}" aria-label="Likelihood level ${l+1}"${ro}></th>`;for(let i=0;i<M.impact.length;i++){const lv=RK.LEVELS[M.cells[l][i]];h+=`<td class="lv-${lv}"><button data-rs-cell="${l},${i}" title="Change the level of this cell"${ro}>${RK.LEVEL_LBL[lv]}</button></td>`;}h+='</tr>';}
+    return h+`<tr><th></th>${M.impact.map((x,i)=>`<th scope="col"><input data-rs-label="impact:${i}" value="${esc(x)}" aria-label="Impact level ${i+1}"${ro}></th>`).join('')}</tr></tbody></table>`;})()}</div>
+  <p class="fhint">Rows: likelihood, highest at the top. Columns: impact. Click a cell to change its level. The levels split the scores evenly; a risk above the acceptable level needs requirements or a decision.</p>
+  <h3 class="cap">Baselines · ${S.baselines.length} enabled</h3>
+  <ul class="list rs-bl">${all.map(b=>`<li><label class="chk plain"><input type="checkbox" data-rs-baseline="${esc(b.id)}"${S.baselines.includes(b.id)?' checked':''}${ro}> <span><b>${esc(b.name)}</b><small>${plural(b.requirements.length,'requirement')}${b.version?' · '+esc(b.version):''}${b.license?' · '+esc(b.license):''}${b.custom?' · custom':''}</small></span></label>${b.custom?`<button class="ibtn" data-rs-del-baseline="${esc(b.id)}"${ro}>Remove</button>`:''}</li>`).join('')||'<li class="empty">No baseline available.</li>'}</ul>
+  <div class="actions edit-only"><button class="btn small" data-rs-import="baseline"${ro}>Import a custom baseline (JSON or CSV)</button><button class="btn small" data-rs-template>Template (CSV)</button></div>
+  <h3 class="cap">Threat catalogue · ${cat.length-S.disabled.size} in use</h3>
+  <ul class="list rs-th">${cat.map(t=>`<li><label class="chk plain"><input type="checkbox" data-rs-threat="${esc(t.id)}"${S.disabled.has(t.id)?'':' checked'}${ro}> <span><b>${esc(t.name)}</b><small>${esc(t.desc)}${t.attack.length?` · ${t.attack.join(' ')}`:''}</small></span></label>${t.custom?`<button class="ibtn" data-rs-del-threat="${esc(t.id)}"${ro}>Remove</button>`:''}</li>`).join('')}</ul>
+  <details class="rs-new edit-only"><summary>Add a custom threat</summary>
+    <div class="f"><label for="rsTName">Name</label><input id="rsTName" type="text" maxlength="120"></div>
+    <div class="f"><label for="rsTDesc">Description</label><textarea id="rsTDesc" rows="2"></textarea></div>
+    <div class="rs-dims"><label>Likelihood 1-4 <select id="rsTBase">${[1,2,3,4].map(x=>`<option${x===2?' selected':''}>${x}</option>`).join('')}</select></label><label>Severity 1-4 <select id="rsTSev">${[1,2,3,4].map(x=>`<option${x===3?' selected':''}>${x}</option>`).join('')}</select></label></div>
+    <div class="rs-dims"><label>Exposed at least <select id="rsTExp"><option value="">Any</option><option value="intra">Intra-VLAN</option><option value="inter">Inter-VLAN</option><option value="internet">Internet</option></select></label><label>Criticality at least <select id="rsTCrit"><option value="1">Any</option><option value="2">Medium</option><option value="3">High</option></select></label></div>
+    <div class="f"><label for="rsTTypes">Asset types (none: every type)</label><select id="rsTTypes" multiple size="5">${Object.entries(TYPE_LABEL).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
+    <div class="f"><label for="rsTAtt">MITRE ATT&amp;CK techniques (T1190, T1078…)</label><input id="rsTAtt" type="text"></div>
+    <div class="actions"><button class="btn small primary" data-rs-add-threat>Add the threat</button><button class="btn small" data-rs-import="threats">Import threats (JSON)</button></div></details>
+  <h3 class="cap">Share</h3>
+  <div class="actions"><button class="btn small" data-rs-export>Export the settings (JSON)</button><button class="btn small edit-only" data-rs-import="settings"${ro}>Import settings (JSON)</button></div>
+  <input type="file" id="rsFile" accept=".json,.csv,application/json,text/csv" hidden>
+  </div>`,'risksettings');
+  if(keep)det.scrollTop=top;
+}
+// Every change is saved at once, then the panel is drawn again from the saved copy
+function rsSave(){const d=clone(RSD);Store.putRisk(d).then(()=>{if(state.panel==='risksettings')showRiskSettings(true);}).catch(()=>{RSD=clone(raw.risk||{});if(state.panel==='risksettings')showRiskSettings(true);});}
+const rsMatrix=()=>RK.cleanMatrix(RSD.matrix);
+const rsEnabled=()=>RK.settings(RSD,BASELINES()).baselines;
+let RS_IMPORT=null;
+det.addEventListener('click',e=>{
+  if(state.panel!=='risksettings'||!RSD)return;const q=s=>e.target.closest(s);
+  if(q('[data-rs-cell]')){const [l,i]=q('[data-rs-cell]').dataset.rsCell.split(',').map(Number),M=rsMatrix();M.cells=M.cells.map(r=>r.slice());M.cells[l][i]=(M.cells[l][i]+1)%4;RSD.matrix=M;rsSave();return;}
+  if(q('[data-rs-del-baseline]')){const id=q('[data-rs-del-baseline]').dataset.rsDelBaseline,en=rsEnabled();RSD.custom=(RSD.custom||[]).filter(b=>'custom:'+String(b.id).replace(/^custom:/,'')!==id);RSD.baselines=en.filter(x=>x!==id);rsSave();return;}
+  if(q('[data-rs-del-threat]')){const id=q('[data-rs-del-threat]').dataset.rsDelThreat;RSD.threats=Object.assign({},RSD.threats);RSD.threats.custom=(RSD.threats.custom||[]).filter(t=>'custom:'+String(t.id).replace(/^custom:/,'')!==id);rsSave();return;}
+  if(q('[data-rs-add-threat]')){
+    const name=$('#rsTName').value.trim();if(!name){toast('Give the threat a name.',true);return;}
+    const types=[...$('#rsTTypes').selectedOptions].map(o=>o.value),w={critMin:+$('#rsTCrit').value};if(types.length)w.types=types;if($('#rsTExp').value)w.exposure=$('#rsTExp').value;
+    const t={id:fileStem(name).toLowerCase()+'-'+Date.now().toString(36),name,desc:$('#rsTDesc').value.trim(),base:+$('#rsTBase').value,severity:+$('#rsTSev').value,when:w,attack:$('#rsTAtt').value.split(/[\s,;]+/).map(x=>x.trim().toUpperCase()).filter(Boolean)};
+    RSD.threats=Object.assign({},RSD.threats);RSD.threats.custom=(RSD.threats.custom||[]).concat([t]);rsSave();return;}
+  if(q('[data-rs-export]')){saveFile(`strata-risk-settings_${today()}.json`,'application/json',JSON.stringify({format:'strata-risk',version:1,risk:raw.risk||{}},null,2));return;}
+  if(q('[data-rs-template]')){saveFile('baseline-template.csv','text/csv;charset=utf-8',csv([['id','title','text','threats'],['R1','Multi-factor authentication on remote access','Every remote access (VPN, remote desktop, administration) asks for a second factor.','remote-access:0.5:likelihood|brute-force:0.6:likelihood'],['R2','Offline backups','A copy of the backups is kept offline and restores are tested.','ransomware:0.5:impact|backup-destruction:0.6:impact']]));return;}
+  if(q('[data-rs-import]')){RS_IMPORT=q('[data-rs-import]').dataset.rsImport;$('#rsFile').value='';$('#rsFile').click();}
+});
+det.addEventListener('change',async e=>{
+  if(state.panel!=='risksettings'||!RSD)return;const t=e.target;
+  if(t.dataset.rsSize){const M=rsMatrix(),n=t.dataset.rsSize==='l'?+t.value:M.likelihood.length,m=t.dataset.rsSize==='i'?+t.value:M.impact.length;RSD.matrix=Object.assign(RK.defaultMatrix(n,m),{accept:M.accept});rsSave();return;}
+  if(t.hasAttribute('data-rs-accept')){RSD.matrix=Object.assign(rsMatrix(),{accept:+t.value});rsSave();return;}
+  if(t.dataset.rsLabel){const [k,x]=t.dataset.rsLabel.split(':'),M=rsMatrix();M[k]=M[k].slice();M[k][+x]=t.value.trim()||M[k][+x];RSD.matrix=M;rsSave();return;}
+  if(t.dataset.rsBaseline){const s=new Set(rsEnabled());t.checked?s.add(t.dataset.rsBaseline):s.delete(t.dataset.rsBaseline);RSD.baselines=[...s];rsSave();return;}
+  if(t.dataset.rsThreat){const s=new Set(((RSD.threats||{}).disabled)||[]);t.checked?s.delete(t.dataset.rsThreat):s.add(t.dataset.rsThreat);RSD.threats=Object.assign({},RSD.threats,{disabled:[...s]});rsSave();return;}
+  if(t.id==='rsFile'&&t.files[0]){
+    const f=t.files[0],text=await f.text();let o;
+    try{
+      if(RS_IMPORT==='baseline'){o=/\.csv$/i.test(f.name)||!/^\s*[[{]/.test(text)?baselineFromCsv(text,f.name):JSON.parse(text);
+        if(!o||!Array.isArray(o.requirements)||!o.requirements.length)throw new Error('no requirement found');
+        o.id=o.id||fileStem(o.name||f.name.replace(/\.\w+$/,'')).toLowerCase();o.name=o.name||f.name.replace(/\.\w+$/,'');
+        const id='custom:'+String(o.id).replace(/^custom:/,'');RSD.custom=(RSD.custom||[]).filter(b=>'custom:'+String(b.id).replace(/^custom:/,'')!==id).concat([o]);RSD.baselines=[...new Set([...rsEnabled(),id])];
+        toast(`Baseline “${o.name}” imported: ${plural(o.requirements.length,'requirement')}.`);}
+      else if(RS_IMPORT==='threats'){o=JSON.parse(text);const l=Array.isArray(o)?o:Array.isArray(o.threats)?o.threats:[];if(!l.length)throw new Error('expected a list of threats');
+        RSD.threats=Object.assign({},RSD.threats);const ids=new Set(l.map(x=>String(x.id)));RSD.threats.custom=(RSD.threats.custom||[]).filter(x=>!ids.has(String(x.id))).concat(l);toast(`${plural(l.length,'threat')} imported.`);}
+      else{o=JSON.parse(text);const r=o&&o.risk&&typeof o.risk==='object'?o.risk:o;if(!r||typeof r!=='object'||Array.isArray(r))throw new Error('expected a Strata risk settings export');RSD=clone(r);toast('Risk settings imported.');}
+    }catch(err){toast('Could not import this file: '+(err.message||'invalid')+'.',true);return;}
+    rsSave();
+  }
+});
+// A baseline as CSV: id, title, text, threats (threat:share:effect separated by |), comma or semicolon separated
+function baselineFromCsv(text,file){
+  const rows=[];let row=[],cell='',q=false;const sep=(text.split('\n')[0].match(/;/g)||[]).length>=(text.split('\n')[0].match(/,/g)||[]).length?';':',';
+  for(let k=0;k<text.length;k++){const c=text[k];
+    if(q){if(c==='"'&&text[k+1]==='"'){cell+='"';k++;}else if(c==='"')q=false;else cell+=c;}
+    else if(c==='"')q=true;else if(c===sep){row.push(cell);cell='';}else if(c==='\n'){row.push(cell.replace(/\r$/,''));rows.push(row);row=[];cell='';}else cell+=c;}
+  if(cell||row.length){row.push(cell);rows.push(row);}
+  const head=(rows.shift()||[]).map(h=>h.replace(/^﻿/,'').trim().toLowerCase()),col=k=>head.indexOf(k);
+  if(col('id')<0||col('title')<0)throw new Error('the first line needs the columns id and title');
+  return {name:file.replace(/\.\w+$/,''),requirements:rows.filter(r=>r[col('id')]&&r[col('title')]).map(r=>({id:r[col('id')].trim(),title:r[col('title')].trim(),text:col('text')>=0?r[col('text')]||'':'',
+    threats:col('threats')>=0?String(r[col('threats')]||'').split('|').map(x=>x.trim().split(':')).filter(x=>x[0]).map(([id,s,ef])=>[id,+s||0.3,ef==='impact'?'impact':'likelihood']):[]}))};
+}
+
 /* ================= Navigation ================= */
 let fly=null;
 function flyTo(target,dist){const off=camera.position.clone().sub(controls.target);off.setLength(dist||Math.min(off.length(),28));
@@ -3600,6 +3847,8 @@ function onData(){
       else if(state.panel==='attack')showAttack();
       else if(state.panel==='incident')showIncident(true);
       else if(state.panel==='ai'){const a=byId[AI_FOR];if(a)showPrompts(a,true);else closeDet();}
+      else if(state.panel==='threat'&&THREAT_FOR){if(byId[THREAT_FOR.aid])showThreat(THREAT_FOR.aid,THREAT_FOR.tid,true);else closeDet();}
+      else if(state.panel==='landscape')showLandscape();
       else if(state.panel==='business'){const b=SITE.bizById[state.bizPanel];if(b)showBusiness(b);else closeDet();}
     }
   }else{
@@ -3610,6 +3859,8 @@ function onData(){
     refreshOverview();
   }
   if(state.panel==='proposal'&&Store.prop)showProposal();
+  // the risk settings follow the saved document, unless a label is being typed
+  if(state.panel==='risksettings'&&!(det.contains(document.activeElement)&&document.activeElement.matches('input,textarea'))){RSD=clone(raw.risk||{});showRiskSettings(true);}
   renderServiceLists();renderCollab();
   lastCount=SITES.length;renderCart();syncUI();renderEmpty();runPending();
 }

@@ -44,6 +44,7 @@ Connectors are now **modules**: a folder with a manifest (`strata-module.json`: 
 - **Blast radius**: pick an asset (in the panel, or *Blast radius* on its sheet) and see everything an attacker holding it could reach, the most likely way to each asset, and the business services hit.
 - A step counts for the highest of: the vulnerabilities of the asset taken over (as for the risk score), 50% on a remote administration port (SSH, RDP, SMB, WinRM, VNC, Telnet, RPC), 10% on any other service; a path for the product of its steps. Both lists export as CSV.
 - **Incident mode, with Muster** (*Incident* in the controls of an IS): mark assets compromised, suspected or contained; the incident sheet lists who to call, the flows to cut and the firewall where to cut each, the business services and assets that depend on them, what the attacker reaches next. A Muster incident opens on the map and its playbook decisions point at the assets. Each asset also has anonymised *AI prompts*: its major risks, and a guide for an AI to write the response playbooks of its plausible incidents in Muster's format.
+- **Risk register** (the *Risks* view of an IS, and *Risks* on each asset sheet): each asset gets the threats that fit it, from its exposure, criticality, ports, system and vulnerabilities and from the threat landscape of its IS (EBIOS RM risk sources, ENISA Threat Landscape, MITRE ATT&CK). Each risk sits on a risk matrix of its own, 3×3 to 5×5 and configurable, before and after the requirements applied. For each risk, apply, plan or set aside the requirements of the ANSSI hygiene guide, NIST CSF 2.0, CIS Controls v8.1, ISO 27001 Annex A or your own baselines, or accept, transfer or avoid the risk. The register exports as CSV.
 - **Architecture file**: one document per IS (*Analysis › Architecture file*, or the IS summary), in the shape audits and security accreditation expect: cover and sign-off table, summary, scope, network diagram, zones and VLANs, applications, asset inventory, flow matrix, the rules each firewall needs, exposure, vulnerabilities and remediation order, attack paths, plans of the exposed and critical assets, incident contacts, change history and method. *Download* saves it as one HTML file, with no outside resource, that prints to A4 PDF from the browser.
 - **Nix and NixOS**: the repository is a flake, with a package and a hardened `services.strata` module (section 6, *Nix and NixOS*).
 - **Failed sign-ins are limited** per account and per client address (`429`), and passwords can be read from files (`EDIT_PASS_FILE`, `VIEW_PASS_FILE`): section 3.
@@ -454,20 +455,21 @@ Every route needs the same credentials as the interface (a local account with Ba
 
 | Method and route | What it does |
 |---|---|
-| `GET /api/state` | The whole map: `{si, assets, wan, services, rev, updatedAt}` |
+| `GET /api/state` | The whole map: `{si, assets, wan, services, risk, rev, updatedAt}` |
 | `GET /api/export` | The same content, as a file to download |
 | `PUT /api/si/{id}` | Creates or replaces an IS (zones, VLANs, flows, contacts) |
 | `DELETE /api/si/{id}` | Deletes an IS (not its assets) |
 | `PUT /api/assets/{id}` | Creates or replaces an asset |
 | `DELETE /api/assets/{id}` | Deletes an asset |
 | `PUT /api/wan` | Replaces the links between IS: `{"links": [...]}` |
-| `POST /api/import` | Replaces the whole map: `{si, assets, wan, services}` |
+| `POST /api/import` | Replaces the whole map: `{si, assets, wan, services, risk}` |
 | `GET /api/incidents` | Incident mode of every IS: `{incidents: {<IS id>: {on, marks, cuts, run, log}}}` |
 | `GET /api/muster` | Muster's incidents and whether Muster answers (`{url, ok, error, incidents}`), when `MUSTER_URL` is set |
 | `GET /api/muster/incidents/{id}` | One Muster incident: its frozen playbook, the steps taken, the link to Strata |
 | `POST /api/muster/incidents/{id}/advance`, `/tasks`, `/strata` | Passed on to Muster (`contributor` and up): answer a step `{edgeId}`, tick a task `{nodeId, index, done}`, report the assets and what was done `{site, marks, names, log}` |
 | `PUT /api/incidents/{IS id}` | Replaces the incident of an IS (`contributor` and up, no proposal): marks are `compromised`, `suspected` or `contained` |
 | `PUT /api/services` | Replaces the common catalogue of Internet services: `{"services": [...]}` |
+| `PUT /api/risk` | Replaces the risk settings shared by every IS: `{"risk": {matrix, baselines, custom, threats}}` |
 | `GET /api/history` | Latest changes (`?before=REV&limit=N`); `GET /api/history/{rev}`: the before/after details |
 | `GET /api/state?at=REV` | The map as it was right after version REV |
 | `POST /api/rollback` | `{"rev": N}`: puts the map back to version N (approver) |
