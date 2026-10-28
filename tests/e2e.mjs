@@ -237,6 +237,29 @@ test('risk register: threats per asset on the matrix, requirements applied, sett
   assert.match(await bob.locator('#planView svg').textContent(), new RegExp(`REQUIREMENTS FOR VPN-GW · \\d+ · \\d+ APPLIED.*ANSSI`));
   await bob.click('[data-plan="close"]');
 
+  // a click on a plate shows its VLAN alone, the other plates and their assets fade out; a second click brings them back
+  await bob.click('#lensSeg [data-lens="physical"]');
+  await bob.click('#viewSeg [data-v="2d"]');
+  await bob.waitForSelector('#flatSvg [data-plate]');
+  // a point of the first plate with no asset or flow over it
+  const spot = await bob.evaluate(() => {
+    const r = document.querySelector('#flatSvg [data-plate] rect').getBoundingClientRect();
+    for (let y = r.bottom - 4; y > r.top + 4; y -= 6) for (let x = r.left + 4; x < r.right - 4; x += 6) {
+      const e = document.elementFromPoint(x, y);
+      if (e && e.closest('[data-plate]') && !e.closest('[data-asset],[data-flow],[data-plate-handle]')) return [x, y];
+    }
+    return null;
+  });
+  assert.ok(spot, 'no free spot on the plate');
+  await bob.mouse.click(...spot);
+  await bob.waitForSelector('#focusBar:not([hidden])');
+  assert.equal(await bob.locator('#vlans input:checked').count(), 1);
+  await bob.mouse.click(...spot);
+  await bob.waitForSelector('#focusBar', { state: 'hidden' });
+  assert.equal(await bob.locator('#vlans input:not(:checked)').count(), 0);
+  await bob.click('#viewSeg [data-v="3d"]');
+  await bob.click('#lensSeg [data-lens="risk"]');
+
   // the settings: one more baseline, saved for every IS
   await bob.click('#lensBody [data-rk-settings]');
   await bob.locator('#det [data-rs-baseline="nist-csf"]').check();

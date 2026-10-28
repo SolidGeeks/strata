@@ -2577,7 +2577,7 @@ flatSvg.addEventListener('pointerdown',e=>{
   if(A){const g=FL.assets[A.dataset.asset];flatDrag={kind:'asset',id:g.a.id,sx:e.clientX,sy:e.clientY,ox:wx-g.x,oy:wy-g.y,wx:g.x,wy:g.y,moved:false,edit};flatSvg.setPointerCapture(e.pointerId);return;}
   if(Hd&&edit){flatDrag={kind:'plate',id:Hd.dataset.plateHandle,sx:e.clientX,sy:e.clientY,startX:wx,startY:wy,dx:0,dy:0,moved:false};flatSvg.setPointerCapture(e.pointerId);return;}
   if(Fl){flatDrag={kind:'flow',id:Fl.dataset.flow,sx:e.clientX,sy:e.clientY,moved:false};return;}
-  flatDrag={kind:'pan',sx:e.clientX,sy:e.clientY,tx:flatView.tx,ty:flatView.ty,moved:false};flatSvg.setPointerCapture(e.pointerId);flatSvg.classList.add('panning');
+  flatDrag={kind:'pan',sx:e.clientX,sy:e.clientY,tx:flatView.tx,ty:flatView.ty,moved:false,plate:Pl&&Pl.dataset.plate};flatSvg.setPointerCapture(e.pointerId);flatSvg.classList.add('panning');
 });
 flatSvg.addEventListener('pointermove',e=>{
   const d=flatDrag;if(!d){flatTip(e);return;}
@@ -2591,9 +2591,9 @@ flatSvg.addEventListener('pointermove',e=>{
 flatSvg.addEventListener('pointerup',e=>{
   const d=flatDrag;flatDrag=null;flatSvg.classList.remove('panning');if(!d)return;
   const [wx,wy]=toWorld(e);
-  if(d.kind==='pan'){if(!d.moved&&state.panel!=='form'){if(state.selId)select(null);else if(state.panel==='flow')closeDet();}return;}
+  if(d.kind==='pan'){if(!d.moved&&state.panel!=='form'){if(d.plate)focusVlan(d.plate);else if(state.selId)select(null);else if(state.panel==='flow')closeDet();}return;}
   if(d.kind==='asset'){if(!d.moved){if(state.panel!=='form')select(byId[d.id],false);return;}dropAsset(d.id,d.wx,d.wy);return;}
-  if(d.kind==='plate'){if(!d.moved){renderFlat();return;}dropPlate(d.id,wx,wy,d);return;}
+  if(d.kind==='plate'){if(!d.moved){if(state.panel!=='form')focusVlan(d.id);else renderFlat();return;}dropPlate(d.id,wx,wy,d);return;}
   if(d.kind==='svc'){if(!d.moved&&state.panel!=='form'&&SVC[d.id])showService(SVC[d.id]);return;}
   if(d.kind==='flow'){if(!d.moved&&state.panel!=='form'){const f=FLOWS.find(x=>x.id===d.id);if(f)showFlow(f);}return;}
   if(d.kind==='link'){renderFlat();const el=document.elementFromPoint(e.clientX,e.clientY),T=el&&el.closest&&(el.closest('[data-asset]')||el.closest('[data-internet]'));
@@ -2620,6 +2620,7 @@ function showFlatUI(){
   lensEl.hidden=!lens;document.body.classList.toggle('lens',lens);
   document.querySelectorAll('#lensSeg button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.lens===state.lens)));
   if(lens)renderLens();
+  placeFocusBar();
 }
 async function exportFlat(){
   if(!FL)return;
@@ -3966,11 +3967,11 @@ function selectSite(s,focus){
 }
 function enterSite(s){
   if(!s)return;
-  state.view='site';state.siteId=s.id;state.ovSelId=s.id;state.selId=null;state.path=false;state.hidden=new Set();state.biz=null;
+  state.view='site';state.siteId=s.id;state.ovSelId=s.id;state.selId=null;state.path=false;state.hidden=new Set();state.focus=null;state.biz=null;
   $('#pathBtn').setAttribute('aria-pressed','false');
   setSite(s);closeDet();flatFitFor=null;showFlatUI();renderVlanList();buildScene();layout();refresh();renderCart();syncUI();setViewNow();renderEmpty();
 }
-function backToOverview(){
+function backToOverview(){state.focus=null;renderFocusBar();
   if(!$('#archf').hidden)closeArchFile();
   if(state.arrange)setArrange(false);
   const id=state.siteId;state.view='overview';state.selId=null;state.siteId=null;
@@ -3998,7 +3999,9 @@ function onData(){
     const s=siteById[state.siteId];
     if(!s){toast('This IS was deleted.');backToOverview();runPending();return;}
     if(state.biz&&!s.bizById[state.biz])state.biz=null;
+    if(state.focus&&!s.vlanById[state.focus.vlan]){state.hidden=new Set([...state.focus.prev]);state.focus=null;}
     setSite(s);renderVlanList();buildScene();layout();refresh();
+    renderFocusBar();
     if(state.selId&&!byId[state.selId])state.selId=null;
     if(state.panel!=='form'){
       if(state.panel==='asset'){const a=selAsset();if(a)showAsset(a);else closeDet();}
@@ -4028,6 +4031,36 @@ function onData(){
 function runPending(){if(pendingAfterData&&!onSave){const f=pendingAfterData;pendingAfterData=null;f();}}
 // After a save: close the form and refresh as soon as the data is read back
 function afterSave(fn){onSave=null;onCancel=null;pendingAfterData=fn;scheduleData(0);}
+
+/* ================= One VLAN alone ================= */
+// A click on a plate shows that VLAN alone: the other plates and their assets disappear, with the flows to them.
+// The VLANs shown before come back with "Show every VLAN", Escape, or a second click on the plate.
+function focusVlan(id){
+  if(!vlanById[id])return;
+  if(state.focus&&state.focus.vlan===id){unfocusVlan();return;}
+  const prev=state.focus?state.focus.prev:new Set(state.hidden);
+  state.focus={vlan:id,prev};state.hidden=new Set(VLANS.map(v=>v.id).filter(x=>x!==id));
+  const a=selAsset();if(a&&a.vlan!==id)select(null);
+  renderVlanList();refresh();renderFocusBar();
+  const fl=floors[id];if(fl&&!state.flat){const c=new THREE.Box3().setFromObject(fl.slab).getCenter(new THREE.Vector3());flyTo(c,Math.max(18,Math.max(fl.w,fl.D)*1.3));}
+}
+function unfocusVlan(){
+  if(!state.focus)return;
+  state.hidden=new Set([...state.focus.prev].filter(id=>vlanById[id]));state.focus=null;
+  renderVlanList();refresh();renderFocusBar();
+}
+function renderFocusBar(){
+  const b=$('#focusBar'),v=state.focus&&state.view==='site'&&vlanById[state.focus.vlan];
+  if(!v){b.hidden=true;return;}
+  const n=ASSETS.filter(a=>a.vlan===v.id).length;
+  b.innerHTML=`<i class="sw" style="background:var(--c${v.ci})"></i><span><b>VLAN ${esc(v.num)} · ${esc(v.name)}</b> alone · ${plural(n,'asset')}${v.cidr?` · <span class="mono">${esc(v.cidr)}</span>`:''}</span><button class="btn small" data-unfocus>Show every VLAN</button>`;
+  b.hidden=false;placeFocusBar();
+}
+// Under the view switcher, whose height changes with the 2D tools
+function placeFocusBar(){const b=$('#focusBar');if(b.hidden||innerWidth<=760){b.style.top='';return;}b.style.top=($('#viewSw').getBoundingClientRect().bottom+8)+'px';}
+addEventListener('resize',placeFocusBar);
+$('#focusBar').addEventListener('click',e=>{if(e.target.closest('[data-unfocus]'))unfocusVlan();});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&state.focus&&!state.panel&&!e.target.closest('input,textarea,select'))unfocusVlan();});
 
 /* ================= Pointer ================= */
 const ray=new THREE.Raycaster(),ndc=new THREE.Vector2(),tip=$('#tip');
@@ -4059,6 +4092,7 @@ renderer.domElement.addEventListener('pointerup',e=>{
   const u=pick(e);
   if(state.view==='overview'){if(u&&u.site){if(state.ovSelId===u.site.id)enterSite(u.site);else selectSite(u.site,false);}else if(state.ovSelId)selectSite(null);return;}
   if(u&&u.asset)select(u.asset,false);
+  else if(u&&u.plate&&!state.arrange)focusVlan(u.plate);
   else if(u&&u.svc)showService(u.svc);
   else if(u&&u.flow)showFlow(u.flow);
   else if(state.selId)select(null);else if(state.panel==='flow')closeDet();});
@@ -4076,6 +4110,7 @@ renderer.domElement.addEventListener('pointermove',e=>{
   else if(u&&u.svc){const x=u.svc;html=`<b>${esc(x.name)}</b> · ${esc(x.hosts.join(', '))} · ${esc(x.ports.join(' '))}`;}
   else if(u&&u.flow){const f=u.flow;html=`<b>${flowPath(f)}</b> · ${esc(f.port)} · ${f.vol} MB/h · <span style="color:var(${EXP[f.level].css})">${EXP[f.level].label}</span>${f.risk?' · <span style="color:var(--crit)">risky</span>':''}`;}
   else if(u&&u.plate&&state.arrange){const v=vlanById[u.plate];html=`<b>VLAN ${esc(v.num)} · ${esc(v.name)}</b> · drag to move`;}
+  else if(u&&u.plate){const v=vlanById[u.plate];html=`<b>VLAN ${esc(v.num)} · ${esc(v.name)}</b> · ${state.focus&&state.focus.vlan===v.id?'click to show every VLAN again':'click to show it alone'}`;}
   if(state.arrange&&u&&(u.plate||u.asset)&&state.mode==='zones')cur='ew-resize';else if(html)cur='pointer';
   renderer.domElement.style.cursor=cur;
   if(html){tip.innerHTML=html;tip.hidden=false;tip.style.left=Math.min(e.clientX+14,innerWidth-tip.offsetWidth-8)+'px';tip.style.top=(e.clientY+14)+'px';}else tip.hidden=true;
@@ -4139,7 +4174,7 @@ const rerender=()=>state.view==='site'?refresh():refreshOverview();
 const segPress=(sel,b)=>document.querySelectorAll(sel+' button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
 $('#cart').addEventListener('click',e=>{if(e.target.closest('[data-back]'))backToOverview();});
 $('#siteList').addEventListener('click',e=>{const b=e.target.closest('[data-site]');if(b)selectSite(siteById[b.dataset.site],true);});
-$('#vlans').addEventListener('change',e=>{const id=e.target.dataset.vlan;if(!id)return;e.target.checked?state.hidden.delete(id):state.hidden.add(id);
+$('#vlans').addEventListener('change',e=>{const id=e.target.dataset.vlan;if(!id)return;if(state.focus){state.focus=null;renderFocusBar();}e.target.checked?state.hidden.delete(id):state.hidden.add(id);
   const a=selAsset();if(a&&state.hidden.has(a.vlan))select(null);else refresh();});
 $('#vlans').addEventListener('click',e=>{const rz=e.target.closest('[data-reset-zone]');if(rz){resetPlaces(rz.dataset.resetZone);return;}const m=e.target.closest('[data-mv]');if(m){moveVlan(m.dataset.mv,+m.dataset.d);return;}const b=e.target.closest('[data-edit-vlan]');if(b)vlanForm(vlanById[b.dataset.editVlan]);});
 $('#spaceSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const c=b.dataset.space==='compact';if(c===state.compact)return;state.compact=c;segPress('#spaceSeg',b);buildScene();layout();refresh();resetView();});
