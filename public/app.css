@@ -587,7 +587,9 @@ button.chip:hover{border-color:var(--accent);color:var(--accent)}
 #det .rmx.edit td{width:auto}
 #det .rmx.edit th{max-width:none}
 li.rk{display:flex;align-items:center;gap:10px}
-li.rk>button{flex:1;min-width:0}
+li.rk>button{flex:1;min-width:0;text-align:left}
+li.rk>button b,li.rk>button small{display:block}
+li.rk>button small{margin-top:2px;font-weight:400}
 .rk-lv{display:flex;align-items:center;gap:4px;flex-shrink:0}
 .rk-lv .ar{color:var(--muted)}
 .rk-ex,.rk-why,.rs-new{margin:10px 0;font-size:12.5px}
