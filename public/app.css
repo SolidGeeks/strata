@@ -703,3 +703,8 @@ body.has-dash{overflow:hidden}
   body.has-dash .dash-tools{display:none}
   .dcard,.ktile{break-inside:avoid}
 }
+
+/* The selected asset in the 2D diagram */
+#flatSvg .selhalo{animation:selhalo 1.6s ease-in-out infinite}
+@keyframes selhalo{0%,100%{opacity:.1}50%{opacity:.32}}
+@media (prefers-reduced-motion:reduce){#flatSvg .selhalo{animation:none}}

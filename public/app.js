@@ -742,6 +742,8 @@ controls.touches={ONE:THREE.TOUCH.ROTATE,TWO:THREE.TOUCH.DOLLY_PAN};
 renderer.domElement.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault();});
 
 const W=34,D=21,SLAB=0.3,TABLE_Y=-2;
+// the colour the selected asset glows in
+const HL_COLOR=new THREE.Color();
 let floors={},pickables=[],cloud=null,selRing=null,sun=null,levelTags=[],extent=W,nLevels=0,ANIM=[],OV={spanX:60,spanZ:40,ex:14,sites:{}};
 const pGeo=new THREE.SphereGeometry(0.12,10,8);
 
@@ -821,7 +823,7 @@ function buildBase(spanX,spanZ){
   const lc=new THREE.Color(css('--matline'));
   [[pts,0.45],[maj,0.9]].forEach(([p,o])=>{const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(p,3));
     const l=new THREE.LineSegments(g,new THREE.LineBasicMaterial({color:lc,transparent:true,opacity:o}));l.position.y=TABLE_Y+0.005;scene.add(l);});
-  selRing=new THREE.Mesh(new THREE.RingGeometry(1,1.08,64).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:new THREE.Color(css('--fg')),depthWrite:false}));
+  selRing=new THREE.Mesh(new THREE.RingGeometry(1,1.12,64).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:new THREE.Color(css('--accent')),depthWrite:false,transparent:true}));HL_COLOR.set(css('--accent'));
   selRing.visible=false;scene.add(selRing);
   return {steel:new THREE.MeshStandardMaterial({color:0xb9bec2,metalness:0.6,roughness:0.35}),card:new THREE.Color(css('--card')),detail:new THREE.Color(css('--detail'))};
 }
@@ -1117,7 +1119,10 @@ function refresh(){
   ASSETS.forEach(a=>{
     if(!a.mats)return;
     const op=V.aOp[a.id];
-    a.mats.forEach(m=>{m.opacity=op;m.depthWrite=op>0.5;});
+    a.mats.forEach(m=>{m.opacity=op;m.depthWrite=op>0.5;
+      // the selected asset glows (its own glow, if any, comes back after)
+      if(!m.userData.e0)m.userData.e0={c:m.emissive.getHex(),i:m.emissiveIntensity};
+      if(sel===a){m.emissive.copy(HL_COLOR);m.emissiveIntensity=0.45;}else{m.emissive.setHex(m.userData.e0.c);m.emissiveIntensity=m.userData.e0.i;}});
     a.label.visible=(state.labels&&op>0.5)||sel===a;
     if(a.portLabel)a.portLabel.visible=(state.ports&&op>0.5)||(sel===a&&state.ports);
   });
@@ -2472,7 +2477,7 @@ function flatSvgMarkup(G,V,forExport,pal){
     const op=V.aOp[a.id],dev=INTERCO.has(a.type),fill=dev?dark:card,tx=dev?devText:ink,mu=dev?'#aeb6bb':muted,sev=a.sev!=='none'?C(SEV[a.sev].css):null;
     const x=g.x-g.w/2,y=g.y-g.h/2,isSel=sel===a,drag=flatDrag&&flatDrag.moved&&flatDrag.kind==='asset'&&flatDrag.id===a.id;
     o+=`<g data-asset="${esc(a.id)}" opacity="${drag?0.85:op}" class="fa">`;
-    if(isSel)o+=`<rect x="${x-0.16}" y="${y-0.16}" width="${g.w+0.32}" height="${g.h+0.32}" rx="0.32" fill="none" stroke="${C('--accent')}" stroke-width="0.12"/>`;
+    if(isSel)o+=`<rect x="${x-0.5}" y="${y-0.5}" width="${g.w+1}" height="${g.h+1}" rx="0.6" fill="${C('--accent')}" opacity="0.18" class="${forExport?'':'selhalo'}"/><rect x="${x-0.16}" y="${y-0.16}" width="${g.w+0.32}" height="${g.h+0.32}" rx="0.32" fill="none" stroke="${C('--accent')}" stroke-width="0.16"/>`;
     if(DIFF&&DIFF.A[a.id])o+=`<rect x="${x-0.28}" y="${y-0.28}" width="${g.w+0.56}" height="${g.h+0.56}" rx="0.4" fill="none" stroke="${C(DIFF_COL[DIFF.A[a.id]])}" stroke-width="0.14" stroke-dasharray="${DIFF.A[a.id]==='added'?'none':'0.35 0.2'}"/><text x="${x+g.w+0.1}" y="${y-0.36}" text-anchor="end" font-family="${D}" font-weight="700" font-size="0.36" fill="${C(DIFF_COL[DIFF.A[a.id]])}">${DIFF.A[a.id]==='added'?'NEW':'CHANGED'}</text>`;
     const im=forExport?null:incMark(a.id);if(im)o+=`<rect x="${x-0.3}" y="${y-0.3}" width="${g.w+0.6}" height="${g.h+0.6}" rx="0.42" fill="none" stroke="${C(INC_COL[im])}" stroke-width="0.16"${im==='suspected'?' stroke-dasharray="0.35 0.2"':''}/><text x="${x+g.w+0.1}" y="${y-0.4}" text-anchor="end" font-family="${D}" font-weight="700" font-size="0.36" fill="${C(INC_COL[im])}">${INC_LBL[im].toUpperCase()}</text>`;
     o+=`<rect x="${x}" y="${y}" width="${g.w}" height="${g.h}" rx="0.2" fill="${fill}" stroke="${dev?fill:C('--line')}" stroke-width="0.05"/>`;
@@ -2600,7 +2605,7 @@ flatSvg.addEventListener('pointerup',e=>{
   const d=flatDrag;flatDrag=null;flatSvg.classList.remove('panning');if(!d)return;
   const [wx,wy]=toWorld(e);
   if(d.kind==='pan'){if(!d.moved&&state.panel!=='form'){if(d.plate)focusVlan(d.plate);else if(state.focus){if(state.selId)select(null);unfocusVlan();}else if(state.selId)select(null);else if(state.panel==='flow')closeDet();}return;}
-  if(d.kind==='asset'){if(!d.moved){if(state.panel!=='form')select(byId[d.id],false);return;}dropAsset(d.id,d.wx,d.wy);return;}
+  if(d.kind==='asset'){if(!d.moved){if(state.panel!=='form')select(byId[d.id],true);return;}dropAsset(d.id,d.wx,d.wy);return;}
   if(d.kind==='plate'){if(!d.moved){if(state.panel!=='form')focusVlan(d.id);else renderFlat();return;}dropPlate(d.id,wx,wy,d);return;}
   if(d.kind==='svc'){if(!d.moved&&state.panel!=='form'&&SVC[d.id])showService(SVC[d.id]);return;}
   if(d.kind==='flow'){if(!d.moved&&state.panel!=='form'){const f=FLOWS.find(x=>x.id===d.id);if(f)showFlow(f);}return;}
@@ -4116,7 +4121,7 @@ function selectSite(s,focus){
 }
 function enterSite(s){
   if(!s)return;
-  state.view='site';state.siteId=s.id;state.ovSelId=s.id;state.selId=null;state.path=false;state.hidden=new Set();state.focus=null;state.biz=null;
+  state.view='site';state.siteId=s.id;state.ovSelId=s.id;state.selId=null;state.path=false;state.hidden=new Set();state.focus=null;state.selView=null;state.biz=null;
   $('#pathBtn').setAttribute('aria-pressed','false');
   setSite(s);closeDet();flatFitFor=null;showFlatUI();renderVlanList();buildScene();layout();refresh();renderCart();syncUI();setViewNow();renderEmpty();
 }
@@ -4131,11 +4136,18 @@ function backToOverview(){state.focus=null;renderFocusBar();
 function select(a,focus){
   if(a&&state.path){state.path=false;$('#pathBtn').setAttribute('aria-pressed','false');}
   if(a&&state.hidden.has(a.vlan)){state.hidden.delete(a.vlan);const cb=$('#vl-'+a.vlan);if(cb)cb.checked=true;}
+  // the view before the first asset selected, to zoom back out to it once nothing is selected
+  if(a&&focus&&!state.selView)state.selView={view3d:{t:controls.target.clone(),c:camera.position.clone()},view2d:Object.assign({},flatView)};
   state.selId=a?a.id:null;
-  if(a){showAsset(a);if(focus&&a.group&&!state.flat){const p=new THREE.Vector3();a.group.getWorldPosition(p);p.y+=a.h/2;flyTo(p);}}
+  if(a){showAsset(a);if(focus&&a.group&&!state.flat){const p=new THREE.Vector3();a.group.getWorldPosition(p);p.y+=a.h/2;flyTo(p,14);}}
   else if(!state.path&&state.panel!=='ports')closeDet();
-  refresh();if(a&&focus&&state.flat)centerFlatOn(a);closeCtlMobile(!!a);
+  refresh();if(a&&focus&&state.flat)zoomFlatOn(a);closeCtlMobile(!!a);
+  if(!a&&state.selView){const v=state.selView;state.selView=null;
+    if(state.flat){if(v.view2d&&v.view2d.k)glideFlat(v.view2d);}
+    else fly={t0:performance.now(),dur:reduceMotion?1:800,fromT:controls.target.clone(),fromC:camera.position.clone(),toT:v.view3d.t.clone(),toC:v.view3d.c.clone()};}
 }
+// In the 2D diagram: centre on the asset and zoom in, gliding like the 3D camera
+function zoomFlatOn(a){const g=FL&&FL.assets[a.id];if(!g)return;const vp=flatViewport(),k=Math.min(60,Math.max(flatView.k*1.5,32));glideFlat({k,tx:vp.x+vp.w/2-g.x*k,ty:vp.y+vp.h/2-g.y*k});}
 function setPath(on){state.path=on;$('#pathBtn').setAttribute('aria-pressed',String(on));if(on){state.selId=null;showPath();}else if(!selAsset())closeDet();refresh();}
 function closeCtlMobile(cond){if(cond&&innerWidth<=760){document.body.classList.remove('ctl-open');$('#toggleCtl').setAttribute('aria-expanded','false');}}
 
@@ -4255,7 +4267,7 @@ renderer.domElement.addEventListener('pointerup',e=>{
   if(state.panel==='form')return;
   const u=pick(e);
   if(state.view==='overview'){if(u&&u.site){if(state.ovSelId===u.site.id)enterSite(u.site);else selectSite(u.site,false);}else if(state.ovSelId)selectSite(null);return;}
-  if(u&&u.asset)select(u.asset,false);
+  if(u&&u.asset)select(u.asset,true);
   else if(u&&u.plate&&!state.arrange)focusVlan(u.plate);
   else if(u&&u.svc)showService(u.svc);
   else if(u&&u.flow)showFlow(u.flow);
@@ -4430,6 +4442,8 @@ function tick(t){
   timer.update(t);const dt=Math.min(timer.getDelta(),0.05);
   if(fly){const k=Math.min(1,(performance.now()-fly.t0)/fly.dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
     controls.target.lerpVectors(fly.fromT,fly.toT,e);camera.position.lerpVectors(fly.fromC,fly.toC,e);if(k>=1)fly=null;}
+  // the ring under the selected asset breathes
+  if(selRing&&selRing.visible&&!reduceMotion){const k=(Math.sin(performance.now()/260)+1)/2;selRing.material.opacity=0.55+0.45*k;const s=1.75+0.25*k;selRing.scale.set(s,1,s);}
   if(!reduceMotion)ANIM.forEach(o=>{if(!o.tube.visible)return;o.parts.forEach(p=>{if(!p.visible)return;p.userData.t=(p.userData.t+dt*o.speed)%1;p.position.copy(o.curve.getPoint(p.userData.t));});});
   // nothing to draw while the 2D diagram or a lens (Application, Business, Risks) covers the model
   if(!(state.view==='site'&&(state.flat||state.lens!=='physical'))){controls.update();if(!fly)keepInView();renderer.render(scene,camera);}requestAnimationFrame(tick);
