@@ -2,6 +2,19 @@
 
 All notable changes to Strata. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+### Added
+- **Incident mode, with Muster** (*Incident* in the controls of an IS). Mark assets compromised, suspected or contained, from their sheet or from a playbook decision. The incident sheet then shows:
+  - **who to call**: the contacts of the assets hit, on-call and 24/7 first, the owners of the business services they run, the IS contacts;
+  - **which flows to cut**: ranked (the Internet first, then flows that reach critical assets or carry administration protocols), each with the firewall where to cut it and the business services the cut stops; an isolated (contained) host counts its flows as cut;
+  - **what depends on them**: business services hit, the assets that call them, the assets an attacker reaches next along the flows that leave them;
+  - a timeline of every mark, cut and decision.
+  The 3D model and the 2D diagram dim the rest, ring the assets hit and draw the flows to cut in red, the cut ones in grey. A red band in the title block keeps the incident in view.
+- **Muster incidents open on the map.** A Muster incident carries Strata asset ids or parameters (a CVE); its playbook runs in the incident sheet, and each step points at the map through `targets` selectors (`affected`, `vuln:{cve}`, `role:backup`, `type:dc`, `flows:…`, `reach:…`, `consumers:…`, `business:…`, `contacts:…`). A decision can mark assets (`effects`). Ransomware (PB-001) and Exploited critical vulnerability (PB-010) are included. Until Muster is connected to a Strata server, the sheet offers two example incidents built from the map.
+- **Anonymised AI prompts per asset** (*AI prompts* on an asset sheet): one prompt for the major risks of the asset, one guide that has the AI list plausible incidents and write their response playbooks in Muster's `muster/v1` YAML, with `targets`. Names, addresses, subnets, contacts and the IS name are replaced by placeholders (`ASSET-T`, `ASSET-01`, `SEG-1`, `SVC-B1`); a leak check lists anything identifying left in the text, with your own terms to never send; the answer pasted back gets your names again, in the page only. French or English.
+- **API**: `GET /api/incidents`, `PUT /api/incidents/{IS id}` (contributors and up, no proposal), and an `incidents` event on `/api/events`. Kept in `incidents.json`, outside the map and its history.
+- **One-page build**: `npm run build:online` writes `dist-online/strata.html`, the whole interface without a server (map kept in the browser, three.js from jsDelivr).
+
 ## [0.9.0] - 2026-10-26
 ### Added
 - **API reference** ([`docs/api.html`](docs/api.html), on the site under *API*): every route with its role, request and answer, authentication, errors, the event stream, the export format, the module API.
