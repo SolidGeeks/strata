@@ -98,7 +98,7 @@ Four-eyes rule: a proposal from a Palo Alto **file** counts as the proposal of t
 
 `CONNECTORS=false` in `.env` turns the connectors off completely.
 
-**License:** Strata is free software under the [GNU AGPL v3](LICENSE). You can use it, modify it and redistribute it; if you make a **modified** version available to users over a network, you must give them access to its source code. The *Source code* link at the bottom of the control panel points to `SOURCE_URL` (in `.env`): point it at your fork if you modify the code.
+**License:** Strata is free software under the [GNU AGPL v3](LICENSE). You can use it, modify it and redistribute it; if you make a **modified** version available to users over a network, you must give them access to its source code. Strata may also be offered under a commercial licence by its maintainer; contributions are accepted under the [CLA](CLA.md). The *Source code* link at the bottom of the control panel points to `SOURCE_URL` (in `.env`): point it at your fork if you modify the code.
 
 To try it without plugging in your tools: load the demo, run `node scripts/connector-sim.mjs` (with Docker: `docker compose exec -d strata node scripts/connector-sim.mjs`) (fake Cyberwatch, GLPI, phpIPAM and PAN-OS on port 8099, with data matching the Lyon IS) and use the addresses and credentials listed at the top of the script.
 
@@ -617,4 +617,4 @@ Pushing a `vX.Y.Z` tag, or publishing a release from the web page with a new tag
 
 A version with a pre-release part (`1.0.0-rc.1`, `0.9.0-beta.2`) is published as `ghcr.io/solidgeeks/strata:1.0.0-rc.1` only, never as `latest`, and its GitHub release is marked as a pre-release: `docker compose pull` keeps the last release.
 
-Contributions follow the [Solid standard](https://github.com/SolidGeeks/.github/blob/main/CONTRIBUTING.md): sign off every commit with `git commit -s` (DCO), no CLA. To report a vulnerability, see [SECURITY.md](SECURITY.md).
+Contributions follow the [Solid standard](https://github.com/SolidGeeks/.github/blob/main/CONTRIBUTING.md) (sign off every commit with `git commit -s`, DCO), with one exception for Strata: before your first pull request is merged, you sign the [Contributor License Agreement](CLA.md) once, with a comment on the pull request. You keep the copyright of your contribution; the agreement lets the maintainer also offer Strata under a commercial licence next to the AGPL. To report a vulnerability, see [SECURITY.md](SECURITY.md).
