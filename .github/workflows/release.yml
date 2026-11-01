@@ -64,7 +64,7 @@ jobs:
           test "v$v" = "$TAG" || { echo "::error::The tag is $TAG but package.json says $v: the tag must be v$v."; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
           case "$v" in *-*) echo "pre=true" >> "$GITHUB_OUTPUT";; *) echo "pre=false" >> "$GITHUB_OUTPUT";; esac
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - name: Tests
