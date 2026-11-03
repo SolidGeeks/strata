@@ -253,15 +253,23 @@ let incidents = {};
 const INCIDENT_STATES = ['compromised', 'suspected', 'contained'];
 function loadIncidents() { incidents = readDataFile(INCIDENTS_FILE); }
 const saveIncidents = () => { broadcast('incidents', { at: Date.now() }); return writeJson(INCIDENTS_FILE, incidents); };
-function cleanIncident(b) {
+// prev: the stored document. Timeline entries already there are kept as they were; new ones are signed with the
+// name of the person saving, whatever the body says, so nobody writes in someone else's name.
+function cleanIncident(b, prev, who) {
   if (!isObj(b)) throw httpError(400, 'Body must be a JSON object');
+  if (b.run != null && JSON.stringify(b.run).length > 256 * 1024) throw httpError(413, 'The playbook run is too large (256 KB at most).');
+  const key = l => JSON.stringify([l.at, l.msg, l.kind, l.by]), known = new Set((prev?.log || []).map(key)), now = Date.now();
+  const entry = l => {
+    const e = { at: Number.isFinite(l.at) && Math.abs(l.at - now) < 86400000 * 366 ? l.at : now, msg: String(l.msg ?? '').slice(0, 400), kind: String(l.kind || 'info').slice(0, 20), by: typeof l.by === 'string' ? l.by.slice(0, 64) : '' };
+    return known.has(key(e)) ? e : { ...e, by: who };
+  };
   const marks = {};
   if (isObj(b.marks)) for (const [k, v] of Object.entries(b.marks)) { if (ID_RE.test(k) && INCIDENT_STATES.includes(v)) marks[k] = v; }
   return {
     on: !!b.on, marks,
     cuts: Array.isArray(b.cuts) ? b.cuts.filter(x => typeof x === 'string' && ID_RE.test(x)).slice(0, 5000) : [],
     run: isObj(b.run) ? b.run : null,
-    log: Array.isArray(b.log) ? b.log.filter(isObj).slice(0, 500) : [],
+    log: Array.isArray(b.log) ? b.log.filter(isObj).slice(0, 500).map(entry).filter(l => l.msg) : [],
     ...(typeof b.from === 'string' && b.from ? { from: b.from.slice(0, 120) } : {}),
   };
 }
@@ -664,8 +672,12 @@ async function api(req, res, parts, url, auth) {
     if (!ID_RE.test(id)) throw httpError(400, 'Invalid id');
     need(auth, 'contributor');
     if (!own(state.si, id)) throw httpError(404, 'Unknown IS');
-    const doc = cleanIncident(await readBody(req, 512 * 1024));
-    incidents[id] = { ...doc, updatedAt: new Date().toISOString(), updatedBy: auth.user || '' };
+    const body = await readBody(req, 512 * 1024), prev = own(incidents, id);
+    // Two responders on one IS: a save made from an older version than the stored one is refused, the client reads
+    // the incident again (a body without rev, from an older client, is still taken)
+    if (isObj(body) && body.rev !== undefined && prev && body.rev !== (prev.rev || 0)) throw httpError(409, 'Someone else changed this incident meanwhile.', { incident: prev });
+    const doc = cleanIncident(body, prev, auth.user || '');
+    incidents[id] = { ...doc, rev: (prev?.rev || 0) + 1, updatedAt: new Date().toISOString(), updatedBy: auth.user || '' };
     await saveIncidents();
     return send(res, 200, { ok: true, incident: incidents[id] });
   }

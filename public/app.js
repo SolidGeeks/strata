@@ -3276,21 +3276,30 @@ async function exportSite(s){
 const INC_KEY='strata-incidents';
 const INC_COL={compromised:'--crit',suspected:'--high',contained:'--low'};
 const INC_LBL={compromised:'Compromised',suspected:'Suspected',contained:'Contained'};
-const Inc={all:{},ver:0,timers:{},busy:0,
+const Inc={all:{},ver:0,timers:{},busy:0,revs:{},
   get canWrite(){return Store.mode==='local'||!!(Store.me&&Store.me.canPropose);},
   async load(){
     let all={};
     if(Store.mode==='api'){try{const j=await Store.api('GET','api/incidents');all=j.incidents||{};}catch(e){}}
     else{try{all=JSON.parse(localStorage.getItem(INC_KEY)||'{}')||{};}catch(e){}}
-    this.all={};Object.keys(all).forEach(k=>{this.all[k]=IR.clean(all[k]);});this.ver++;
+    this.all={};this.revs={};Object.keys(all).forEach(k=>{this.all[k]=IR.clean(all[k]);if(Number.isInteger(all[k]&&all[k].rev))this.revs[k]=all[k].rev;});this.ver++;
   },
   of(id){if(!Object.hasOwn(this.all,id))this.all[id]=IR.empty();return this.all[id];},
   changed(id){
     this.ver++;
     if(Store.mode!=='api'){try{localStorage.setItem(INC_KEY,JSON.stringify(this.all));}catch(e){toast('This browser refused to save the incident (storage full or disabled).',true);}return;}
+    // busy counts the saves waiting or under way; one replaced by a newer change before it left no longer counts
+    if(this.timers[id])this.busy--;
     clearTimeout(this.timers[id]);this.busy++;
-    this.timers[id]=setTimeout(()=>Store.api('PUT','api/incidents/'+encodeURIComponent(id),this.all[id])
-      .catch(e=>toast('The incident could not be saved: '+(e.message||'error')+'.',true)).finally(()=>{this.busy--;}),250);
+    // the version this change was made on goes with it: a change made meanwhile by someone else is not overwritten
+    // Saves of one IS go one after the other, so that each carries the version the previous one got back
+    this.timers[id]=setTimeout(()=>{
+      const put=()=>Store.api('PUT','api/incidents/'+encodeURIComponent(id),Object.assign({},this.all[id],{rev:this.revs[id]||0}))
+        .then(j=>{if(j&&j.incident&&Number.isInteger(j.incident.rev))this.revs[id]=j.incident.rev;})
+        .catch(e=>{if(e.status===409){toast('Someone else changed this incident at the same time: their version is shown, make your change again.',true);return this.load().then(()=>incRedraw(true));}toast('The incident could not be saved: '+(e.message||'error')+'.',true);});
+      this.timers[id]=null;
+      this.chain=(this.chain||Promise.resolve()).then(put).finally(()=>{this.busy--;});
+    },250);
   }
 };
 // Another person changed an incident (server mode): read them again, unless a change of ours is on its way

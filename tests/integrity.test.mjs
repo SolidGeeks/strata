@@ -125,3 +125,49 @@ test('without any account, the server does not listen on the network unless ALLO
   } finally { rmSync(dir, { recursive: true, force: true }); }
   assert.ok(!existsSync(dir));
 });
+
+test('incidents: a save made on an older version is refused, and new timeline entries carry the saver\'s name', async () => {
+  const s = await start();
+  try {
+    assert.equal((await call(s.port, 'PUT', 'users/carol', { role: 'contributor', password: 'carol-pass-123' })).status, 200);
+    assert.equal((await call(s.port, 'PUT', 'si/s1', { name: 'One' })).status, 200);
+    const a = await call(s.port, 'PUT', 'incidents/s1', { on: true, marks: {}, log: [{ at: Date.now(), msg: 'Opened', by: 'someone-else' }], rev: 0 });
+    assert.equal(a.status, 200);
+    assert.equal(a.body.incident.rev, 1);
+    assert.equal(a.body.incident.log[0].by, 'admin');
+    const b = await call(s.port, 'PUT', 'incidents/s1', { on: true, marks: {}, log: [], rev: 0 }, 'carol', 'carol-pass-123');
+    assert.equal(b.status, 409);
+    const c = await call(s.port, 'PUT', 'incidents/s1', { on: true, marks: {}, log: [...a.body.incident.log, { at: Date.now(), msg: 'Cut', by: 'admin' }], rev: 1 }, 'carol', 'carol-pass-123');
+    assert.equal(c.status, 200);
+    assert.deepEqual(c.body.incident.log.map(l => l.by), ['admin', 'carol']);
+    assert.equal((await call(s.port, 'PUT', 'incidents/s1', { on: true, run: { big: 'x'.repeat(300 * 1024) } })).status, 413);
+  } finally { await s.stop(); rmSync(s.dataDir, { recursive: true, force: true }); }
+});
+
+test('Muster: no redirect is followed, and a list holding anything but incidents does not stop the server', async () => {
+  const http = await import('node:http');
+  const { createMuster } = await import('../server/muster.js');
+  let gotPassword = false, mode = 'redirect';
+  const other = http.createServer((req, res) => { req.on('data', () => { gotPassword = true; }); req.on('end', () => res.end('{}')); });
+  await new Promise(r => other.listen(0, '127.0.0.1', r));
+  const fake = http.createServer((req, res) => {
+    if (req.url === '/api/auth/login') {
+      if (mode === 'redirect') { res.writeHead(307, { Location: `http://127.0.0.1:${other.address().port}/steal` }); return res.end(); }
+      res.writeHead(200, { 'Set-Cookie': 'muster_session=abc; HttpOnly' }); return res.end('{}');
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify([null, 1, { id: 'INC-1', rev: 2 }, { id: '../x' }]));
+  });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  try {
+    const m = createMuster({ url: `http://127.0.0.1:${fake.address().port}`, user: 'strata', password: 'S3CRET', pollMs: 60000 });
+    let st = await m.refresh();
+    assert.equal(st.ok, false);
+    assert.match(st.error, /redirect/);
+    await wait(100);
+    assert.equal(gotPassword, false, 'the password went to the redirect target');
+    mode = 'ok';
+    st = await m.refresh();
+    assert.equal(st.ok, true);
+    assert.deepEqual(st.incidents.map(i => i.id), ['INC-1']);
+  } finally { fake.close(); other.close(); }
+});

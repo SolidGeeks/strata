@@ -11,14 +11,15 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ADMIN = 'admin-pass-123';
-const LOCK_MS = 1800; // LOGIN_LOCK_MINUTES=0.03
+// long enough for a few sign-ins (scrypt N=2^17 takes a few hundred ms each, more while the suite runs in parallel)
+const LOCK_MS = 6000; // LOGIN_LOCK_MINUTES=0.1
 
 // Starts a server with these settings; resolves with {port, stop} once it listens
 function start(extra) {
   const dataDir = mkdtempSync(join(tmpdir(), 'strata-signin-'));
   const port = 9400 + Math.floor(Math.random() * 500);
   const proc = spawn(process.execPath, [join(root, 'server/server.js')], {
-    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, EDIT_USER: 'admin', EDIT_PASS: ADMIN, VIEW_PASS: '', CONNECTORS: 'false', LOGIN_LOCK_MINUTES: '0.03', TRUST_PROXY: '', ...extra },
+    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, EDIT_USER: 'admin', EDIT_PASS: ADMIN, VIEW_PASS: '', CONNECTORS: 'false', LOGIN_LOCK_MINUTES: '0.1', TRUST_PROXY: '', ...extra },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const stop = () => new Promise(res => { if (proc.exitCode !== null) return res(); proc.once('exit', res); proc.kill(); }).then(() => rmSync(dataDir, { recursive: true, force: true, maxRetries: 5 }));
@@ -54,7 +55,7 @@ test('an account is locked after LOGIN_MAX_FAILS different wrong passwords, then
     // locked: even the right password is refused, with the time to wait
     const r = await get(s.port, 'alice', 'alice-pass-123');
     assert.equal(r.status, 429);
-    assert.ok(+r.retryAfter >= 1 && +r.retryAfter <= 2, `Retry-After ${r.retryAfter}`);
+    assert.ok(+r.retryAfter >= 1 && +r.retryAfter <= 6, `Retry-After ${r.retryAfter}`);
     // another account from the same address is not affected
     assert.equal((await get(s.port, 'admin', ADMIN)).status, 200);
     await wait(LOCK_MS + 300);
