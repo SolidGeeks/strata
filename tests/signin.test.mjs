@@ -104,12 +104,25 @@ test('a browser already signed in keeps working from its address while the accou
   } finally { await s.stop(); }
 });
 
-test('an account name cannot write fake lines into the log', async () => {
+test('names with no account are not counted per account, and cannot write fake lines into the log', async () => {
   const s = await start({ LOGIN_MAX_FAILS: '1', LOGIN_MAX_FAILS_PER_ADDRESS: '100' });
   try {
     assert.equal((await get(s.port, 'x\n2026-01-01T00:00:00.000Z FAKE', 'a')).status, 401);
+    assert.equal((await get(s.port, 'nobody', 'a')).status, 401);
     await wait(200);
-    assert.match(s.log(), /Sign-in locked .*account "x\\n2026/);
+    // a flood of unknown names would otherwise push a locked account out of the table, and free it
+    assert.doesNotMatch(s.log(), /Sign-in locked/);
     assert.doesNotMatch(s.log(), /^2026-01-01T00:00:00.000Z FAKE/m);
+    assert.equal((await get(s.port, 'admin', ADMIN)).status, 200);
+  } finally { await s.stop(); }
+});
+
+test('the same wrong password sent again and again ends up locking the address', async () => {
+  const s = await start({ LOGIN_MAX_FAILS: '50', LOGIN_MAX_FAILS_PER_ADDRESS: '2', LOGIN_LOCK_MINUTES: '1' });
+  try {
+    const seen = [];
+    for (let i = 0; i < 11; i++) seen.push((await get(s.port, 'admin', 'same-wrong')).status);
+    assert.deepEqual(seen.slice(0, 9), Array(9).fill(401));
+    assert.equal(seen[10], 429);
   } finally { await s.stop(); }
 });

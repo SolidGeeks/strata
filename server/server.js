@@ -294,17 +294,44 @@ async function upsertProposal({ connector, connectorName, by, uploadedBy, siteId
    data/users.json: {"users": {"alice": {"role": "approver", "salt": "...", "hash": "...", ...}}}
    EDIT_PASS / VIEW_PASS (from .env) keep working: they (re)create an admin and a viewer at start-up. */
 let users = {}, usersMtime = 0;
-const hashPass = (pass, salt) => crypto.scryptSync(String(pass), salt, 32).toString('hex');
+// scrypt. Hashes made before 0.11 have no "kdf" and used Node's defaults (N=2^14); new ones use N=2^17 (OWASP),
+// and an old hash is upgraded at the next successful sign-in. Sign-ins hash in the thread pool (crypto.scrypt), so
+// a burst of wrong passwords does not stall the event loop.
+const KDF = { N: 131072, r: 8, p: 1 }, KDF_OLD = { N: 16384, r: 8, p: 1 };
+const kdfOpts = k => ({ N: k.N, r: k.r, p: k.p, maxmem: 256 * k.N * k.r + 1048576 });
+const kdfOf = u => (isObj(u?.kdf) && Number.isInteger(u.kdf.N) && Number.isInteger(u.kdf.r) && Number.isInteger(u.kdf.p) && u.kdf.N <= 1048576 && u.kdf.r <= 32 && u.kdf.p <= 16) ? u.kdf : KDF_OLD;
+const hashPass = (pass, salt, k = KDF) => crypto.scryptSync(String(pass), salt, 32, kdfOpts(k)).toString('hex');
+const hashPassAsync = (pass, salt, k = KDF) => new Promise((ok, ko) => crypto.scrypt(String(pass), salt, 32, kdfOpts(k), (e, b) => e ? ko(e) : ok(b.toString('hex'))));
+// For unknown, disabled and refused accounts: the same work as a real check, so the time taken says nothing of who exists
+const DUMMY = { salt: crypto.randomBytes(16).toString('hex'), hash: '00'.repeat(32), kdf: KDF };
+const sameHex = (a, b) => { const x = Buffer.from(String(a), 'hex'), y = Buffer.from(String(b), 'hex'); return x.length === 32 && x.length === y.length && crypto.timingSafeEqual(x, y); };
+async function checkPassword(u, pass) {
+  const real = !!(u && !u.disabled && u.hash && u.salt), t = real ? u : DUMMY;
+  const good = sameHex(await hashPassAsync(pass, t.salt, kdfOf(t)), t.hash);
+  return real && good;
+}
+// A hash made with weaker settings is redone with KDF, the password being known at this sign-in
+async function upgradeHash(name, oldHash, pass) {
+  const salt = crypto.randomBytes(16).toString('hex'), hash = await hashPassAsync(pass, salt);
+  syncUsers();
+  const cur = own(users, name);
+  if (!cur || cur.hash !== oldHash) return; // changed meanwhile
+  Object.assign(cur, { salt, hash, kdf: { ...KDF } });
+  await saveUsers();
+}
 function loadUsers() {
   try { const st = fs.statSync(USERS_FILE); usersMtime = st.mtimeMs; const p = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); users = isObj(p.users) ? p.users : {}; }
   catch { users = {}; }
   authCache.clear();
 }
+// Before a change made here, take in a change made meanwhile by scripts/users.mjs: otherwise the server would write
+// its older copy over it (a disabled account enabled again)
+function syncUsers() { try { if (fs.statSync(USERS_FILE).mtimeMs !== usersMtime) loadUsers(); } catch { } }
 function saveUsers() { authCache.clear(); return writeJson(USERS_FILE, JSON.stringify({ users }, null, 2)).then(() => { try { usersMtime = fs.statSync(USERS_FILE).mtimeMs; } catch { } }); }
 function setUser(name, { role, password, disabled }) {
   const u = own(users, name) || { createdAt: new Date().toISOString() };
   if (role) u.role = role;
-  if (password) { u.salt = crypto.randomBytes(16).toString('hex'); u.hash = hashPass(password, u.salt); u.passwordChangedAt = new Date().toISOString(); }
+  if (password) { u.salt = crypto.randomBytes(16).toString('hex'); u.hash = hashPass(password, u.salt); u.kdf = { ...KDF }; u.passwordChangedAt = new Date().toISOString(); }
   if (disabled !== undefined) u.disabled = !!disabled;
   users[name] = u;
 }
@@ -313,11 +340,11 @@ function bootstrapUsers() {
   let changed = false;
   if (CONFIG.editPass) {
     const u = own(users, CONFIG.editUser);
-    if (!u || !u.hash || hashPass(CONFIG.editPass, u.salt) !== u.hash || u.role !== 'admin' || u.disabled) { setUser(CONFIG.editUser, { role: 'admin', password: CONFIG.editPass, disabled: false }); changed = true; }
+    if (!u || !u.hash || !sameHex(hashPass(CONFIG.editPass, u.salt, kdfOf(u)), u.hash) || u.role !== 'admin' || u.disabled) { setUser(CONFIG.editUser, { role: 'admin', password: CONFIG.editPass, disabled: false }); changed = true; }
   }
   if (CONFIG.viewPass) {
     const u = own(users, CONFIG.viewUser);
-    if (!u || !u.hash || hashPass(CONFIG.viewPass, u.salt) !== u.hash) { setUser(CONFIG.viewUser, { role: u?.role || 'viewer', password: CONFIG.viewPass, disabled: false }); changed = true; }
+    if (!u || !u.hash || !sameHex(hashPass(CONFIG.viewPass, u.salt, kdfOf(u)), u.hash)) { setUser(CONFIG.viewUser, { role: u?.role || 'viewer', password: CONFIG.viewPass, disabled: false }); changed = true; }
   }
   if (changed) saveUsers();
 }
@@ -361,11 +388,25 @@ function recordFailure(kind, key, credential) {
   const max = FAIL_LIMIT[kind](), m = failures[kind], now = Date.now();
   if (!max) return;
   let f = m.get(key);
-  if (!f || (now - f.first > CONFIG.loginLockMs && f.until <= now)) f = { first: now, seen: new Set(), until: 0 };
+  if (!f || (now - f.first > CONFIG.loginLockMs && f.until <= now)) f = { first: now, seen: new Set(), until: 0, total: 0 };
   if (f.seen.size < max) f.seen.add(credential);
-  if (f.seen.size >= max && f.until <= now) { f.until = now + CONFIG.loginLockMs; log(`Sign-in locked for ${Math.round(CONFIG.loginLockMs / 60000)} min: ${kind} ${JSON.stringify(key)}`); }
+  f.total++;
+  // An address also locks after 5 times its allowance of attempts, the same password or not: resending one wrong
+  // password would otherwise make the server hash it without end
+  if ((f.seen.size >= max || (kind === 'address' && f.total >= 5 * max)) && f.until <= now) { f.until = now + CONFIG.loginLockMs; log(`Sign-in locked for ${Math.round(CONFIG.loginLockMs / 60000)} min: ${kind} ${JSON.stringify(key)}`); }
   m.delete(key); m.set(key, f);
-  if (m.size > 10000) m.delete(m.keys().next().value);
+  // Bounded, but a lock still running is never dropped: flooding the table with other keys must not free a locked
+  // account or address. When every entry is locked, the oldest unlocked one does not exist and the map grows; each
+  // locked entry cost its owner LOGIN_MAX_FAILS sign-ins.
+  if (m.size > 10000) for (const [k, v] of m) { if (v.until <= now) { m.delete(k); break; } }
+}
+// IPv6 clients are counted per /64: one machine usually holds a whole /64, and would otherwise get a fresh
+// allowance from each of its addresses
+function addressKey(a) {
+  if (!a.includes(':')) return a;
+  const [head, tail = ''] = a.split('%')[0].split('::'), h = head ? head.split(':') : [], t = tail ? tail.split(':') : [];
+  const full = a.includes('::') ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t] : h;
+  return full.slice(0, 4).map(x => (parseInt(x, 16) || 0).toString(16)).join(':') + '::/64';
 }
 
 // Successful logins are cached for 10 minutes, so scrypt runs once per session, not per request
@@ -373,43 +414,39 @@ const authCache = new Map();
 // Returns the account and role, null when the credentials are missing or wrong, or {retryAfter} (ms)
 // while sign-ins are locked
 // Single sign-on and API tokens come first (sso.js); {denied} is a refusal to explain (403)
-function authenticate(req) {
+async function authenticate(req) {
   const other = sso.fromSession(req) || sso.fromToken(req) || sso.fromHeaders(req);
   if (other) return other.denied ? other : { ...other, role: CONFIG.readOnly ? 'viewer' : other.role };
   if (!authEnabled() && !sso.enabled()) return { user: '', role: CONFIG.readOnly ? 'viewer' : 'admin', open: true, via: 'open' };
   // LOCAL_LOGIN=off: no local sign-in at all; admins: only the accounts whose stored role is admin. The
   // others are not even checked, so the answer (401) says nothing of their password
   if (sso.localLogin === 'off') return null;
-  if (sso.localLogin === 'admins' && own(users, basicName(req))?.role !== 'admin') return null;
-  return authenticateLocal(req);
+  return authenticateLocal(req, sso.localLogin === 'admins' ? u => u.role === 'admin' : () => true);
 }
-function basicName(req) {
-  const h = req.headers.authorization || '';
-  if (!h.startsWith('Basic ')) return '';
-  const raw = Buffer.from(h.slice(6), 'base64').toString('utf8'), i = raw.indexOf(':');
-  return i < 1 ? '' : raw.slice(0, i);
-}
-function authenticateLocal(req) {
+// allowed(u): the accounts that may sign in locally (LOCAL_LOGIN=admins: admins only). The others get the same
+// answer and take the same time as a wrong password, so neither says which accounts exist or are admins.
+async function authenticateLocal(req, allowed) {
   const h = req.headers.authorization || '';
   if (!h.startsWith('Basic ')) return null;
   const raw = Buffer.from(h.slice(6), 'base64').toString('utf8'), i = raw.indexOf(':');
   const name = i < 1 ? '' : raw.slice(0, i), pass = raw.slice(i + 1);
   const key = crypto.createHash('sha256').update(raw).digest('hex'), hit = authCache.get(key), addr = clientAddress(req);
-  const ok = hit && hit.until > Date.now() && hit.addrs.has(addr);
+  const ok = hit && hit.until > Date.now() && hit.addrs.has(addr), akey = addressKey(addr);
   if (!ok) {
-    const wait = Math.max(lockedFor('address', addr), name ? lockedFor('account', name) : 0);
+    const wait = Math.max(lockedFor('address', akey), name ? lockedFor('account', name) : 0);
     if (wait) return { retryAfter: wait };
-    const u = name ? own(users, name) : undefined;
-    let good = !!(u && !u.disabled && u.hash);
-    if (good) { const a = Buffer.from(hashPass(pass, u.salt), 'hex'), b = Buffer.from(u.hash, 'hex'); good = a.length === b.length && crypto.timingSafeEqual(a, b); }
-    if (!good) { recordFailure('address', addr, key); if (name) recordFailure('account', name, key); return null; }
+    const u0 = name ? own(users, name) : undefined, u = u0 && allowed(u0) ? u0 : undefined;
+    const good = await checkPassword(u, pass);
+    // Account failures are counted for existing accounts only: names that do not exist cannot fill the table
+    if (!good) { recordFailure('address', akey, key); if (u0) recordFailure('account', name, key); return null; }
     failures.account.delete(name);
+    if (kdfOf(u).N < KDF.N) upgradeHash(name, u.hash, pass).catch(e => log('Accounts: could not upgrade the password hash of', name, e.message));
     const addrs = hit && hit.until > Date.now() ? hit.addrs : new Set();
     addrs.add(addr);
     authCache.set(key, { until: Date.now() + 600000, addrs });
   }
   const u = own(users, name);
-  if (!u || u.disabled) return null;
+  if (!u || u.disabled || !allowed(u)) return null;
   const role = CONFIG.readOnly ? 'viewer' : (RANK[u.role] !== undefined ? u.role : 'viewer');
   return { user: name, role, via: 'local' };
 }
@@ -500,9 +537,14 @@ async function api(req, res, parts, url, auth) {
   if (r1 === 'me' && id === 'password' && method === 'PUT') {
     if (auth.open) throw httpError(400, 'Accounts are not enabled on this server.');
     if (auth.via !== 'local') throw httpError(400, 'Only a local account has a password here: change it with your identity provider.');
-    const b = await readBody(req, 4096), u = own(users, auth.user);
-    const given = u ? Buffer.from(hashPass(b?.current || '', u.salt), 'hex') : null, stored = u ? Buffer.from(u.hash, 'hex') : null;
-    if (!u || given.length !== stored.length || !crypto.timingSafeEqual(given, stored)) throw httpError(403, 'Current password is wrong.');
+    const b = await readBody(req, 4096); syncUsers();
+    const u = own(users, auth.user), akey = addressKey(clientAddress(req)), wait = Math.max(lockedFor('address', akey), lockedFor('account', auth.user));
+    if (wait) throw httpError(429, `Too many wrong passwords. Try again in ${Math.ceil(wait / 60000)} minutes.`);
+    if (!await checkPassword(u, b?.current || '')) {
+      const k = crypto.createHash('sha256').update(String(b?.current || '')).digest('hex');
+      recordFailure('address', akey, k); recordFailure('account', auth.user, k);
+      throw httpError(403, 'Current password is wrong.');
+    }
     if (String(b?.next || '').length < 10) throw httpError(400, 'Use at least 10 characters.');
     setUser(auth.user, { password: b.next }); await saveUsers(); return send(res, 200, { ok: true });
   }
@@ -797,7 +839,7 @@ async function api(req, res, parts, url, auth) {
     if (!id && method === 'GET') return send(res, 200, { users: Object.entries(users).map(([name, u]) => ({ name, role: u.role, disabled: !!u.disabled, createdAt: u.createdAt, passwordChangedAt: u.passwordChangedAt || null })).sort((a, b) => a.name.localeCompare(b.name)) });
     if (id && !USER_RE.test(id)) throw httpError(400, 'Use letters, digits, dot, dash, underscore or @ (64 at most).');
     if (id && method === 'PUT') {
-      const b = await readBody(req, 4096);
+      const b = await readBody(req, 4096); syncUsers();
       if (b?.role !== undefined && !ROLES.includes(b.role)) throw httpError(400, `Role must be one of ${ROLES.join(', ')}.`);
       if (!own(users, id) && !b?.password) throw httpError(400, 'A new account needs a password.');
       if (b?.password && String(b.password).length < 10) throw httpError(400, 'Use at least 10 characters.');
@@ -807,7 +849,7 @@ async function api(req, res, parts, url, auth) {
     }
     if (id && method === 'DELETE') {
       if (id === auth.user) throw httpError(400, 'You cannot delete your own account.');
-      delete users[id]; await saveUsers(); return send(res, 200, { ok: true });
+      syncUsers(); delete users[id]; await saveUsers(); return send(res, 200, { ok: true });
     }
   }
   return fail(res, 404, 'Unknown API route');
@@ -845,7 +887,7 @@ const server = http.createServer(async (req, res) => {
     try { decodeURIComponent(url.pathname); } catch { return fail(res, 400, 'Malformed URL'); }
     if (url.pathname === '/healthz') return send(res, 200, 'ok');
     if (url.pathname.startsWith('/auth/')) return await authRoute(req, res, url);
-    const auth = authenticate(req);
+    const auth = await authenticate(req);
     if (auth && auth.denied) return send(res, 403, url.pathname.startsWith('/api/') ? { error: auth.denied } : loginPage({ ssoName: sso.name, oidc: sso.oidc, local: localSignIn(), message: auth.denied, base: sso.publicUrl }), url.pathname.startsWith('/api/') ? {} : { 'Content-Type': 'text/html; charset=utf-8' });
     if (auth && auth.retryAfter) {
       const s = Math.ceil(auth.retryAfter / 1000);

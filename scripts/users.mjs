@@ -13,12 +13,19 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FILE = path.join(path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data')), 'users.json');
+const die = m => { console.error(m); process.exit(1); };
 const ROLES = ['viewer', 'contributor', 'approver', 'admin'];
 // Same rule as the server's USER_RE: account names become object keys, so the names that reach Object.prototype are refused
 const USER_RE = /^(?!(?:__proto__|constructor|prototype)$)[A-Za-z0-9_.@-]{1,64}$/;
-const load = () => { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')).users || {}; } catch { return {}; } };
+// A file that exists but cannot be read stops here: saving would replace every account with the one being set
+const load = () => {
+  let text;
+  try { text = fs.readFileSync(FILE, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return {}; die(`${FILE}: ${e.message}`); }
+  try { const u = JSON.parse(text).users; return u && typeof u === 'object' && !Array.isArray(u) ? u : {}; } catch (e) { die(`${FILE} is not valid JSON (${e.message}): fix or restore it first.`); }
+};
+// Same settings as the server (server.js, KDF): scrypt N=2^17, stored with the hash
+const KDF = { N: 131072, r: 8, p: 1 };
 const save = u => { fs.mkdirSync(path.dirname(FILE), { recursive: true }); fs.writeFileSync(FILE + '.tmp', JSON.stringify({ users: u }, null, 2), { mode: 0o600 }); fs.renameSync(FILE + '.tmp', FILE); };
-const die = m => { console.error(m); process.exit(1); };
 async function askPassword() {
   if (process.env.NEW_PASSWORD_FILE) { try { return fs.readFileSync(process.env.NEW_PASSWORD_FILE, 'utf8').replace(/\r?\n$/, ''); } catch (e) { die(`NEW_PASSWORD_FILE: ${e.message}`); } }
   if (process.env.NEW_PASSWORD) return process.env.NEW_PASSWORD;
@@ -38,7 +45,7 @@ if (!cmd || cmd === 'list') {
   const pass = await askPassword();
   if (String(pass).length < 10) die('Use at least 10 characters.');
   const salt = crypto.randomBytes(16).toString('hex');
-  users[name] = Object.assign((Object.hasOwn(users, name) && users[name]) || { createdAt: new Date().toISOString() }, { role, salt, hash: crypto.scryptSync(pass, salt, 32).toString('hex'), disabled: false, passwordChangedAt: new Date().toISOString() });
+  users[name] = Object.assign((Object.hasOwn(users, name) && users[name]) || { createdAt: new Date().toISOString() }, { role, salt, hash: crypto.scryptSync(pass, salt, 32, { ...KDF, maxmem: 256 * KDF.N * KDF.r + 1048576 }).toString('hex'), kdf: { ...KDF }, disabled: false, passwordChangedAt: new Date().toISOString() });
   save(users); console.log(`Account ${name} saved (${role}).`);
 } else if (['role', 'disable', 'enable', 'delete'].includes(cmd)) {
   if (!name || !Object.hasOwn(users, name)) die(`No account named ${name}.`);

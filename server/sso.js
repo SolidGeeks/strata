@@ -59,7 +59,9 @@ export function verifyJwt(token, jwks) {
   catch { throw new Error('the ID token cannot be read'); }
   const alg = ALGS[header.alg];
   if (!alg || !Object.hasOwn(ALGS, header.alg)) throw new Error(`the ID token is signed with ${header.alg}, which is not accepted`);
-  const keys = (jwks && Array.isArray(jwks.keys) ? jwks.keys : []).filter(k => !k.use || k.use === 'sig');
+  // Only keys of the type the algorithm needs, and that say they are for it when they say anything
+  const kty = alg.ec ? 'EC' : alg.hash === null ? 'OKP' : 'RSA';
+  const keys = (jwks && Array.isArray(jwks.keys) ? jwks.keys : []).filter(k => k && (!k.use || k.use === 'sig') && k.kty === kty && (!k.alg || k.alg === header.alg));
   const candidates = header.kid ? keys.filter(k => k.kid === header.kid) : keys;
   const data = Buffer.from(`${parts[0]}.${parts[1]}`), sig = Buffer.from(parts[2], 'base64url');
   for (const jwk of candidates) {
@@ -119,7 +121,7 @@ export function createSso({ config, dataDir, log, writeJson, peerAddress, localU
     if (!user) return null;
     if (!userRe.test(user)) return { denied: 'The sign-in proxy gave a user name Strata does not accept.' };
     if (localUser(user)) return { denied: `“${user}” is also a local account: rename one of them.` };
-    const groups = C.headerGroups ? String(req.headers[C.headerGroups] || '').split(/[,;|]/).map(s => s.trim()).filter(Boolean) : [];
+    const groups = C.headerGroups ? String(req.headers[C.headerGroups] || '').split(',').map(s => s.trim()).filter(Boolean) : [];
     const role = roleOf(groups);
     return role ? { user, role, via: 'header' } : { denied: `${user} is in no group that gives access to Strata.` };
   }
@@ -195,6 +197,7 @@ export function createSso({ config, dataDir, log, writeJson, peerAddress, localU
     const aud = Array.isArray(c.aud) ? c.aud : [c.aud];
     if (!aud.includes(C.clientId) || (aud.length > 1 && c.azp && c.azp !== C.clientId)) throw new Error('The ID token is meant for another application.');
     if (!(c.exp > now - 60)) throw new Error('The ID token has expired: check the clock of this server.');
+    if (typeof c.nbf === 'number' && c.nbf > now + 60) throw new Error('The ID token is not valid yet: check the clock of this server.');
     if (c.iat && c.iat > now + 120) throw new Error('The ID token is dated in the future: check the clock of this server.');
     if (c.nonce !== p.nonce) throw new Error('The ID token does not answer this sign-in.');
     // the name, from the claim chosen; an e-mail address only once the provider has verified it
@@ -204,7 +207,7 @@ export function createSso({ config, dataDir, log, writeJson, peerAddress, localU
     if (!userRe.test(user)) throw new Error(`Strata does not accept the user name the provider gives (${C.userClaim}).`);
     if (localUser(user)) throw new Error(`“${user}” is also a local account here: an administrator has to rename one of them.`);
     const g = c[C.groupsClaim];
-    const groups = Array.isArray(g) ? g : typeof g === 'string' ? g.split(/[\s,]+/).filter(Boolean) : [];
+    const groups = Array.isArray(g) ? g : typeof g === 'string' ? g.split(',').map(s => s.trim()).filter(Boolean) : [];
     const role = roleOf(groups);
     if (!role) throw Object.assign(new Error(`${user} is in no group that gives access to Strata. Ask an administrator.`), { denied: true });
     const sid = rand(32);
