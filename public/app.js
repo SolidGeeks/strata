@@ -2949,9 +2949,10 @@ async function propAction(kind){
     if(kind==='submit'){clearTimeout(Store._dt);await Store.saveDraft();await Store.api('POST',url+'/submit',{text});leaveMode('Proposal submitted: an approver will review it.');loadProposals();return;}
     if(kind==='withdraw'){await Store.api('POST',url+'/withdraw',{});await openProposal(p.id,true);toast('Back to draft: you can edit it again.');return;}
     if(kind==='reject'){await Store.api('POST',url+'/reject',{text:text||'Rejected'});leaveMode('Proposal rejected. The author can rework it.');loadProposals();return;}
-    if(kind==='approve'||kind==='force'){const j=await Store.api('POST',url+'/approve',{text,force:kind==='force'});leaveMode(`Proposal approved and published (version ${j.rev}).`);loadProposals();return;}
+    if(kind==='approve'||kind==='force'){const j=await Store.api('POST',url+'/approve',{text,force:kind==='force',updatedAt:p.updatedAt});leaveMode(`Proposal approved and published (version ${j.rev}).`);loadProposals();return;}
     if(kind==='delete'){if(!confirmArm('propdel'))return;await Store.api('DELETE',url);leaveMode('Draft deleted.');loadProposals();return;}
   }catch(e){
+    if(e.status===409&&e.body&&e.body.changed){await openProposal(p.id,true);toast('This proposal changed since you opened it: review it again before approving.',true);return;}
     if(e.status===409&&e.body&&e.body.conflicts){p._conflicts=e.body.conflicts;showProposal();
       det.querySelector('.actions').insertAdjacentHTML('beforeend','<button class="btn small danger" data-prop-force>Approve anyway (the proposal wins)</button>');toast(e.message,true);return;}
     toast(e.message||'Error',true);

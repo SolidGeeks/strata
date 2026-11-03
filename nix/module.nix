@@ -88,7 +88,7 @@ in
       '';
       description = ''
         Environment variables of Strata, as listed in section 3 of the README and in .env.example:
-        EDIT_USER, VIEW_USER, ALLOW_SELF_APPROVAL, HISTORY_KEEP, READ_ONLY, BACKUP_KEEP,
+        EDIT_USER, VIEW_USER, ALLOW_SELF_APPROVAL, HISTORY_KEEP, HISTORY_MAX_MB, READ_ONLY, BACKUP_KEEP,
         BACKUP_EVERY_HOURS, MAX_IMPORT_MB, LOGIN_MAX_FAILS, LOGIN_MAX_FAILS_PER_ADDRESS,
         LOGIN_LOCK_MINUTES, TRUST_PROXY (set it to "loopback" behind a reverse proxy on this
         host), PUBLIC_URL, SSO_ISSUER, SSO_CLIENT_ID, SSO_NAME, SSO_ROLE_ADMIN, SSO_ROLE_APPROVER,

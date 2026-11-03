@@ -224,6 +224,7 @@ By default, the port only listens on the machine itself (`127.0.0.1:8080`). To o
 | `EDIT_PASS_FILE` / `VIEW_PASS_FILE` | — | Read the password from this file instead (Docker secrets, systemd credentials, sops-nix, agenix). The file wins over the variable; a trailing newline is ignored. If the file cannot be read, the server does not start. |
 | `ALLOW_SELF_APPROVAL` | `false` | `true` lets an approver approve their own proposals. |
 | `HISTORY_KEEP` | `5000` | Number of changes kept in the history. |
+| `HISTORY_MAX_MB` | `200` | Size the history may reach; past it the oldest changes go first (an import keeps the whole map twice). |
 | `READ_ONLY` | `false` | Freezes the map for everyone. |
 | `BACKUP_KEEP` | `14` | Number of automatic backups kept. |
 | `BACKUP_EVERY_HOURS` | `24` | How often automatic backups are made. |

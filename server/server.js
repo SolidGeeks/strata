@@ -43,7 +43,8 @@ const CONFIG = {
   allowSelfApproval: /^(1|true|yes)$/i.test(env.ALLOW_SELF_APPROVAL || ''),
   backupKeep: Math.max(0, parseInt(env.BACKUP_KEEP || '14', 10)),
   backupEveryHours: Math.max(1, parseInt(env.BACKUP_EVERY_HOURS || '24', 10)),
-  historyKeep: Math.max(50, parseInt(env.HISTORY_KEEP || '5000', 10)),
+  historyKeep: Math.max(50, parseInt(env.HISTORY_KEEP || '5000', 10) || 5000),
+  historyMaxBytes: Math.max(1, parseFloat(env.HISTORY_MAX_MB || '200') || 200) * 1024 * 1024,
   maxImportBytes: parseInt(env.MAX_IMPORT_MB || '20', 10) * 1024 * 1024,
   maxDocBytes: 512 * 1024,
   // Failed sign-ins: 0 turns a limit off
@@ -112,20 +113,26 @@ function loadState() {
 let writeChain = Promise.resolve();
 function writeJson(file, data) {
   const text = typeof data === 'string' ? data : JSON.stringify(data);
-  writeChain = writeChain.then(async () => {
+  // The caller gets the error (an answer that says "saved" when the disk is full would be a lie); the chain itself
+  // goes on, so the next write still runs
+  const done = writeChain.then(async () => {
     const tmp = file + '.tmp';
     await fsp.writeFile(tmp, text, { encoding: 'utf8', mode: 0o600 });
     await fsp.rename(tmp, file);
-  }).catch(err => log('ERROR writing', path.basename(file), err.message));
-  return writeChain;
+  });
+  writeChain = done.catch(err => log('ERROR writing', path.basename(file), err.message));
+  return done.catch(err => { throw Object.assign(new Error(`Could not save ${path.basename(file)}: ${err.code || err.message}`), { status: 507 }); });
 }
-async function backup(reason) {
+// Scheduled backups (db-…) and those taken before an import or a rollback (db-op-…) are kept apart, BACKUP_KEEP of
+// each: a run of imports must not push out every daily backup
+async function backup(reason, scheduled = false) {
   if (!CONFIG.backupKeep || !fs.existsSync(DB_FILE)) return;
   await writeChain;
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
-  const dest = path.join(BACKUP_DIR, `db-${stamp}.json`);
+  const dest = path.join(BACKUP_DIR, `db-${scheduled ? '' : 'op-'}${stamp}.json`);
   await fsp.copyFile(DB_FILE, dest);
-  const files = (await fsp.readdir(BACKUP_DIR)).filter(f => /^db-.*\.json$/.test(f)).sort();
+  const kind = scheduled ? /^db-(?!op-).*\.json$/ : /^db-op-.*\.json$/;
+  const files = (await fsp.readdir(BACKUP_DIR)).filter(f => kind.test(f)).sort();
   for (const f of files.slice(0, Math.max(0, files.length - CONFIG.backupKeep))) await fsp.unlink(path.join(BACKUP_DIR, f));
   log(`Backup written (${reason}): ${path.basename(dest)}`);
 }
@@ -144,26 +151,43 @@ function loadHistory() {
   trimHistory(true);
   log(`History: ${history.length} changes, back to rev ${history.length ? history[0].rev : state.rev}`);
 }
+// The history is capped in changes (HISTORY_KEEP) and in size (HISTORY_MAX_MB: each import holds the whole map
+// twice). Past a cap it is cut back to 90% of it, so that the file is rewritten now and then, not on every change.
+const lineBytes = new WeakMap();
+const sizeOf = h => { let n = lineBytes.get(h); if (n === undefined) { n = JSON.stringify(h).length + 1; lineBytes.set(h, n); } return n; };
+let historyBytes = 0;
 function trimHistory(rewrite) {
-  if (history.length <= CONFIG.historyKeep && !rewrite) return;
-  if (history.length > CONFIG.historyKeep) {
-    // keep whole revisions: drop the oldest ones until under the limit
-    let cut = history.length - CONFIG.historyKeep;
-    while (cut < history.length && history[cut].rev === history[cut - 1]?.rev) cut++;
-    history = history.slice(cut);
+  historyBytes = history.reduce((n, h) => n + sizeOf(h), 0);
+  const over = history.length > CONFIG.historyKeep || historyBytes > CONFIG.historyMaxBytes;
+  if (!over && !rewrite) return;
+  if (over) {
+    let cut = Math.max(0, history.length - Math.floor(CONFIG.historyKeep * 0.9)), bytes = 0;
+    for (let i = 0; i < cut; i++) bytes += sizeOf(history[i]);
+    while (cut < history.length && historyBytes - bytes > CONFIG.historyMaxBytes * 0.9) bytes += sizeOf(history[cut++]);
+    // keep whole revisions: a revision is never cut in two
+    while (cut > 0 && cut < history.length && history[cut].rev === history[cut - 1].rev) bytes += sizeOf(history[cut++]);
+    history = history.slice(cut); historyBytes -= bytes;
   }
-  writeJson(HISTORY_FILE, history.map(h => JSON.stringify(h)).join('\n') + (history.length ? '\n' : ''));
+  return writeJson(HISTORY_FILE, history.map(h => JSON.stringify(h)).join('\n') + (history.length ? '\n' : '')).catch(() => { }); // logged by writeJson
 }
 // Applies a list of document changes as ONE revision, records it and tells the clients
 async function commitChanges(changes, auth, meta = {}) {
   const real = changes.filter(c => !same(c.before, c.after));
   if (!real.length) return state.rev;
+  const prevAt = state.updatedAt;
   for (const c of real) applyDoc(state, c.kind, c.id, c.after);
   state.rev += 1;
   state.updatedAt = new Date().toISOString();
   const lines = real.map(c => ({ rev: state.rev, at: state.updatedAt, user: auth.user || '', batch: meta.batch || `r${state.rev}`, label: meta.label || '', kind: c.kind, id: c.id ?? null, before: c.before ?? null, after: c.after ?? null }));
   history.push(...lines);
-  await writeJson(DB_FILE, state);
+  try { await writeJson(DB_FILE, state); }
+  catch (e) {
+    // not saved: the map in memory goes back to what is on disk, and the client is told
+    for (let i = real.length - 1; i >= 0; i--) applyDoc(state, real[i].kind, real[i].id, real[i].before);
+    history.splice(history.length - lines.length, lines.length);
+    state.rev -= 1; state.updatedAt = prevAt;
+    throw e;
+  }
   const text = lines.map(l => JSON.stringify(l)).join('\n') + '\n';
   writeChain = writeChain.then(() => fsp.appendFile(HISTORY_FILE, text, { mode: 0o600 })).catch(e => log('ERROR history', e.message));
   await writeChain;
@@ -207,7 +231,18 @@ const nameOfDoc = (kind, doc) => !doc ? '' : kind === 'si' ? (doc.name || '') : 
    A proposal holds the documents a contributor wants to change ("changes", null = delete) and the live
    version of each of them when they were first touched ("base", to detect conflicting edits). */
 let proposals = {};
-function loadProposals() { if (fs.existsSync(PROPOSALS_FILE)) { try { proposals = JSON.parse(fs.readFileSync(PROPOSALS_FILE, 'utf8')) || {}; } catch { proposals = {}; } } }
+// A data file that cannot be read is moved aside (not overwritten by the next save), and said in the log
+function readDataFile(file) {
+  if (!fs.existsSync(file)) return {};
+  try { const o = JSON.parse(fs.readFileSync(file, 'utf8')); if (isObj(o)) return o; throw new Error('not a JSON object'); }
+  catch (e) {
+    const aside = `${file}.unreadable-${Date.now()}`;
+    try { fs.renameSync(file, aside); } catch { }
+    log(`ERROR: ${path.basename(file)} cannot be read (${e.message}); moved to ${path.basename(aside)}, starting with none.`);
+    return {};
+  }
+}
+function loadProposals() { proposals = readDataFile(PROPOSALS_FILE); }
 const saveProposals = () => { broadcast('proposals', { at: Date.now() }); return writeJson(PROPOSALS_FILE, proposals); };
 
 /* ---------------- Incidents ----------------
@@ -216,7 +251,7 @@ const saveProposals = () => { broadcast('proposals', { at: Date.now() }); return
    changes by the minute and goes through no proposal. Contributors and up change it. */
 let incidents = {};
 const INCIDENT_STATES = ['compromised', 'suspected', 'contained'];
-function loadIncidents() { if (fs.existsSync(INCIDENTS_FILE)) { try { const o = JSON.parse(fs.readFileSync(INCIDENTS_FILE, 'utf8')); incidents = isObj(o) ? o : {}; } catch { incidents = {}; } } }
+function loadIncidents() { incidents = readDataFile(INCIDENTS_FILE); }
 const saveIncidents = () => { broadcast('incidents', { at: Date.now() }); return writeJson(INCIDENTS_FILE, incidents); };
 function cleanIncident(b) {
   if (!isObj(b)) throw httpError(400, 'Body must be a JSON object');
@@ -319,9 +354,18 @@ async function upgradeHash(name, oldHash, pass) {
   Object.assign(cur, { salt, hash, kdf: { ...KDF } });
   await saveUsers();
 }
-function loadUsers() {
-  try { const st = fs.statSync(USERS_FILE); usersMtime = st.mtimeMs; const p = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); users = isObj(p.users) ? p.users : {}; }
-  catch { users = {}; }
+// A users.json that cannot be read must never mean "no accounts", which would open the map to everyone as admin:
+// at start-up the server stops; on a reload it keeps the accounts it has
+function loadUsers(atStart = false) {
+  let st, p;
+  try { st = fs.statSync(USERS_FILE); }
+  catch (e) { if (e.code !== 'ENOENT') throw e; users = {}; usersMtime = 0; authCache.clear(); return; }
+  try { p = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); if (!isObj(p) || !isObj(p.users)) throw new Error('no "users" object'); }
+  catch (e) {
+    if (atStart) { console.error(`${USERS_FILE} cannot be read (${e.message}): fix it or restore it from a backup. The server does not start without it.`); process.exit(1); }
+    usersMtime = st.mtimeMs; log(`ERROR: ${path.basename(USERS_FILE)} cannot be read (${e.message}): the accounts already loaded are kept.`); return;
+  }
+  usersMtime = st.mtimeMs; users = p.users;
   authCache.clear();
 }
 // Before a change made here, take in a change made meanwhile by scripts/users.mjs: otherwise the server would write
@@ -336,7 +380,7 @@ function setUser(name, { role, password, disabled }) {
   users[name] = u;
 }
 function bootstrapUsers() {
-  loadUsers();
+  loadUsers(true);
   let changed = false;
   if (CONFIG.editPass) {
     const u = own(users, CONFIG.editUser);
@@ -346,7 +390,7 @@ function bootstrapUsers() {
     const u = own(users, CONFIG.viewUser);
     if (!u || !u.hash || !sameHex(hashPass(CONFIG.viewPass, u.salt, kdfOf(u)), u.hash)) { setUser(CONFIG.viewUser, { role: u?.role || 'viewer', password: CONFIG.viewPass, disabled: false }); changed = true; }
   }
-  if (changed) saveUsers();
+  if (changed) saveUsers().catch(e => log('ERROR', e.message));
 }
 const authEnabled = () => Object.values(users).some(u => u.hash && !u.disabled);
 
@@ -454,9 +498,19 @@ const can = (auth, role) => RANK[auth.role] >= RANK[role];
 const need = (auth, role) => { if (!can(auth, role)) throw httpError(403, `This needs the ${role} role (you are ${auth.role}).`); };
 
 /* ---------------- Live updates (SSE) ---------------- */
+// Each stream remembers who opened it: streams are capped per person and in all, a client that stops reading is
+// dropped instead of buffering without end, and the streams of a disabled or deleted account are closed.
 const clients = new Set();
-function broadcast(event, data) { const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; for (const res of clients) res.write(msg); }
-setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 25000).unref();
+const SSE_MAX = 1000, SSE_PER_USER = 20, SSE_BUFFER = 1024 * 1024;
+const sseWrite = (res, msg) => { if (res.writableLength > SSE_BUFFER) { clients.delete(res); res.destroy(); return; } res.write(msg); };
+function broadcast(event, data) { const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; for (const res of clients) sseWrite(res, msg); }
+setInterval(() => {
+  for (const res of clients) {
+    const a = res.strataAuth, u = a && a.via === 'local' ? own(users, a.user) : null;
+    if (a && a.via === 'local' && (!u || u.disabled)) { clients.delete(res); res.end(); continue; }
+    sseWrite(res, ': ping\n\n');
+  }
+}, 25000).unref();
 
 /* ---------------- HTTP helpers ---------------- */
 const SEC_HEADERS = {
@@ -519,7 +573,7 @@ async function serveStatic(req, res, urlPath) {
   const ext = path.extname(file).toLowerCase();
   res.writeHead(200, { ...SEC_HEADERS, 'Content-Type': MIME[ext] || 'application/octet-stream', 'Content-Length': stat.size, 'Cache-Control': rel.startsWith('/vendor/') ? 'public, max-age=604800' : 'no-cache' });
   if (req.method === 'HEAD') return res.end();
-  fs.createReadStream(file).pipe(res);
+  fs.createReadStream(file).on('error', e => { log('ERROR reading', file, e.code || e.message); res.destroy(); }).pipe(res);
 }
 
 /* ---------------- API ---------------- */
@@ -527,6 +581,8 @@ async function api(req, res, parts, url, auth) {
   const method = req.method, write = method !== 'GET' && method !== 'HEAD';
   if (write && (!(req.headers['content-type'] || '').startsWith('application/json') || req.headers['x-requested-with'] !== 'strata'))
     return fail(res, 400, 'Missing JSON content type or X-Requested-With header'); // blocks cross-site form posts
+  // READ_ONLY: every write is refused, whoever asks (proposals, incidents and passwords included)
+  if (write && CONFIG.readOnly) return fail(res, 403, 'This server is read-only (READ_ONLY).');
   const [r1, id, r3] = parts;
   const ok = rev => send(res, 200, { ok: true, rev: rev ?? state.rev });
 
@@ -550,6 +606,7 @@ async function api(req, res, parts, url, auth) {
   }
   if (r1 === 'state' && method === 'GET') {
     const at = url.searchParams.get('at');
+    if (at !== null && !/^\d+$/.test(at)) throw httpError(400, 'at must be a version number');
     return send(res, 200, at !== null ? stateAt(parseInt(at, 10)) : state);
   }
   // Key figures over time, for a steering committee: measured on the map as it was at the end of each period,
@@ -574,6 +631,9 @@ async function api(req, res, parts, url, auth) {
       { 'Content-Disposition': `attachment; filename="strata-${stamp}.json"` });
   }
   if (r1 === 'events' && method === 'GET') {
+    const who = auth.user || clientAddress(req);
+    if (clients.size >= SSE_MAX || [...clients].filter(c => c.strataWho === who).length >= SSE_PER_USER) return fail(res, 429, 'Too many live update streams open.');
+    res.strataAuth = auth; res.strataWho = who;
     res.writeHead(200, { ...SEC_HEADERS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.write(`retry: 3000\nevent: change\ndata: ${JSON.stringify({ rev: state.rev })}\n\n`);
     clients.add(res); req.on('close', () => clients.delete(res));
@@ -646,6 +706,8 @@ async function api(req, res, parts, url, auth) {
     if (!isObj(body) || !isObj(body.si) || !isObj(body.assets)) throw httpError(400, 'Expected {"si": {...}, "assets": {...}, "wan": [...]}');
     const bad = [...Object.keys(body.si), ...Object.keys(body.assets)].find(k => !ID_RE.test(k));
     if (bad) throw httpError(400, `Invalid id: ${bad}`);
+    const notDoc = [...Object.entries(body.si), ...Object.entries(body.assets)].find(([, d]) => !isObj(d));
+    if (notDoc) throw httpError(400, `Invalid document for ${notDoc[0]}: each IS and asset must be a JSON object`);
     await backup('before import');
     const next = { si: body.si, assets: body.assets, wan: Array.isArray(body.wan) ? body.wan.filter(isObj) : [], services: Array.isArray(body.services) ? body.services.filter(isObj) : [], risk: isObj(body.risk) ? body.risk : {} };
     return ok(await commitChanges([change('all', null, next)], auth, Object.assign(batchMeta(req), { label: batchMeta(req).label || 'Whole map replaced (import)' })));
@@ -653,7 +715,7 @@ async function api(req, res, parts, url, auth) {
 
   /* ---- history and rollback ---- */
   if (r1 === 'history' && method === 'GET' && !id) {
-    const before = parseInt(url.searchParams.get('before') || '0', 10) || Infinity, limit = Math.min(500, parseInt(url.searchParams.get('limit') || '120', 10) || 120);
+    const before = parseInt(url.searchParams.get('before') || '0', 10) || Infinity, limit = Math.min(500, Math.max(1, parseInt(url.searchParams.get('limit') || '120', 10) || 120));
     const out = [];
     for (let i = history.length - 1; i >= 0 && out.length < limit; i--) {
       const h = history[i]; if (h.rev >= before) continue;
@@ -663,6 +725,7 @@ async function api(req, res, parts, url, auth) {
     return send(res, 200, { rev: state.rev, oldest: history.length ? history[0].rev - 1 : state.rev, entries: out });
   }
   if (r1 === 'history' && method === 'GET' && id) {
+    if (!/^\d+$/.test(id)) throw httpError(400, 'Give a version number');
     const rev = parseInt(id, 10);
     return send(res, 200, { rev, entries: history.filter(h => h.rev === rev) });
   }
@@ -685,7 +748,7 @@ async function api(req, res, parts, url, auth) {
       const title = String(b?.title || '').trim().slice(0, 140);
       if (!title) throw httpError(400, 'Give the proposal a title.');
       const now = new Date().toISOString(), pid = 'p-' + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
-      const p = { id: pid, title, description: String(b?.description || '').slice(0, 4000), author: auth.user || 'anonymous', siteId: b?.siteId && ID_RE.test(b.siteId) ? b.siteId : null, status: 'draft', createdAt: now, updatedAt: now, baseRev: state.rev, changes: cleanChanges(b?.changes), base: { si: {}, assets: {} }, comments: [], source: b?.source === 'file' ? 'file' : 'editor' };
+      const p = { id: pid, title, description: String(b?.description || '').slice(0, 4000), author: auth.user || 'anonymous', siteId: b?.siteId && ID_RE.test(b.siteId) && own(state.si, b.siteId) ? b.siteId : null, status: 'draft', createdAt: now, updatedAt: now, baseRev: state.rev, changes: cleanChanges(b?.changes), base: { si: {}, assets: {} }, comments: [], source: b?.source === 'file' ? 'file' : 'editor' };
       fillBase(p); proposals[pid] = p; await saveProposals();
       return send(res, 200, { ok: true, proposal: p });
     }
@@ -706,7 +769,8 @@ async function api(req, res, parts, url, auth) {
       return send(res, 200, { ok: true, proposal: p });
     }
     if (!r3 && method === 'DELETE') {
-      if (!(mine && ['draft', 'rejected', 'withdrawn'].includes(p.status)) && !can(auth, 'admin')) throw httpError(403, 'Only the author can delete a draft (or an admin).');
+      need(auth, 'contributor');
+      if (!(mine && ['draft', 'rejected'].includes(p.status)) && !can(auth, 'admin')) throw httpError(403, 'Only the author can delete a draft (or an admin).');
       delete proposals[id]; await saveProposals(); return send(res, 200, { ok: true });
     }
     const b = method === 'POST' ? await readBody(req, 64 * 1024) : null;
@@ -726,6 +790,7 @@ async function api(req, res, parts, url, auth) {
       await saveProposals(); return send(res, 200, { ok: true, proposal: p });
     }
     if (r3 === 'withdraw' && method === 'POST') {
+      need(auth, 'contributor');
       if (!mine && !can(auth, 'admin')) throw httpError(403, 'Only the author can withdraw this proposal.');
       if (p.status !== 'submitted') throw httpError(409, 'Only a submitted proposal can be withdrawn.');
       p.status = 'draft'; p.updatedAt = new Date().toISOString(); await saveProposals();
@@ -741,6 +806,9 @@ async function api(req, res, parts, url, auth) {
     if (r3 === 'approve' && method === 'POST') {
       need(auth, 'approver');
       if (p.status !== 'submitted') throw httpError(409, 'Only a submitted proposal can be approved.');
+      // The approver approves what they reviewed: a proposal withdrawn, edited and submitted again (or refreshed by
+      // a connector run) since they opened it has to be looked at again
+      if (b?.updatedAt !== undefined && b.updatedAt !== p.updatedAt) throw httpError(409, 'This proposal changed since you opened it: review it again.', { changed: true });
       // a configuration file someone imported counts as their own proposal (four-eyes rule)
       if ((mine || (p.uploadedBy && p.uploadedBy === auth.user)) && !CONFIG.allowSelfApproval && !auth.open) throw httpError(403, 'Someone else has to approve your own proposal.');
       const conflicts = conflictsOf(p);
@@ -842,7 +910,9 @@ async function api(req, res, parts, url, auth) {
       const b = await readBody(req, 4096); syncUsers();
       if (b?.role !== undefined && !ROLES.includes(b.role)) throw httpError(400, `Role must be one of ${ROLES.join(', ')}.`);
       if (!own(users, id) && !b?.password) throw httpError(400, 'A new account needs a password.');
-      if (b?.password && String(b.password).length < 10) throw httpError(400, 'Use at least 10 characters.');
+      if (b?.password !== undefined && typeof b.password !== 'string') throw httpError(400, 'The password must be text.');
+      if (b?.role !== undefined && typeof b.role !== 'string') throw httpError(400, 'The role must be text.');
+      if (b?.password && b.password.length < 10) throw httpError(400, 'Use at least 10 characters.');
       if (id === auth.user && (b?.disabled || (b?.role && b.role !== 'admin'))) throw httpError(400, 'You cannot remove your own admin access.');
       setUser(id, { role: b?.role || own(users, id)?.role || 'viewer', password: b?.password, disabled: b?.disabled });
       await saveUsers(); return send(res, 200, { ok: true });
@@ -935,10 +1005,20 @@ loadIncidents();
 const muster = CONFIG.musterUrl ? createMuster({ url: CONFIG.musterUrl, user: CONFIG.musterUser, password: CONFIG.musterPass, pollMs: CONFIG.musterPollMs, log, onChange: () => broadcast('muster', { at: Date.now() }) }) : null;
 if (muster) { muster.start(); log(`Muster: ${muster.url}, signed in as ${CONFIG.musterUser}`); }
 bootstrapUsers();
-await backup('startup');
-setInterval(() => backup('scheduled').catch(e => log('Backup failed:', e.message)), CONFIG.backupEveryHours * 3600 * 1000).unref();
+await backup('startup', true);
+setInterval(() => backup('scheduled', true).catch(e => log('Backup failed:', e.message)), CONFIG.backupEveryHours * 3600 * 1000).unref();
 // Accounts edited with scripts/users.mjs while the server runs are picked up within a few seconds
 setInterval(() => { try { const m = fs.statSync(USERS_FILE).mtimeMs; if (m !== usersMtime) { loadUsers(); log('Accounts reloaded'); } } catch { } }, 5000).unref();
+
+// No account and no single sign-on means no authentication at all: every visitor is admin. That is refused unless
+// the server only listens on this machine, or ALLOW_OPEN=true says it is meant (a demo behind something else)
+const LOOPBACK_HOSTS = ['127.0.0.1', '::1', 'localhost'];
+if (!authEnabled() && !sso.enabled() && !LOOPBACK_HOSTS.includes(CONFIG.host) && !/^(1|true|yes)$/i.test(process.env.ALLOW_OPEN || '')) {
+  console.error(`No account is configured (EDIT_PASS empty, no account in ${USERS_FILE}, no single sign-on) and the server would listen on ${CONFIG.host}: anyone reaching it would be admin. Set EDIT_PASS, or HOST=127.0.0.1, or ALLOW_OPEN=true if this is really what you want.`);
+  process.exit(1);
+}
+// A background task that fails is logged; it must not stop the server for everyone
+process.on('unhandledRejection', e => log('ERROR (background task):', e && e.stack || e));
 
 server.listen(CONFIG.port, CONFIG.host, () => {
   log(`Strata listening on http://${CONFIG.host}:${CONFIG.port}`);
