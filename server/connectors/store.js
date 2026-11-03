@@ -8,7 +8,9 @@
 // Registry index (format 1):
 //   {"strataRegistry": 1, "modules": [{"id", "name", "version", "description", "author", "homepage",
 //     "license", "badge", "permissions": {"map", "network"}, "minStrata", "url", "sha256"}]}
-// "url" is absolute, or relative to the index.
+// "url" is absolute, or relative to the index. The index, each package and every redirect on the way
+// are fetched over HTTPS; plain HTTP is accepted only from this machine (localhost, 127.x, ::1), for tests
+// and a registry served next to the server.
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -79,6 +81,14 @@ export function writeTgz(files, top = 'package') {
   return zlib.gzipSync(Buffer.concat(blocks), { level: 9 });
 }
 
+// HTTPS, or HTTP to this machine only
+const LOOPBACK = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i;
+export function storeUrlAllowed(url) {
+  let u;
+  try { u = new URL(url); } catch { return false; }
+  return u.protocol === 'https:' || (u.protocol === 'http:' && LOOPBACK.test(u.hostname));
+}
+
 export const sha256 = buf => crypto.createHash('sha256').update(buf).digest('hex');
 
 /* ---------------- store ---------------- */
@@ -87,9 +97,14 @@ export function createStore({ registryUrl, uploads, installedDir, strataVersion,
   let cache = null;
   // GET, following up to 5 redirects (release downloads redirect to their storage)
   async function fetchBytes(url, max) {
+    if (!storeUrlAllowed(url)) throw new ConnectorError(`${String(url).slice(0, 200)} is not an HTTPS address: the module store only downloads over HTTPS.`);
     for (let hop = 0; hop < 6; hop++) {
       const res = await request(url, { headers: { Accept: '*/*' }, timeoutMs: 30000, maxBytes: max });
-      if ([301, 302, 303, 307, 308].includes(res.status) && res.headers.location) { url = new URL(res.headers.location, url).href; if (!/^https?:/.test(url)) break; continue; }
+      if ([301, 302, 303, 307, 308].includes(res.status) && res.headers.location) {
+        url = new URL(res.headers.location, url).href;
+        if (!storeUrlAllowed(url)) throw new ConnectorError(`A redirect leads to ${url.slice(0, 200)}: the module store only follows HTTPS links.`);
+        continue;
+      }
       if (res.status !== 200) throw new ConnectorError(`${new URL(url).host} answered HTTP ${res.status}.`);
       return res.body;
     }
@@ -107,7 +122,7 @@ export function createStore({ registryUrl, uploads, installedDir, strataVersion,
       if (!m || !ID_RE.test(m.id || '') || !VERSION_RE.test(m.version || '') || !/^[0-9a-f]{64}$/.test(m.sha256 || '') || typeof m.url !== 'string') continue;
       let url;
       try { url = new URL(m.url, registryUrl).href; } catch { continue; }
-      if (!/^https?:/.test(url)) continue;
+      if (!storeUrlAllowed(url)) continue;
       const s = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
       list.push({
         id: m.id, name: s(m.name, 60) || m.id, version: m.version, description: s(m.description, 300), author: s(m.author, 100),
@@ -132,7 +147,7 @@ export function createStore({ registryUrl, uploads, installedDir, strataVersion,
       };
     });
   }
-  // Unpacks a package into DATA_DIR/modules/<id>, replacing the version there. expect: {id, version} from the index
+  // Unpacks a package into DATA_DIR/modules/<id>, replacing the version there. expect: {id, version, name, permissions, minStrata} from the index
   async function unpack(buf, expect) {
     const files = readTgz(buf);
     fs.mkdirSync(installedDir, { recursive: true, mode: 0o700 });
@@ -150,6 +165,14 @@ export function createStore({ registryUrl, uploads, installedDir, strataVersion,
       if (!r.ok) throw new ConnectorError(`This module cannot be installed: ${r.error}.`);
       const m = r.module;
       if (expect && (m.id !== expect.id || m.version !== expect.version)) throw new ConnectorError(`The package holds ${m.id} ${m.version}, not ${expect.id} ${expect.version} as the store says.`);
+      // what the store showed the administrator (name, what the module reads, the Strata it needs) is what gets installed
+      if (expect) {
+        const differs = [];
+        if (expect.name !== undefined && expect.name !== expect.id && String(m.name).slice(0, 60) !== String(expect.name).trim().slice(0, 60)) differs.push(`its name is “${m.name}”, not “${expect.name}”`);
+        if (expect.permissions) for (const k of ['map', 'network']) if (m.permissions[k] !== !!expect.permissions[k]) differs.push(`permissions.${k} is ${m.permissions[k]}, not ${!!expect.permissions[k]}`);
+        if (expect.minStrata !== undefined && (m.minStrata || '') !== (expect.minStrata || '')) differs.push(`minStrata is “${m.minStrata || ''}”, not “${expect.minStrata || ''}”`);
+        if (differs.length) throw new ConnectorError(`The package of ${m.id} ${m.version} does not match what the store says (${differs.join('; ')}): not installed.`);
+      }
       const other = connectors.module(m.id);
       if (other && other.origin !== 'installed') throw new ConnectorError(`A ${other.origin} module already has the id “${m.id}”.`);
       if (connectors.isRunning(m.id)) throw new ConnectorError(`${m.name} is running: try again when it is done.`);
@@ -171,7 +194,7 @@ export function createStore({ registryUrl, uploads, installedDir, strataVersion,
     if (m.minStrata && compareVersions(strataVersion, m.minStrata) < 0) throw new ConnectorError(`${m.name} needs Strata ${m.minStrata} or later.`);
     const buf = await fetchBytes(m.url, MAX_PACKAGE);
     if (sha256(buf) !== m.sha256) throw new ConnectorError(`The package of ${m.name} does not match the checksum the store gives: not installed.`);
-    return unpack(buf, { id: m.id, version: m.version });
+    return unpack(buf, { id: m.id, version: m.version, name: m.name, permissions: m.permissions, minStrata: m.minStrata });
   }
   async function upload(buf) {
     if (!uploads) throw new ConnectorError('Installing a module from a file is off on this server (MODULE_UPLOAD).');

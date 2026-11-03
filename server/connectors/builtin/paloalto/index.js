@@ -45,8 +45,14 @@ export async function test(cfg) {
 
 /* ---------------- parsing ---------------- */
 function findConfig(root) {
+  // breadth first, with a read index (shift() is linear on a large array) and no spread of the children
+  // (a spread of a very long list overflows the call stack)
   const q = [root];
-  while (q.length) { const e = q.shift(); if (e.name === 'config') return e; q.push(...e.children); }
+  for (let i = 0; i < q.length; i++) {
+    const e = q[i];
+    if (e.name === 'config') return e;
+    for (const c of e.children) q.push(c);
+  }
   return null;
 }
 function objectsOf(el) {
@@ -83,6 +89,7 @@ function rulesOf(el, scope, where) {
     description: txt(kid(e, 'description')),
   }));
 }
+const append = (to, list) => { for (const x of list) to.push(x); };
 export function parseConfig(xml) {
   const root = parseXml(xml);
   const config = findConfig(root);
@@ -94,13 +101,13 @@ export function parseConfig(xml) {
   for (const v of vsyses) {
     const name = v.attrs.name || 'vsys1';
     objects[name] = objectsOf(v);
-    rules.push(...rulesOf(kid(kid(v, 'rulebase'), 'security'), name, 'rulebase'));
+    append(rules, rulesOf(kid(kid(v, 'rulebase'), 'security'), name, 'rulebase'));
   }
-  for (const where of ['pre-rulebase', 'post-rulebase']) rules.push(...rulesOf(kid(kid(shared, where), 'security'), 'shared', where));
+  for (const where of ['pre-rulebase', 'post-rulebase']) append(rules, rulesOf(kid(kid(shared, where), 'security'), 'shared', where));
   for (const dg of dgs) {
     const name = dg.attrs.name || 'device-group';
     objects[name] = objectsOf(dg);
-    for (const where of ['pre-rulebase', 'post-rulebase']) rules.push(...rulesOf(kid(kid(dg, where), 'security'), name, where));
+    for (const where of ['pre-rulebase', 'post-rulebase']) append(rules, rulesOf(kid(kid(dg, where), 'security'), name, where));
   }
   // Panorama order: shared pre, device-group pre, device-group post, shared post (the evaluation order of PAN-OS)
   const rank = r => r.where === 'pre-rulebase' ? (r.scope === 'shared' ? 0 : 1) : r.where === 'post-rulebase' ? (r.scope === 'shared' ? 3 : 2) : 1;
@@ -238,7 +245,10 @@ export function rulesToChanges(parsed, cfg, state) {
   }
   if (cfg.removeStale !== false) {
     const before = si.flows.length;
-    si.flows = si.flows.filter(f => !f.pan || imported.has(keyOf(f)));
+    // only flows this import is about: those of its scope (and the shared rules it reads too), or all
+    // imported flows when it reads every scope; flows of another device group or vsys stay
+    const ours = f => !scopeFilter || (f.pan && (f.pan.scope === scopeFilter || f.pan.scope === 'shared'));
+    si.flows = si.flows.filter(f => !f.pan || !ours(f) || imported.has(keyOf(f)));
     removed = before - si.flows.length;
   }
   const changed = JSON.stringify(si) !== JSON.stringify(si0);

@@ -4,7 +4,7 @@
     {
       "id": "csv-inventory",
       "name": "CSV inventory",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Assets from a spreadsheet saved as CSV: name, IP, type, system, role, VLAN, criticality",
       "author": "Solid Geeks",
       "license": "AGPL-3.0-or-later",
@@ -14,8 +14,8 @@
         "map": true,
         "network": false
       },
-      "url": "csv-inventory-1.0.0.tgz",
-      "sha256": "a2c1bb73afd5102c7e91ce84046e4b9d96e1931bfdf2856af73f885708642fab"
+      "url": "csv-inventory-1.0.1.tgz",
+      "sha256": "59dba2954380c712ceb96a397f3276c13394a62070244bc2486464c6e20fa496"
     },
     {
       "id": "netbox",
@@ -36,7 +36,7 @@
     {
       "id": "nmap",
       "name": "Nmap scan",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Hosts, systems and open ports from an Nmap scan saved as XML (nmap -oX)",
       "author": "Solid Geeks",
       "license": "AGPL-3.0-or-later",
@@ -46,8 +46,8 @@
         "map": true,
         "network": false
       },
-      "url": "nmap-1.0.0.tgz",
-      "sha256": "5ba103c1f90684a931ccd799e6d75524947b921a06de90f5c00f966fc043f505"
+      "url": "nmap-1.0.1.tgz",
+      "sha256": "df70b9ed20f02f1ecf21fcb5244e2ace538287a10d9076a51a65db6e90045094"
     }
   ]
 }

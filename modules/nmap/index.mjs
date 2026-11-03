@@ -76,7 +76,8 @@ export async function run(cfg, ctx) {
   const assets = {}, report = { hosts: scan.hosts.length, matched: 0, created: 0, updated: 0, unchanged: 0, skipped: [] };
   for (const h of scan.hosts) {
     const name = sdk.shortName(h.names[0] || '');
-    const id = idx.find({ connector: 'nmap', ext: h.ip, name, ips: [h.ip], site: sid });
+    // by IP first (the link left by an earlier import is the IP too), then by host name
+    const id = idx.find({ connector: 'nmap', ext: h.ip, ips: [h.ip], site: sid }) || (name ? idx.find({ name, site: sid }) : null);
     const os = h.accuracy >= (+cfg.minAccuracy || 0) ? h.os : '';
     if (id) {
       report.matched++;

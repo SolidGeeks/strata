@@ -66,7 +66,8 @@ export async function run(cfg, ctx) {
     const key = sdk.slug(name);
     if (seen.has(key)) { report.skipped.push(`Line ${n + 2}: ${name} is listed twice`); return; }
     seen.add(key);
-    const type = TYPES[sdk.norm(get('type'))] || (get('type') ? null : cfg.defaultType || 'server');
+    const tk = sdk.norm(get('type'));
+    const type = (Object.hasOwn(TYPES, tk) ? TYPES[tk] : null) || (get('type') ? null : cfg.defaultType || 'server');
     if (!type) report.skipped.push(`Line ${n + 2}: type “${get('type')}” unknown, ${cfg.defaultType || 'server'} used`);
     const id = idx.find({ connector: 'csv', ext: key, name, ips: ip ? [ip] : [], site: sid });
     const crit = critOf(get('crit'));

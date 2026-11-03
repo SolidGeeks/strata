@@ -21,8 +21,14 @@ export function permissionArgs(dirs) {
   return [FLAG, ...dirs.map(d => `--allow-fs-read=${d}`)];
 }
 
+// What the parent takes from a module process: messages count against a byte budget (their JSON size,
+// the form they travel in), and log lines against a line and byte budget of their own. A module that
+// goes past the message budget is stopped and its run fails; extra log lines are dropped.
+export const MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
+export const MAX_LOG_LINE = 2000, MAX_LOG_LINES = 2000, MAX_LOG_BYTES = 1024 * 1024;
+
 // op: 'test' | 'run'; payload: {cfg, state, file}; resolves with the module's result
-export function runModule(mod, op, payload, { timeoutMs = 30 * 60000, log = () => { } } = {}) {
+export function runModule(mod, op, payload, { timeoutMs = 30 * 60000, log = () => { }, maxMessageBytes = MAX_MESSAGE_BYTES, maxLogLines = MAX_LOG_LINES, maxLogBytes = MAX_LOG_BYTES } = {}) {
   return new Promise((resolve, reject) => {
     const env = {};
     for (const k of KEEP_ENV) if (process.env[k]) env[k] = process.env[k];
@@ -31,8 +37,19 @@ export function runModule(mod, op, payload, { timeoutMs = 30 * 60000, log = () =
       execArgv: [...permissionArgs([CONNECTORS_DIR, mod.dir]), '--max-old-space-size=512', '--disable-proto=throw'],
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
-    let answer = null, tail = '';
-    const out = d => { const s = String(d); tail = (tail + s).slice(-2000); for (const l of s.split('\n')) if (l.trim()) log(`[${mod.id}] ${l.slice(0, 500)}`); };
+    let answer = null, tail = '', received = 0, logLines = 0, logBytes = 0, logCut = false, tooMuch = null;
+    // one line of the module's log, within the run's log budget
+    const logLine = l => {
+      const line = String(l).slice(0, MAX_LOG_LINE);
+      if (logCut) return;
+      if (logLines + 1 > maxLogLines || logBytes + line.length > maxLogBytes) {
+        logCut = true;
+        return log(`[${mod.id}] log truncated: more than ${maxLogLines} lines or ${Math.round(maxLogBytes / 1024)} KB, the rest of this run's log is dropped`);
+      }
+      logLines++; logBytes += line.length;
+      log(`[${mod.id}] ${line}`);
+    };
+    const out = d => { const s = String(d); tail = (tail + s).slice(-2000); for (const l of s.split('\n')) if (l.trim()) logLine(l.slice(0, 500)); };
     child.stdout.on('data', out);
     child.stderr.on('data', out);
     const timer = setTimeout(() => {
@@ -42,17 +59,30 @@ export function runModule(mod, op, payload, { timeoutMs = 30 * 60000, log = () =
     let done = false;
     const finish = (err, value) => { if (done) return; done = true; clearTimeout(timer); err ? reject(err) : resolve(value); };
     child.on('message', m => {
-      if (m && typeof m.log === 'string') return log(`[${mod.id}] ${m.log}`);
+      // the answer is final: whatever comes after it is ignored
+      if (done || answer || tooMuch) return;
+      let size;
+      try { size = JSON.stringify(m)?.length || 0; } catch { size = Infinity; }
+      received += size;
+      if (received > maxMessageBytes) {
+        tooMuch = new ConnectorError(`${mod.name} sent more than ${Math.round(maxMessageBytes / 1048576)} MB to the server and was stopped.`);
+        child.kill('SIGKILL');
+        return finish(tooMuch);
+      }
+      if (m && typeof m.log === 'string') return logLine(m.log);
+      // anything else that is not an answer ({ok: true | false, ...}) is ignored
+      if (!m || typeof m !== 'object' || typeof m.ok !== 'boolean') return;
       answer = m;
       // the answer is in: a timer or a socket the module left open must not hold the run
       if (m && m.ok) { finish(null, m.result); setTimeout(() => child.kill('SIGKILL'), 1000).unref(); }
     });
     child.on('error', e => finish(new Error(`The ${mod.name} module could not start: ${e.message}`)));
     child.on('exit', code => {
+      if (tooMuch) return finish(tooMuch);
       if (answer && answer.ok) return finish(null, answer.result);
       if (answer) {
-        if (answer.stack) log(`[${mod.id}] ${answer.stack}`);
-        const e = answer.expected ? new ConnectorError(answer.error) : new Error(answer.error);
+        if (answer.stack) log(`[${mod.id}] ${String(answer.stack).slice(0, 4000)}`);
+        const e = answer.expected ? new ConnectorError(String(answer.error ?? '').slice(0, 2000)) : new Error(String(answer.error ?? '').slice(0, 2000));
         return finish(e);
       }
       const last = tail.trim().split('\n').pop() || '';

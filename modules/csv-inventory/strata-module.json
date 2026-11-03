@@ -2,7 +2,7 @@
   "strataModule": 1,
   "id": "csv-inventory",
   "name": "CSV inventory",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Assets from a spreadsheet saved as CSV: name, IP, type, system, role, VLAN, criticality",
   "author": "Solid Geeks",
   "license": "AGPL-3.0-or-later",

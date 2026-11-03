@@ -10,6 +10,8 @@ import { discover } from './modules.js';
 import { runModule } from './runner.js';
 
 const MASK = '••••••••';
+// The largest proposal a run may make (its changes as JSON), the size of a large map import
+export const MAX_PROPOSAL_BYTES = 20 * 1024 * 1024;
 const COMMON = [
   { k: 'enabled', label: 'Enabled', type: 'bool', default: false },
   { k: 'everyHours', label: 'Sync automatically every … hours (0 = by hand only)', type: 'number', default: 0 },
@@ -151,6 +153,11 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
         if (!p.changes || typeof p.changes !== 'object') continue;
         const changes = ownSite(p.changes, p.siteId, state);
         dropLinkOnly(changes, state);
+        const size = JSON.stringify(changes).length;
+        if (size > MAX_PROPOSAL_BYTES) {
+          const msg = `changes too large (${Math.round(size / 1048576)} MB, at most ${MAX_PROPOSAL_BYTES / 1048576} MB)`;
+          log(`Connector ${id}: proposal for ${p.siteId} refused: ${msg}`); rejected.push(`${state.si[p.siteId].name || p.siteId}: ${msg}`); continue;
+        }
         let out;
         try { out = await upsertProposal({ connector: id, connectorName: m.name, by: opts.by, uploadedBy: opts.file ? opts.by : null, siteId: p.siteId, title: String(p.title || `${m.name}: ${state.si[p.siteId].name || p.siteId}`), description: String(p.description || ''), changes }); }
         catch (e) { log(`Connector ${id}: proposal for ${p.siteId} refused: ${e.message}`); rejected.push(`${state.si[p.siteId].name || p.siteId}: ${e.message}`); continue; }

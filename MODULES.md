@@ -508,7 +508,10 @@ package matches the folder.
 
 You can also run your own store: any HTTPS address serving an index in the same format
 (`{"strataRegistry": 1, "modules": [...]}`, `url` absolute or relative to the index), set in
-`MODULE_REGISTRY`.
+`MODULE_REGISTRY`. The index, every package and every redirect on the way must be HTTPS; plain HTTP is
+accepted only from the server itself (`localhost`, `127.x.x.x`, `[::1]`). Before installing, Strata
+checks that the package's `id`, `version`, `name`, `permissions` and `minStrata` are the ones the index
+shows.
 
 ## Compatibility
 

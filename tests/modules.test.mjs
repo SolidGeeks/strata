@@ -85,7 +85,7 @@ before(async () => {
       if (tamper) idx.modules.find(m => m.id === 'csv-inventory').sha256 = '0'.repeat(64);
       res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(idx));
     }
-    if (p === '/pkg/csv.tgz') { res.writeHead(302, { Location: '/csv-inventory-1.0.0.tgz' }); return res.end(); }
+    if (p === '/pkg/csv.tgz') { res.writeHead(302, { Location: '/csv-inventory-1.0.1.tgz' }); return res.end(); }
     const f = join(root, 'docs/modules', p.slice(1));
     if (/^\/[\w.-]+\.tgz$/.test(p) && fs.existsSync(f)) { res.writeHead(200); return res.end(fs.readFileSync(f)); }
     res.writeHead(404); res.end();
@@ -220,7 +220,7 @@ test('the store: install a module, import a file with it, then remove it', async
 
   const i = await api('admin', 'POST', '/api/modules/csv-inventory/install', {});
   assert.equal(i.status, 200, JSON.stringify(i.data));
-  assert.equal(i.data.module.version, '1.0.0');
+  assert.equal(i.data.module.version, '1.0.1');
   assert.ok(fs.existsSync(join(dataDir, 'modules/csv-inventory/strata-module.json')));
   assert.equal((await api('admin', 'GET', '/api/modules')).data.modules.find(m => m.id === 'csv-inventory').installed.origin, 'installed');
 

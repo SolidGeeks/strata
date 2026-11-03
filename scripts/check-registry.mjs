@@ -23,7 +23,12 @@ async function fetchPackage(url) {
   if (!/^[a-z]+:/i.test(url)) return fs.readFileSync(path.join(path.dirname(index), url));
   for (let hop = 0; hop < 6; hop++) {
     const res = await request(url, { headers: { Accept: '*/*' }, timeoutMs: 60000, maxBytes: 20 * 1024 * 1024 });
-    if ([301, 302, 303, 307, 308].includes(res.status) && res.headers.location) { url = new URL(res.headers.location, url).href; continue; }
+    if ([301, 302, 303, 307, 308].includes(res.status) && res.headers.location) {
+      url = new URL(res.headers.location, url).href;
+      // Strata follows HTTPS redirects only (server/connectors/store.js): so does this check
+      if (!url.startsWith('https://')) throw new Error(`a redirect leads to ${url.slice(0, 200)}: packages must be served over HTTPS all the way`);
+      continue;
+    }
     if (res.status !== 200) throw new Error(`${url} answered HTTP ${res.status}`);
     return res.body;
   }

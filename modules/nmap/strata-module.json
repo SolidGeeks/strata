@@ -2,7 +2,7 @@
   "strataModule": 1,
   "id": "nmap",
   "name": "Nmap scan",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Hosts, systems and open ports from an Nmap scan saved as XML (nmap -oX)",
   "author": "Solid Geeks",
   "license": "AGPL-3.0-or-later",

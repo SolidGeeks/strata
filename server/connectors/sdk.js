@@ -162,7 +162,12 @@ export function parseXml(src) {
   let i = 0;
   const root = { name: '#root', attrs: {}, children: [], text: '' };
   const stack = [root];
-  const ent = t => t.replace(/&(#x[0-9a-f]+|#\d+|lt|gt|amp|quot|apos);/gi, (m, e) => e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : ({ lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" })[e.toLowerCase()]);
+  // a character reference past U+10FFFF (or to a lone surrogate half) is not a character: left as written
+  const ent = t => t.replace(/&(#x[0-9a-f]+|#\d+|lt|gt|amp|quot|apos);/gi, (m, e) => {
+    if (e[0] !== '#') return ({ lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" })[e.toLowerCase()];
+    const cp = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+    return Number.isInteger(cp) && cp <= 0x10ffff && !(cp >= 0xd800 && cp <= 0xdfff) ? String.fromCodePoint(cp) : m;
+  });
   while (i < s.length) {
     const lt = s.indexOf('<', i);
     if (lt < 0) { stack[stack.length - 1].text += ent(s.slice(i)); break; }
@@ -176,7 +181,11 @@ export function parseXml(src) {
     i = gt + 1;
     if (body[0] === '/') {
       const name = body.slice(1).trim();
-      while (stack.length > 1) { const top = stack.pop(); if (top.name === name) break; }
+      // closes the nearest open element of that name (and any left open inside it); a closing tag that
+      // matches no open element is ignored rather than closing everything
+      let at = stack.length - 1;
+      while (at > 0 && stack[at].name !== name) at--;
+      if (at > 0) stack.length = at;
       continue;
     }
     const selfClose = body.endsWith('/');
