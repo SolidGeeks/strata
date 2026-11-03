@@ -2,6 +2,47 @@
 
 All notable changes to Strata. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+### Security
+- **A corrupt `users.json` opened the map to everyone as admin.** A file that failed to parse (a typo, a truncated write, a full disk) counted as "no accounts", so every visitor got the admin role, even with `EDIT_PASS` set. The server now stops at start-up on an unreadable accounts file, and keeps the accounts it has on a reload.
+- **No accounts on a network address**: with no account and no single sign-on, the server refuses to listen beyond `127.0.0.1` unless `ALLOW_OPEN=true`.
+- **Sign-in**: passwords are hashed with scrypt N=2^17 (from Node's default N=2^14), stored with their settings; an older hash is redone at the next successful sign-in. Hashing runs in the thread pool, so a burst of wrong passwords no longer stalls the server. Unknown, disabled and refused accounts take the same time as a wrong password (no account enumeration). A flood of fake account names can no longer push a locked account out of the lock table; IPv6 clients are counted per /64; one wrong password sent again and again ends up locking the address; `PUT /api/me/password` is rate limited.
+- **Single sign-on**: a `groups` claim sent as a string, and the groups header of a sign-in proxy, are split on commas only (a group named `Domain Admins` no longer matches `Admins`); ID tokens check `nbf`; keys are filtered by type and algorithm.
+- **Muster**: no redirect is followed (a 307 on sign-in sent the password to the other host); answers are read up to 8 MB; a list holding anything but incidents no longer crashes the server.
+- **Stored HTML injection** through a VLAN id (from an import, a proposal or a connector) in the VLAN list, and through the type of a Muster playbook step. The documents of the map are now checked for shape wherever they come in (`public/validate.js`), ids inside an IS included.
+- **CSV exports**: a cell that starts like a formula (`= + - @`) is written with a leading quote, so a spreadsheet does not run it.
+- **AI prompts**: free text (roles, applications, vulnerability titles, flow notes) went to the AI as typed, with any names, e-mail addresses and host names in it. It now goes through the placeholders, with e-mail addresses, IP addresses and host names masked; VLAN and zone names are no longer sent; the leak check flags any e-mail, IP or host name, known to the map or not.
+- **Modules**: a module process has a 64 MB budget for what it sends the server, and a log budget; the module store downloads over HTTPS only (plain HTTP from this machine only) and installs a package only if its name, permissions and `minStrata` match what the store showed.
+- **Release workflow**: a pushed `v*` tag published `:latest` without a maintainer's approval, from any branch. Every release now waits for the `release` environment's approval and the tagged commit must be on `main`; permissions are set per job. The reusable first-merge workflow is pinned by commit.
+- **systemd unit**: `/etc/strata.env` copied from `.env.example` set `HOST=0.0.0.0` over the unit's `127.0.0.1`. `HOST` and `DATA_DIR` are now given on the command line.
+### Fixed
+- A write that fails (disk full, permissions) is answered with an error, and the map in memory is put back; it was answered `{ok: true}` and lost at the next restart.
+- `READ_ONLY=true` refuses every write, withdrawing and deleting proposals and changing a password included.
+- Approving takes the `updatedAt` of the proposal as reviewed: a proposal changed since (withdrawn, edited and submitted again, refreshed by a connector run) answers `409` and has to be reviewed again.
+- Incidents: two responders saving the same IS no longer overwrite each other (a `rev`, `409` and a reload); new timeline entries are signed by the person saving; the client's save counter no longer leaks, which stopped live updates of incidents.
+- A `proposals.json` or `incidents.json` that cannot be read is moved aside instead of being overwritten.
+- Attack paths come out really most likely first on dense maps (best-first search; 300 assets / 30,000 flows went from 18 s to about half a second), and *where to cut* lists an asset only when the target is unreachable without it.
+- Dashboard: vulnerabilities already there when the kept history starts are dated from its first entry (they counted 0 days old and were never late); informational findings are left out.
+- Incident selectors: an empty value (`role:`, a `{param}` left blank) selects nothing instead of every asset; a playbook decision can move a host from compromised to contained.
+- Risks: the default 3×3 matrix no longer rates the middle cell High; a threat whose risk sources are all rated 0 leaves the register; the merge of overlapping requirements follows edits.
+- Connectors: the XML parser no longer misplaces elements after a stray closing tag, nor throws on an out-of-range character reference; a Palo Alto import of one scope only removes the stale flows of that scope; large flat configurations no longer overflow the stack; Nmap matches by IP before host name (1.0.1); CSV inventory no longer reads a type named `constructor` (1.0.1); NetBox (1.0.1) and phpIPAM build VLAN ids from the VLAN number.
+- Muster polls no longer overlap, and back off after failures (a wrong password could lock the Muster account).
+- The history is capped in size too (`HISTORY_MAX_MB`, 200) and no longer rewritten on every change once full; backups taken before imports and rollbacks no longer push out the scheduled ones.
+- Live update streams are capped per person and in all, dropped when the client stops reading, and closed when the account is disabled.
+- `users.mjs` stops on an unreadable `users.json` instead of replacing every account; the server takes in changes made by `users.mjs` before writing the file.
+- Input checks: `?at`, history ids and limits, the type of passwords and roles, the IS of a proposal; a static file read error no longer crashes the server; an unhandled background error is logged instead of stopping the server.
+- Docker healthcheck follows `PORT`.
+### Added
+- `ALLOW_OPEN`, `HISTORY_MAX_MB`; NixOS `secretFiles.MUSTER_PASSWORD`. `SSO_SCOPES` and `SSO_TOKEN_AUTH` documented. The API reference lists the incident and Muster routes.
+### Upgrading
+- **A server with no account at all** (no `EDIT_PASS`, no `users.json`, no SSO) no longer starts on `HOST=0.0.0.0`, which is the Docker default. Set `EDIT_PASS`, or `ALLOW_OPEN=true` if anyone reaching it may really be admin.
+- **Groups**: `SSO_HEADER_GROUPS` is split on commas only (it also split on `;` and `|`), and a `groups` claim sent as one string is split on commas, not spaces. Check your proxy and provider send commas.
+- **Releases**: approve each release in *Actions* (the `release` environment), including those started by pushing a tag.
+- **systemd**: to listen on the network without a reverse proxy, change `HOST` in the `ExecStart` line of the unit.
+- **Risk matrix**: the default 4×4 levels change on the anti-diagonal (High → Moderate). A matrix saved in *Risks › Settings* keeps its levels.
+- Password hashes are upgraded at each account's next sign-in: no action needed. A sign-in takes a few hundred milliseconds more, once per session.
+- Scripts that approve proposals can send `updatedAt` to make sure they approve what they read.
+
 ## [0.10.0] - 2026-10-28
 ### Added
 - **Incident mode, with Muster** (*Incident* in the controls of an IS). Mark assets compromised, suspected or contained, from their sheet or from a playbook decision. The incident sheet then shows:
