@@ -82,3 +82,26 @@ test('an empty map measures without failing', () => {
   assert.equal(m.owners.share, null);
   assert.equal(m.vulns.median, null);
 });
+
+test('first seen: the map before the history dates the vulnerabilities of assets never edited since', () => {
+  const base = { assets: { web: { site: 'a', vulns: [{ id: 'CVE-1', sev: 'crit' }] }, db: { site: 'a', vulns: [{ id: 'CVE-2', sev: 'crit' }, { id: 'S', sev: 'high', firstSeen: ago(300) }] } } };
+  const raw = { si: { a: {} }, assets: { web: { site: 'a', vulns: [{ id: 'CVE-1', sev: 'crit' }], note: 'x' }, db: base.assets.db } };
+  const h = [{ rev: 2, at: ago(100), kind: 'assets', id: 'web', before: base.assets.web, after: raw.assets.web }];
+  const s = K.firstSeen(h, base);
+  assert.deepEqual(J(s['db|CVE-2']), { at: ago(100), before: true });
+  assert.equal(s['db|S'].at, ago(300), "a scanner's own date wins");
+  const m = K.measure(raw, NOW, s);
+  assert.deepEqual(J(m.oldest.map(v => [v.asset, v.id, v.days, v.approx])), [['db', 'S', 300, false], ['db', 'CVE-2', 100, true], ['web', 'CVE-1', 100, true]]);
+  assert.equal(m.vulns.median, 100);
+  assert.equal(m.vulns.late, 3);
+  // without a history, an undated vulnerability is 0 days old at least: marked as a lower bound, not late
+  const none = K.measure(raw, NOW, K.firstSeen([], base));
+  assert.deepEqual(J(none.oldest.map(v => [v.id, v.days, v.approx, v.late])), [['S', 300, false, true], ['CVE-2', 0, true, false], ['CVE-1', 0, true, false]]);
+  assert.equal(none.vulns.approx, true);
+});
+
+test("severity 'none' has no deadline and is left out of the counts", () => {
+  const raw = { si: { a: {} }, assets: { x: { site: 'a', vulns: [{ id: '1', sev: 'none', firstSeen: ago(400) }, { id: '2', cvss: 0, firstSeen: ago(400) }, { id: '3', sev: 'none', cvss: 7.5, firstSeen: ago(400) }] } } };
+  const v = K.measure(raw, NOW, {}).vulns;
+  assert.deepEqual([v.open, v.low, v.high, v.late], [1, 0, 1, 1], "a CVSS above 0 wins over 'none'");
+});

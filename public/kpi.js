@@ -14,24 +14,32 @@ const ADMIN=new Set(['tcp/22','tcp/23','tcp/135','tcp/139','tcp/445','tcp/3389',
 // Ids in ext that mean a vulnerability scanner knows the asset
 const SCANNERS=['cyberwatch','tenable','nessus','qualys','openvas','greenbone','rapid7','insightvm','defender','crowdstrike','wazuh'];
 const OWNER_ROLES=new Set(['Technical owner','Business owner','Responsable technique','Responsable métier']);
-const sevOf=v=>{if(v.sev&&SLA[v.sev])return v.sev;const c=+v.cvss;return !isFinite(c)||v.cvss==null||v.cvss===''?'low':c>=9?'crit':c>=7?'high':c>=4?'med':'low';};
+// Severity of a vulnerability: its own, else from its CVSS; 'none' (given, or a CVSS of 0) has no deadline and is
+// left out of the counts. Without either, 'low'.
+const sevOf=v=>{if(v.sev&&(SLA[v.sev]||v.sev==='none')&&!(v.sev==='none'&&v.cvss!=null&&v.cvss!==''&&isFinite(v.cvss)&&+v.cvss>0))return v.sev;
+  const c=+v.cvss;return !isFinite(c)||v.cvss==null||v.cvss===''?'low':c>=9?'crit':c>=7?'high':c>=4?'med':c>0?'low':'none';};
 const vkey=(aid,v)=>`${aid}|${v.id||v.title||''}`;
 
 // When each open vulnerability was first seen, from the history of the map (oldest first). A vulnerability that
 // carries its own firstSeen (from a scanner) keeps it. Those already there when the kept history starts get the
-// date of its first entry, marked as a lower bound.
-function firstSeen(entries){
-  const seen={},since=entries.length?entries[0].at:null;
-  const take=(aid,doc,at,initial)=>{(doc&&Array.isArray(doc.vulns)?doc.vulns:[]).forEach(v=>{const k=vkey(aid,v);if(!seen[k])seen[k]={at:v.firstSeen||at,before:initial&&!v.firstSeen};});};
-  entries.forEach(h=>{
+// date of its first entry, marked as a lower bound (before: true). base: the map as it was before the first entry
+// ({assets}, as stateAt(history[0].rev - 1) rebuilds it), so that assets never edited since are dated too; without
+// it, only the assets that the history touches are. Returns {'assetId|vuln id': {at, before}}.
+function firstSeen(entries,base){
+  const seen={},list=Array.isArray(entries)?entries:[],since=list.length?list[0].at:null;
+  const take=(aid,doc,at,initial)=>{(doc&&Array.isArray(doc.vulns)?doc.vulns:[]).forEach(v=>{if(!v)return;const k=vkey(aid,v);if(!seen[k])seen[k]={at:v.firstSeen||at,before:initial&&!v.firstSeen};});};
+  if(since&&base&&base.assets)Object.entries(base.assets).forEach(([id,d])=>take(id,d,since,true));
+  list.forEach(h=>{
     if(h.kind==='assets'){take(h.id,h.before,since,true);take(h.id,h.after,h.at,false);}
     else if(h.kind==='all'){const b=(h.before&&h.before.assets)||{},a=(h.after&&h.after.assets)||{};Object.entries(b).forEach(([id,d])=>take(id,d,since,true));Object.entries(a).forEach(([id,d])=>take(id,d,h.at,false));}
   });
   return seen;
 }
 
-// The figures of a map (or of one IS: site) at a moment `at` (ms). seen: from firstSeen(), or {} (then a
-// vulnerability's own firstSeen counts, else it is taken as new).
+// The figures of a map (or of one IS: site) at a moment `at` (ms). seen: from firstSeen(), or {}. A vulnerability's
+// age counts from its own firstSeen (a scanner's date), else from `seen`. One dated by neither (no history, or not
+// in it) counts as 0 days old and is marked approx: its age is a lower bound, as for those already there when the
+// history starts, and the median and the late counts take it as such. Those of severity 'none' are left out.
 function measure(raw,at,seen,site){
   const si=raw&&raw.si||{},assets=Object.entries(raw&&raw.assets||{}).filter(([,a])=>a&&si[a.site]&&(!site||a.site===site));
   const flows=Object.entries(si).filter(([id])=>!site||id===site).flatMap(([,d])=>Array.isArray(d.flows)?d.flows:[]);
@@ -42,8 +50,10 @@ function measure(raw,at,seen,site){
   // vulnerabilities still open, and how old they are
   const open=[];
   assets.forEach(([id,a])=>(Array.isArray(a.vulns)?a.vulns:[]).forEach(v=>{
-    const s=seen&&seen[vkey(id,v)],from=Date.parse(v.firstSeen||(s&&s.at)||'')||at,days=Math.max(0,Math.floor((at-from)/DAY)),sev=sevOf(v);
-    open.push({asset:id,name:a.name||id,id:v.id||'',title:v.title||'',sev,kev:v.kev===true||v.kev==='true',days,approx:!!(s&&s.before&&!v.firstSeen),late:days>SLA[sev]});
+    if(!v)return;const sev=sevOf(v);if(sev==='none')return;
+    const s=seen&&seen[vkey(id,v)],own=Date.parse(v.firstSeen||''),known=Date.parse((s&&s.at)||''),from=isFinite(own)?own:isFinite(known)?known:at;
+    const days=Math.max(0,Math.floor((at-from)/DAY)),approx=!isFinite(own)&&(!isFinite(known)||!!(s&&s.before));
+    open.push({asset:id,name:a.name||id,id:v.id||'',title:v.title||'',sev,kev:v.kev===true||v.kev==='true',days,approx,late:days>SLA[sev]});
   }));
   const serious=open.filter(v=>v.sev==='crit'||v.sev==='high'),ages=serious.map(v=>v.days).sort((x,y)=>x-y);
   const median=ages.length?(ages.length%2?ages[(ages.length-1)/2]:Math.round((ages[ages.length/2-1]+ages[ages.length/2])/2)):null;

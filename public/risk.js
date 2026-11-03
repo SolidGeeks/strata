@@ -118,8 +118,10 @@ function defaultMatrix(n=4,m=n){
   const L={3:['Unlikely','Likely','Very likely'],4:['Minimal','Significant','Strong','Maximal'],5:['Rare','Unlikely','Possible','Likely','Almost certain']};
   const I={3:['Limited','Serious','Critical'],4:['Minor','Significant','Serious','Critical'],5:['Negligible','Minor','Moderate','Major','Critical']};
   const edges=k=>Array.from({length:k},(_,x)=>Math.round(100*x/k)/100);
+  // a cell's level from where its centre sits (likelihood + impact, 0 to 2), with the same thresholds whatever the
+  // size, so that a 3×3 matrix does not rate risks higher than a 5×5 one (the centre of the matrix is Moderate)
   const cells=Array.from({length:n},(_,l)=>Array.from({length:m},(_,i)=>{
-    const s=(l+1)/n+(i+1)/m;return s>=1.75?3:s>=1.25?2:s>=0.9?1:0;}));
+    const s=(l+0.5)/n+(i+0.5)/m+1e-9;return s>=1.5?3:s>=1.1?2:s>=0.7?1:0;}));
   return {likelihood:L[n]||L[4],impact:I[m]||I[4],lEdges:edges(n),iEdges:edges(m),cells,accept:1,acceptByCrit:{3:0}};
 }
 // A matrix read from the settings: anything missing or out of shape falls back on the default of its size
@@ -218,6 +220,8 @@ function assess(site,a,opts){
     if(added.has(t.id)&&!why)why=['added by hand'];
     if(!why)return;
     const rel=Math.max(0,...t.actors.map(x=>+actors[x]||0));
+    // every risk source of the threat rated 0 on this IS: it takes the threat away, unless added by hand
+    if(t.actors.length&&rel===0&&!added.has(t.id))return;
     const ctx=(exposure+reach)/2,vf=t.vulns?0.5+0.5*vuln:1,af=t.actors.length?[0,0.5,0.75,1][Math.min(3,rel)]:1;
     const p0=Math.min(1,(t.base/4)*(0.4+0.6*ctx)*vf*af),i0=Math.min(1,(t.severity/4)*crit);
     const st=(treat.threats&&treat.threats[t.id])||{},statuses=st.reqs||{};
@@ -269,26 +273,30 @@ const STOP=new Set('the and for with that from their each every into about which
 const words=s=>new Set(String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[^a-z0-9]+/).filter(w=>w.length>=4&&!STOP.has(w)).map(w=>w.replace(/(ing|ed|es|s)$/,'')));
 const jac=(a,b)=>{let n=0;a.forEach(x=>{if(b.has(x))n++;});const u=a.size+b.size-n;return u?n/u:0;};
 // How much two requirements overlap, from 0 to 1: their threats (weighted by share) for 60%, their words for 40%
-function similarity(a,b){
-  const ta=a._t||(a._t=Object.fromEntries(a.threats.map(t=>[t.id,t.strength]))),tb=b._t||(b._t=Object.fromEntries(b.threats.map(t=>[t.id,t.strength])));
+const prepOf=r=>({t:Object.fromEntries(r.threats.map(t=>[t.id,t.strength])),w:words(`${r.title} ${r.text||''}`)});
+function similarityOf(pa,pb){
+  const ta=pa.t,tb=pb.t;
   let mn=0,mx=0,shared=0;new Set([...Object.keys(ta),...Object.keys(tb)]).forEach(k=>{const x=ta[k]||0,y=tb[k]||0;mn+=Math.min(x,y);mx+=Math.max(x,y);if(x&&y)shared++;});
   if(!shared)return 0;
-  const wa=a._w||(a._w=words(`${a.title} ${a.text||''}`)),wb=b._w||(b._w=words(`${b.title} ${b.text||''}`));
-  return 0.6*(mx?mn/mx:0)+0.4*jac(wa,wb);
+  return 0.6*(mx?mn/mx:0)+0.4*jac(pa.w,pb.w);
 }
+const similarity=(a,b)=>similarityOf(prepOf(a),prepOf(b));
+// The groups of overlapping requirements. The last result is kept for the same requirements (same keys, threats,
+// shares, effects and wording) and threshold. The requirements given are not changed: each group member is a copy
+// with its likeness to the seed of the group (_score).
 let OV_CACHE=null;
 function overlaps(reqs,threshold){
-  const sig=threshold+'|'+reqs.map(r=>r.key+':'+r.threats.length).join(',');
+  const sig=JSON.stringify([threshold,reqs.map(r=>[r.key,r.baseline,r.title,r.text||'',r.threats.map(t=>[t.id,t.strength,t.effect])])]);
   if(OV_CACHE&&OV_CACHE.sig===sig)return OV_CACHE.groups;
-  const pool=reqs.filter(r=>r.threats.length),used=new Set(),groups=[];
+  const pool=reqs.filter(r=>r.threats.length),used=new Set(),groups=[],prep=new Map(pool.map(r=>[r,prepOf(r)]));
   const bases=[...new Set(pool.map(r=>r.baseline))];
   pool.slice().sort((a,b)=>b.threats.length-a.threats.length||a.key.localeCompare(b.key)).forEach(seed=>{
     if(used.has(seed.key))return;
-    const members=[seed];
+    const members=[Object.assign({},seed)];
     bases.filter(b=>b!==seed.baseline).forEach(b=>{
       let best=null,bs=threshold;
-      pool.forEach(r=>{if(r.baseline!==b||used.has(r.key))return;const v=similarity(seed,r);if(v>=bs){bs=v;best=r;}});
-      if(best)members.push(Object.assign(best,{_score:bs}));
+      pool.forEach(r=>{if(r.baseline!==b||used.has(r.key))return;const v=similarityOf(prep.get(seed),prep.get(r));if(v>=bs){bs=v;best=r;}});
+      if(best)members.push(Object.assign({},best,{_score:bs}));
     });
     if(members.length>1){members.forEach(m=>used.add(m.key));groups.push({key:members.map(m=>m.key).sort().join('+'),members});}
   });

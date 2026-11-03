@@ -622,7 +622,8 @@ async function api(req, res, parts, url, auth) {
   if (r1 === 'kpi' && method === 'GET') {
     const int = (k, lo, hi, d) => { const v = parseInt(url.searchParams.get(k) || '', 10); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
     const count = int('points', 2, 60, 13), step = int('step', 1, 92, 7), now = Date.now();
-    const seen = KPI.firstSeen(history), first = history.length ? Date.parse(history[0].at) : now, out = [];
+    // vulnerabilities already there when the kept history starts are dated from its first entry
+    const seen = KPI.firstSeen(history, history.length ? stateAt(history[0].rev - 1) : null), first = history.length ? Date.parse(history[0].at) : now, out = [];
     for (const at of KPI.points(now, count, step)) {
       if (at < first && at < now) continue;
       let rev = state.rev;

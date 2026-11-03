@@ -122,9 +122,12 @@ test('settings: baselines enabled, custom threats and baselines, threats disable
   const rows = R.assess(s, a, opts(doc, { hops: 2 }));
   assert.ok(ids(rows).includes('custom:erp-fraud'), 'a custom threat applies on its own conditions');
   assert.ok(!ids(rows).includes('data-theft'), 'a disabled threat is left out');
-  // a risk source rated 0 for this IS takes away the likelihood of its threats
-  const none = R.assess(s, a, opts(doc, { hops: 2, landscape: { actors: { insider: 0 } } })).find(r => r.threat.id === 'custom:erp-fraud');
-  assert.equal(none.p, 0);
+  // a risk source rated 0 for this IS takes its threats away, unless one was added by hand (then at no likelihood)
+  const zero = { hops: 2, landscape: { actors: { insider: 0 } } };
+  assert.ok(!ids(R.assess(s, a, opts(doc, zero))).includes('custom:erp-fraud'), 'its only source is rated 0');
+  const hand = Object.assign({}, a, { risk: { added: ['custom:erp-fraud'] } });
+  const kept = R.assess(s, hand, opts(doc, zero)).find(r => r.threat.id === 'custom:erp-fraud');
+  assert.equal(kept.p, 0);
 });
 
 test('the register of an IS counts each risk once per cell, without the excluded ones', () => {
@@ -238,4 +241,29 @@ test('logs for the SIEM: the sources an asset has, the events of its threats, at
   assert.equal(lw.retention, 6);
   assert.equal(logs('web').retention, 12, 'a year when a high or critical risk remains');
   assert.deepEqual(J(L.forAsset(s.byId.pc, [], {}).sources), []);
+});
+
+test('default matrices rate alike whatever their size: the centre is Moderate, the corners Low and Critical', () => {
+  assert.deepEqual(J(R.defaultMatrix(3).cells), [[0, 0, 1], [0, 1, 2], [1, 2, 3]]);
+  assert.deepEqual(J(R.defaultMatrix(5).cells), [[0, 0, 0, 1, 1], [0, 0, 1, 1, 2], [0, 1, 1, 2, 2], [1, 1, 2, 2, 3], [1, 2, 2, 3, 3]], 'the 5×5 default is unchanged');
+  for (const n of [3, 4, 5]) {
+    const M = R.defaultMatrix(n);
+    if (n % 2) assert.equal(R.cellOf(M, 0.5, 0.5).level, 'med', `${n}×${n}: centre`);
+    assert.equal(R.cellOf(M, 0.99, 0.99).level, 'crit');
+    assert.equal(R.cellOf(M, 0, 0).level, 'low');
+  }
+});
+
+test('overlaps: a change of shares or wording is seen, and the requirements given are not changed', () => {
+  const mk = (strength, title) => ({ baselines: ['anssi', 'custom:mine'], merge: { on: true, threshold: 0.3 }, custom: [{ id: 'mine', name: 'Mine', requirements: [{ id: 'r1', title, threats: [['ransomware', strength], ['phishing', strength]] }] }] });
+  const find = S => R.mergePlan(S, B).groups.find(g => g.members.some(m => m.key === 'custom:mine/r1'));
+  const g1 = find(R.settings(mk(0.3, 'Backups offline and tested regularly'), B));
+  assert.ok(g1, 'grouped with a backup requirement');
+  const S2 = R.settings(mk(0.9, 'Completely different title about printers'), B), g2 = find(S2);
+  if (g2) assert.equal(g2.members.find(m => m.key === 'custom:mine/r1').title, 'Completely different title about printers', 'not the cached group');
+  const kept = R.requirementsFor(S2, B).find(r => r.key === 'custom:mine/r1' || (r.aliases || []).includes('custom:mine/r1'));
+  assert.ok(kept.threats.some(t => t.id === 'ransomware' && t.strength === 0.9));
+  const reqs = R.allRequirements(S2, B);
+  R.overlaps(reqs, 0.3);
+  assert.ok(reqs.every(r => !('_score' in r) && !('_t' in r) && !('_w' in r)), 'inputs untouched');
 });

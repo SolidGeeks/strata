@@ -233,3 +233,49 @@ test('attack paths: unlikely and long paths are left out, and a cut-short search
   // a target nothing leads to has no path
   assert.deepEqual(J(A.attackPaths(s, A.outside(s), ['bastion', 'fw']).byTarget.fw), []);
 });
+
+// A dense map: n assets, deg flows out of each to random others, 20 of them reached from the Internet
+function dense(n, deg, seed = 1) {
+  let s = seed; const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const byId = {}, assets = [];
+  for (let i = 0; i < n; i++) { const a = { id: 'a' + i, name: 'a' + i, type: 'server', crit: i % 10 === 0 ? 3 : 2, vulns: i % 7 === 0 ? [{ id: 'CVE-' + i, cvss: 9, kev: true }] : [] }; assets.push(a); byId[a.id] = a; }
+  const flows = []; let k = 0;
+  for (let i = 0; i < n; i++) for (let j = 0; j < deg; j++) { const d = Math.floor(rnd() * n); if (d !== i) flows.push(flow('f' + (k++), 'a' + i, 'a' + d, [], rnd() < 0.5 ? 'tcp/445' : 'tcp/443')); }
+  for (let i = 0; i < 20; i++) flows.push(flow('f' + (k++), 'internet', 'a' + i));
+  return { assets, byId, flows, services: [] };
+}
+
+test('attack paths on a dense map: the most likely first, simple, as likely as the blast radius says, and fast', () => {
+  const s = dense(300, 10), targets = s.assets.filter(a => a.crit === 3).map(a => a.id);
+  const t0 = Date.now(), r = A.attackPaths(s, A.outside(s), targets), ms = Date.now() - t0;
+  const best = A.blastRadius(s, A.outside(s));
+  assert.ok(ms < 2000, `took ${ms} ms`);
+  for (const t of targets) {
+    const l = r.byTarget[t], b = best.get(t);
+    assert.ok(l.length <= 20);
+    // the blast radius has no step limit: where its best path fits in 8 steps, it is the first one listed
+    if (b && b.steps <= 8) assert.ok(Math.abs(l[0].p - b.p) < 1e-12, `${t}: ${l[0] && l[0].p} < ${b.p}`);
+    l.forEach((x, i) => {
+      assert.equal(new Set(x.path).size, x.path.length, 'never through the same node twice');
+      assert.equal(x.flows.length, x.path.length - 1);
+      if (i) assert.ok(l[i - 1].p >= x.p - 1e-12, 'most likely first');
+      const p = x.flows.reduce((q, id, k) => q * A.stepOdds(s.byId[x.path[k + 1]], s.flows.find(f => f.id === id).port).p, 1);
+      assert.ok(Math.abs(p - x.p) < 1e-12, 'the product of its steps');
+    });
+  }
+  assert.equal(r.truncated, true, 'more than 20 paths per target');
+});
+
+test('where to cut: a node on every listed path is not a cut point when another way exists', () => {
+  // 21 very likely ways to T through X, listed first; one less likely way through Y that the list does not show
+  const byId = { X: { id: 'X', vulns: [] }, Y: { id: 'Y', vulns: [] }, T: { id: 'T', vulns: [] } }, flows = [];
+  for (let i = 1; i <= 21; i++) { byId['h' + i] = { id: 'h' + i, vulns: [{ cvss: 9.5, kev: true }] }; flows.push(flow('in' + i, 'internet', 'h' + i), flow('hx' + i, 'h' + i, 'X', [], 'tcp/445')); }
+  flows.push(flow('xt', 'X', 'T'), flow('iy', 'internet', 'Y'), flow('yt', 'Y', 'T'));
+  const s = { byId, flows, services: [] }, r = A.attackPaths(s, ['internet'], ['T']);
+  assert.equal(r.byTarget.T.length, 20);
+  assert.ok(r.byTarget.T.every(x => x.path.includes('X')));
+  assert.deepEqual(J(A.chokePoints(s, r.byTarget).filter(c => c.every.length)), []);
+  // without the way through Y, X is one
+  const cut = { byId, flows: flows.filter(f => f.id !== 'yt'), services: [] };
+  assert.deepEqual(J(A.chokePoints(cut, A.attackPaths(cut, ['internet'], ['T']).byTarget).filter(c => c.every.length).map(c => c.id)), ['X']);
+});

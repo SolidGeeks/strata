@@ -218,42 +218,77 @@ function blastRadius(site,from){
   starts.forEach(s=>best.delete(s));
   return best;
 }
+// A binary heap, highest `key` first
+function heap(){
+  const a=[];
+  const up=i=>{const x=a[i];while(i>0){const j=(i-1)>>1;if(a[j].key>=x.key)break;a[i]=a[j];i=j;}a[i]=x;};
+  const down=i=>{const x=a[i],n=a.length;for(;;){let c=2*i+1;if(c>=n)break;if(c+1<n&&a[c+1].key>a[c].key)c++;if(a[c].key<=x.key)break;a[i]=a[c];i=c;}a[i]=x;};
+  return {get size(){return a.length;},top:()=>a[0],push(x){a.push(x);up(a.length-1);},pop(){const t=a[0],l=a.pop();if(a.length){a[0]=l;down(0);}return t;}};
+}
 // Every path from `from` to each of `targets`, never through the same node twice, most likely
-// first. Paths below `min` likelihood or longer than `depth` steps are left out. The search
-// stops after `budget` steps, and keeps the `max` most likely paths per target: `truncated`
-// says when paths may be missing.
+// first. Paths below `min` likelihood or longer than `depth` steps are left out, and the `max`
+// most likely are kept per target.
+// The search is best first, one target at a time: partial paths come out of a priority queue by
+// the likelihood they would have if they went on to the target the most likely way (worked out
+// backwards from the target, along the flows), so complete paths come out most likely first and
+// the search stops once it has them. A partial path that cannot reach the target within `depth`
+// steps or above `min` is dropped. Each target gets an equal share of `budget` partial paths to
+// take out of the queue: `truncated` says when paths may be missing (the share ran out, or there
+// are more than `max`).
 // Returns {byTarget: {id: [{p, path, flows}]}, truncated}
 function attackPaths(site,from,targets,{max=20,depth=8,min=0.001,budget=50000}={}){
-  const want=new Set(targets),found=new Map(),out=flowsFrom(site),seen=new Set();
-  let left=budget,truncated=false;
-  want.forEach(t=>found.set(t,[]));
-  const walk=(n,p,path,flows)=>{
-    if(--left<0){truncated=true;return;}
-    for(const f of out.get(n)||[]){
-      if(seen.has(f.dst))continue;
-      const q=p*stepOdds(site.byId[f.dst],f.port).p;
-      if(q<min)continue;
-      const P=path.concat(f.dst),F=flows.concat(f.id);
-      if(want.has(f.dst))found.get(f.dst).push({p:q,path:P,flows:F});
-      if(P.length-1<depth){seen.add(f.dst);walk(f.dst,q,P,F);seen.delete(f.dst);}
-      if(left<0)return;
+  const want=[...new Set(targets)],out=flowsFrom(site),into=new Map(),odds=new Map(),starts=[...new Set([].concat(from))].filter(s=>!want.includes(s));
+  out.forEach(l=>l.forEach(f=>{odds.set(f.id,stepOdds(site.byId[f.dst],f.port).p);if(!into.has(f.dst))into.set(f.dst,[]);into.get(f.dst).push(f);}));
+  const share=Math.max(1,Math.floor(budget/Math.max(1,want.length)));
+  let truncated=false;const byTarget={};
+  want.forEach(t=>{
+    // the most likely way from each node to t, and the fewest steps (both ignore the never-twice rule)
+    const rest=new Map([[t,1]]),hops=new Map([[t,0]]),h=heap(),done=new Set();
+    h.push({key:1,n:t});
+    while(h.size){const {key,n}=h.pop();if(done.has(n))continue;done.add(n);
+      (into.get(n)||[]).forEach(f=>{const v=key*odds.get(f.id);if(!done.has(f.src)&&v>(rest.get(f.src)||0)){rest.set(f.src,v);h.push({key:v,n:f.src});}});}
+    const bq=[t];
+    for(let k=0;k<bq.length;k++){const n=bq[k],d=hops.get(n);(into.get(n)||[]).forEach(f=>{if(!hops.has(f.src)){hops.set(f.src,d+1);bq.push(f.src);}});}
+    // best first over partial paths: {key: p × the most likely rest, p, n, steps, up: the partial path it extends, f}
+    const q=heap(),found=[];let left=share;
+    const offer=(p,n,steps,up,f)=>{if(!rest.has(n)||steps+hops.get(n)>depth)return;const key=p*rest.get(n);if(key<min)return;q.push({key,p,n,steps,up,f});};
+    starts.forEach(s=>offer(1,s,0,null,null));
+    while(q.size){
+      // enough: more than `max`, and none left as likely as the last one kept
+      if(found.length>max&&q.top().key<found[found.length-1].p-EPS)break;
+      if(--left<0){truncated=true;break;}
+      const x=q.pop();
+      if(x.n===t){if(x.p>=min)found.push(x);continue;}
+      const on=new Set();for(let y=x;y;y=y.up)on.add(y.n);
+      for(const f of out.get(x.n)||[])if(!on.has(f.dst))offer(x.p*odds.get(f.id),f.dst,x.steps+1,x,f);
     }
-  };
-  [].concat(from).forEach(s=>{if(want.has(s))return;seen.add(s);walk(s,1,[s],[]);seen.delete(s);});
-  const byTarget={};
-  found.forEach((l,t)=>{
-    l.sort((a,b)=>(b.p-a.p)||(a.path.length-b.path.length)||byName(a.path.join('>'),b.path.join('>')));
-    if(l.length>max)truncated=true;
-    byTarget[t]=l.slice(0,max);
+    const list=found.map(x=>{const path=[],flows=[];for(let y=x;y;y=y.up){path.push(y.n);if(y.f)flows.push(y.f.id);}return {p:x.p,path:path.reverse(),flows:flows.reverse()};});
+    list.sort((a,b)=>(b.p-a.p)||(a.path.length-b.path.length)||byName(a.path.join('>'),b.path.join('>')));
+    if(list.length>max)truncated=true;
+    byTarget[t]=list.slice(0,max);
   });
   return {byTarget,truncated};
 }
 // Where to cut: the assets an attacker goes through, and the equipment their flows cross, on the
-// way to the targets. `every` lists the targets that no path reaches without it; `paths` counts
-// the paths that use it, `held` those that take it over. Most targets cut off first.
+// way to the targets. `every` lists the targets that no path from `from` (the outside by default)
+// reaches without it: the listed paths only give the candidates, each one is checked on the flows
+// (without the asset, and without the flows that cross it). `paths` counts the listed paths that
+// use it, `held` those that take it over. Most targets cut off first.
 // Returns [{id, kind: 'asset' (taken over on some path) | 'equipment' (only crossed), every: [target ids], paths, held}]
-function chokePoints(site,byTarget){
-  const flowById=new Map(site.flows.map(f=>[f.id,f])),pts=new Map(),held=new Map();
+function chokePoints(site,byTarget,from){
+  const flowById=new Map(site.flows.map(f=>[f.id,f])),pts=new Map(),held=new Map(),out=flowsFrom(site);
+  const starts=[...new Set([].concat(from===undefined?outside(site):from))];
+  // can an attacker starting outside still reach t without `cut`?
+  const reaches=(t,cut)=>{
+    if(starts.includes(cut))return true;
+    const seen=new Set(starts),q=starts.slice();
+    for(let k=0;k<q.length;k++)for(const f of out.get(q[k])||[]){
+      if(f.dst===cut||seen.has(f.dst)||(f.via||[]).includes(cut))continue;
+      if(f.dst===t)return true;
+      seen.add(f.dst);q.push(f.dst);
+    }
+    return false;
+  };
   Object.entries(byTarget).forEach(([t,list])=>{
     const count=new Map();
     list.forEach(x=>{
@@ -266,7 +301,7 @@ function chokePoints(site,byTarget){
     count.forEach((n,id)=>{
       if(!site.byId[id])return;
       if(!pts.has(id))pts.set(id,{id,kind:'equipment',every:[],paths:0,held:0});
-      const p=pts.get(id);p.paths+=n;if(n===list.length)p.every.push(t);
+      const p=pts.get(id);p.paths+=n;if(n===list.length&&!reaches(t,id))p.every.push(t);
     });
   });
   // taken over on at least one path: an asset to harden; only crossed: equipment whose rules to tighten

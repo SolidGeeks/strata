@@ -156,3 +156,23 @@ test('adopt: a new incident starts from its own assets, marks made by hand befor
   assert.deepEqual(J(inc.cuts), []);
   assert.equal(I.clean(J(inc)).from, 'IR-2', 'kept when saved');
 });
+
+test('selectors: an empty value, or a parameter left empty, selects nothing; exposed: only internet', () => {
+  const s = site(), inc = I.clean({ marks: { 'web-01': 'compromised' } });
+  for (const sel of ['role:', 'role: ', 'type:', 'id:', 'vuln:', 'role:{team}', 'type:{t}', 'role:{team} backup', 'reach:role:', 'exposed:nothing', 'exposed:'])
+    assert.deepEqual(J(I.selectAssets(s, inc, sel, {})), [], sel);
+  assert.deepEqual(J(I.selectAssets(s, inc, 'role:{team}', { team: '  ' })), [], 'a blank parameter');
+  assert.deepEqual(J(I.selectAssets(s, inc, ' role: backup ')), ['bk-01'], 'spaces around are trimmed');
+  assert.deepEqual(J(I.selectAssets(s, inc, 'role:{team}', { team: 'backup' })), ['bk-01']);
+  assert.equal(I.resolve(s, inc, 'flows:role:', {}).items.length, 0);
+  // a decision whose selector is left empty marks nothing
+  assert.deepEqual(J(I.effects(s, inc, { effects: { Yes: ['compromised', 'role:{team}'] } }, 'Yes', {})), []);
+});
+
+test('decision effects only move forward: suspected, compromised, contained', () => {
+  const s = site(), inc = I.clean({ marks: { 'web-01': 'compromised', 'db-01': 'contained', 'pc-01': 'suspected' } });
+  const eff = (state, sel) => J(I.effects(s, inc, { effects: { Yes: [state, sel] } }, 'Yes', {}));
+  assert.deepEqual(eff('contained', 'compromised'), [['web-01', 'contained']], 'a compromised asset can be contained');
+  assert.deepEqual(eff('suspected', 'affected'), [], 'never back to suspected');
+  assert.deepEqual(eff('compromised', 'affected'), [['pc-01', 'compromised']]);
+});

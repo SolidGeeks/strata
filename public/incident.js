@@ -53,12 +53,17 @@ function business(site,ids){const set=new Set(ids);return site.business.filter(b
    reach:<selector>, consumers:<selector> give assets; flows:<selector>, business:<selector>, contacts:<selector>
    and contacts:is give the other kinds. {cve} (or any {param}) is replaced by the incident's parameters. */
 function fill(sel,params){return String(sel).replace(/\{(\w+)\}/g,(m,k)=>params&&params[k]!=null?String(params[k]):'');}
+// A {param} the incident leaves empty: the selector points at nothing, rather than at whatever is left of it
+const unfilled=(sel,params)=>/\{(\w+)\}/.test(sel)&&String(sel).match(/\{(\w+)\}/g).some(m=>{const v=params&&params[m.slice(1,-1)];return v==null||!String(v).trim();});
+// An empty rest (role:, type: …) points at nothing; exposed: only 'internet'
 function selectAssets(site,inc,sel,params){
-  sel=fill(sel,params);
+  if(unfilled(String(sel),params))return [];
+  sel=fill(sel,params).trim();
   if(sel==='affected')return affected(site,inc);
   if(sel==='compromised')return marked(site,inc,['compromised','contained']);
   if(sel==='suspected'||sel==='contained')return marked(site,inc,[sel]);
-  const i=sel.indexOf(':'),k=i<0?sel:sel.slice(0,i),rest=i<0?'':sel.slice(i+1);
+  const i=sel.indexOf(':'),k=i<0?sel:sel.slice(0,i).trim(),rest=i<0?'':sel.slice(i+1).trim();
+  if(!rest)return [];
   if(k==='reach'){const d=reach(site,selectAssets(site,inc,rest,params));return Object.keys(d).sort((a,b)=>d[a]-d[b]);}
   if(k==='consumers')return consumers(site,selectAssets(site,inc,rest,params));
   const A=site.assets;
@@ -66,7 +71,7 @@ function selectAssets(site,inc,sel,params){
   if(k==='type')return A.filter(a=>a.type===rest).map(a=>a.id);
   if(k==='role')return A.filter(a=>String(a.role||'').toLowerCase().includes(rest.toLowerCase())).map(a=>a.id);
   if(k==='vuln')return rest?A.filter(a=>a.vulns.some(v=>v.id===rest)).map(a=>a.id):[];
-  if(k==='exposed')return A.filter(a=>site.flows.some(f=>isNet(f.src)&&f.dst===a.id)).map(a=>a.id);
+  if(k==='exposed')return rest.toLowerCase()!=='internet'?[]:A.filter(a=>site.flows.some(f=>isNet(f.src)&&f.dst===a.id)).map(a=>a.id);
   return [];
 }
 function resolve(site,inc,sel,params){
@@ -125,10 +130,12 @@ function start(sc,pb,now,by){
   const n=nextOf(pb,run.cur)[0];if(n){run.path.push(n[1]);run.cur=n[1];}
   return run;
 }
-// The marks a decision asks for once answered, as [[assetId,state]]: never back from compromised or contained
+// The marks a decision asks for once answered, as [[assetId,state]]: only forward, suspected < compromised <
+// contained (a compromised asset can be contained, never marked suspected again)
+const MARK_RANK={suspected:1,compromised:2,contained:3};
 function effects(site,inc,s,label,params){
   const eff=s&&s.effects&&s.effects[label],out=[];
-  if(eff)selectAssets(site,inc,eff[1],params).forEach(id=>{const was=inc.marks[id];if(was!=='compromised'&&was!=='contained'&&was!==eff[0])out.push([id,eff[0]]);});
+  if(eff&&MARK_RANK[eff[0]])selectAssets(site,inc,eff[1],params).forEach(id=>{if(MARK_RANK[eff[0]]>(MARK_RANK[inc.marks[id]]||0))out.push([id,eff[0]]);});
   return out;
 }
 // Moves the run along an edge; returns the marks a decision asks for
