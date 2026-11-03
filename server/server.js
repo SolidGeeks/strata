@@ -17,6 +17,7 @@ import { ssoConfig, createSso, loginPage } from './sso.js';
 import '../public/kpi.js';
 const KPI = globalThis.StrataKpi;
 import { createMuster } from './muster.js';
+import { docProblem } from './validate.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = process.env;
@@ -278,7 +279,7 @@ function cleanChanges(c) {
   if (!isObj(c)) return out;
   for (const kind of ['si', 'assets']) if (isObj(c[kind])) for (const [id, doc] of Object.entries(c[kind])) {
     if (!ID_RE.test(id)) throw httpError(400, `Invalid id: ${id}`);
-    if (doc !== null && !isObj(doc)) throw httpError(400, `Invalid document for ${id}`);
+    if (doc !== null) { const pb = docProblem(kind, doc); if (pb) throw httpError(400, `Invalid document for ${id}: ${pb}`); }
     out[kind][id] = doc;
   }
   if (Array.isArray(c.wan)) out.wan = c.wan.filter(isObj);
@@ -690,7 +691,8 @@ async function api(req, res, parts, url, auth) {
     need(auth, 'approver');
     if (method === 'PUT') {
       const body = await readBody(req, CONFIG.maxDocBytes);
-      if (!isObj(body)) throw httpError(400, 'Body must be a JSON object');
+      const pb = docProblem(r1, body);
+      if (pb) throw httpError(400, `Invalid document: ${pb}`);
       return ok(await commitChanges([change(r1, id, body)], auth, batchMeta(req)));
     }
     if (method === 'DELETE') return ok(await commitChanges([change(r1, id, null)], auth, batchMeta(req)));
@@ -719,8 +721,7 @@ async function api(req, res, parts, url, auth) {
     if (!isObj(body) || !isObj(body.si) || !isObj(body.assets)) throw httpError(400, 'Expected {"si": {...}, "assets": {...}, "wan": [...]}');
     const bad = [...Object.keys(body.si), ...Object.keys(body.assets)].find(k => !ID_RE.test(k));
     if (bad) throw httpError(400, `Invalid id: ${bad}`);
-    const notDoc = [...Object.entries(body.si), ...Object.entries(body.assets)].find(([, d]) => !isObj(d));
-    if (notDoc) throw httpError(400, `Invalid document for ${notDoc[0]}: each IS and asset must be a JSON object`);
+    for (const kind of ['si', 'assets']) for (const [did, d] of Object.entries(body[kind])) { const pb = docProblem(kind, d); if (pb) throw httpError(400, `Invalid document for ${did}: ${pb}`); }
     await backup('before import');
     const next = { si: body.si, assets: body.assets, wan: Array.isArray(body.wan) ? body.wan.filter(isObj) : [], services: Array.isArray(body.services) ? body.services.filter(isObj) : [], risk: isObj(body.risk) ? body.risk : {} };
     return ok(await commitChanges([change('all', null, next)], auth, Object.assign(batchMeta(req), { label: batchMeta(req).label || 'Whole map replaced (import)' })));

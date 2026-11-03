@@ -171,3 +171,16 @@ test('Muster: no redirect is followed, and a list holding anything but incidents
     assert.deepEqual(st.incidents.map(i => i.id), ['INC-1']);
   } finally { fake.close(); other.close(); }
 });
+
+test('documents are checked for shape: ids inside an IS, lists and text, on the live map, in imports and in proposals', async () => {
+  const s = await start();
+  try {
+    const bad = { name: 'x', vlans: [{ id: 'v2"><img src=x onerror=alert(1)>', name: 'DMZ' }] };
+    assert.equal((await call(s.port, 'PUT', 'si/s1', bad)).status, 400);
+    assert.equal((await call(s.port, 'PUT', 'si/s1', { name: 'x', vlans: 5 })).status, 400);
+    assert.equal((await call(s.port, 'PUT', 'assets/a1', { name: { a: 1 }, site: 's1' })).status, 400);
+    assert.equal((await call(s.port, 'POST', 'import', { si: { s1: bad }, assets: {} })).status, 400);
+    assert.equal((await call(s.port, 'POST', 'proposals', { title: 't', changes: { si: { s1: bad } } })).status, 400);
+    assert.equal((await call(s.port, 'PUT', 'si/s1', { name: 'One', vlans: [{ id: 'v-1', name: 'DMZ', zone: 'z-1' }], zones: [{ id: 'z-1', name: 'Front' }], flows: [{ id: 'f-1', src: 'internet', dst: 'a1', port: 'tcp/443', via: [] }] })).status, 200);
+  } finally { await s.stop(); rmSync(s.dataDir, { recursive: true, force: true }); }
+});

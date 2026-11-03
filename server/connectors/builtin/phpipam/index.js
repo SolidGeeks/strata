@@ -78,7 +78,7 @@ export async function run(cfg, ctx) {
       w.si.zones = w.si.zones && w.si.zones.length ? w.si.zones : [{ id: 'z-def', name: 'Main zone' }];
       let z = w.si.zones.find(x => x.id === `z-${sid}-imported`);
       if (!z) { z = { id: `z-${sid}-imported`, name: 'Imported' }; w.si.zones.push(z); }
-      let id = `v-${sid}-${v.number}`; let k = 2; while (w.si.vlans.some(x => x.id === id)) id = `v-${sid}-${v.number}-${k++}`;
+      const vnum = parseInt(v.number, 10) || 0; let id = `v-${sid}-${vnum}`; let k = 2; while (w.si.vlans.some(x => x.id === id)) id = `v-${sid}-${vnum}-${k++}`;
       target = { id, num: +v.number, name: v.name || n.description || `VLAN ${v.number}`, cidr, zone: z.id, ext: { ipam: String(n.id) } };
       w.si.vlans.push(target); report.vlansNew++;
     } else if (!v) { report.noVlan++; }

@@ -663,7 +663,7 @@ function renderVlanList(){
   const zm=state.mode==='zones',L=zm?['←','→','Move left','Move right']:['↑','↓','Move up','Move down'];
   $('#vlans').innerHTML=ZONES.slice().reverse().filter(z=>z.vlans.length).map(z=>{const vs=zm?z.vlans:z.vlans.slice().reverse();return `<div class="zone-h">${esc(z.name.toUpperCase())}${zm&&z.vlans.some(v=>v.place)?` <button class="ibtn mvbox-r edit-only" data-reset-zone="${esc(z.id)}" title="Line the plates of this level up again">Line up</button>`:zm&&vs.length>1?' <span>left → right</span>':''}</div>`+vs.map((v,i)=>{
     const first=i===0,last=i===vs.length-1,dA=zm?-1:1,dB=zm?1:-1;
-    return `<div class="vrow"><label class="vlan" for="vl-${v.id}"><input type="checkbox" id="vl-${v.id}" data-vlan="${esc(v.id)}" ${state.hidden.has(v.id)?'':'checked'}>
+    return `<div class="vrow"><label class="vlan" for="vl-${esc(v.id)}"><input type="checkbox" id="vl-${esc(v.id)}" data-vlan="${esc(v.id)}" ${state.hidden.has(v.id)?'':'checked'}>
     <span class="nm"><b><i class="sw" style="background:var(--c${v.ci})"></i>VLAN ${esc(v.num)} · ${esc(v.name)}</b><small>${esc(v.cidr||'—')}</small></span><span class="ct">${ASSETS.filter(a=>a.vlan===v.id).length}</span></label>
     <span class="mvbox edit-only"><button class="ibtn mvb" data-mv="${esc(v.id)}" data-d="${dA}" aria-label="${L[2]} VLAN ${esc(v.num)}" ${first?'disabled':''}>${L[0]}</button><button class="ibtn mvb" data-mv="${esc(v.id)}" data-d="${dB}" aria-label="${L[3]} VLAN ${esc(v.num)}" ${last?'disabled':''}>${L[1]}</button></span>
     <button class="ibtn edit-only" data-edit-vlan="${esc(v.id)}" aria-label="Edit VLAN ${esc(v.num)}">Edit</button></div>`;}).join('');}).join('')||'<p class="empty">No VLAN yet.</p>';
@@ -1978,12 +1978,22 @@ async function exportJson(){
   const data=JSON.stringify({format:'strata',version:3,exportedAt:new Date().toISOString(),si:raw.si,assets:raw.assets,wan:raw.wan,services:raw.services||[],risk:raw.risk||{}},null,2);
   await saveFile(`strata-${today()}.json`,'application/json',data);
 }
+// What is wrong with the documents of a file, or '': checked before anything is replaced (public/validate.js)
+function fileProblem(o){
+  for(const kind of ['si','assets'])for(const [id,d] of Object.entries(o[kind]||{})){
+    if(!StrataValidate.ID_RE.test(id))return `invalid id “${id.slice(0,60)}”`;
+    if(d===null&&o.scope==='si'&&kind==='assets')continue;
+    const p=StrataValidate.docProblem(kind,d);if(p)return `${kind==='si'?'IS':'asset'} “${id.slice(0,60)}”: ${p}`;
+  }
+  return '';
+}
 $('#io').addEventListener('change',e=>{
   const f=e.target.files&&e.target.files[0];if(!f)return;
   const r=new FileReader();
   r.onload=async()=>{
     let o;try{o=JSON.parse(r.result);}catch(err){toast('This file is not valid JSON.',true);return;}
-    if(!o||typeof o.si!=='object'||typeof o.assets!=='object'){toast('Unexpected format: an export needs the “si” and “assets” keys.',true);return;}
+    if(!o||typeof o.si!=='object'||typeof o.assets!=='object'||!o.si||!o.assets){toast('Unexpected format: an export needs the “si” and “assets” keys.',true);return;}
+    {const p=fileProblem(o);if(p){toast('This file cannot be imported: '+p+'.',true);return;}}
     if(o.scope==='si'){
       // one IS: replace only that IS and its assets
       const ch=changesFromFile(o),tasks=[];
@@ -2020,8 +2030,10 @@ async function saveBlob(name,blob){
 const fileStem=s=>String(s||'export').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9._-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60)||'export';
 const today=()=>new Date().toISOString().slice(0,10);
 // CSV for spreadsheets: semicolon separator and UTF-8 mark, so Excel in French opens it in columns
+// A cell that starts like a formula (= + - @, tab, CR) gets a leading quote: a spreadsheet opening the file shows it
+// as text instead of running it (an asset named =HYPERLINK(…) from a connector or a contributor)
 function csv(rows){
-  const cell=v=>{v=v==null?'':String(v);return /[;"\r\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const cell=v=>{v=v==null?'':String(v);if(typeof v==='string'&&/^[=+\-@\t\r]/.test(v)&&!/^-?\d+(\.\d+)?$/.test(v))v="'"+v;return /[;"\r\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
   return '﻿'+rows.map(r=>r.map(cell).join(';')).join('\r\n')+'\r\n';
 }
 const nodeInfo=id=>{
@@ -2881,7 +2893,8 @@ function proposalForm(){
     if(from==='file'){
       const f=$('#fFile').files[0];if(!f)return formErr('Choose the file to propose.');
       let o;try{o=JSON.parse(await f.text());}catch(e){return formErr('This file is not valid JSON.');}
-      if(!o||typeof o.si!=='object'||typeof o.assets!=='object')return formErr('Unexpected format: a Strata export has the “si” and “assets” keys.');
+      if(!o||typeof o.si!=='object'||typeof o.assets!=='object'||!o.si||!o.assets)return formErr('Unexpected format: a Strata export has the “si” and “assets” keys.');
+      {const p=fileProblem(o);if(p)return formErr('This file cannot be proposed: '+p+'.');}
       changes=changesFromFile(o);const ks=Object.keys(o.si);if(ks.length===1)siteId=ks[0];
       if(!Object.keys(changes.si).length&&!Object.keys(changes.assets).length&&!changes.services&&!changes.risk)return formErr('This file is identical to the map: nothing to propose.');
     }
@@ -3347,7 +3360,7 @@ function incToggle(on){
 // Shows an asset on the model without leaving the sheet: the rest dims, the view flies to it
 function incLocate(id){
   const a=byId[id];if(!a)return;
-  if(state.hidden.has(a.vlan)){state.hidden.delete(a.vlan);const cb=$('#vl-'+a.vlan);if(cb)cb.checked=true;}
+  if(state.hidden.has(a.vlan)){state.hidden.delete(a.vlan);const cb=$('#vl-'+CSS.escape(a.vlan));if(cb)cb.checked=true;}
   state.incHl=[id];INCV=null;refresh();
   if(state.flat)centerFlatOn(a);else if(a.group){const p=new THREE.Vector3();a.group.getWorldPosition(p);p.y+=a.h/2;flyTo(p);}
   clearTimeout(incLocate.t);incLocate.t=setTimeout(()=>{state.incHl=null;INCV=null;refresh();},4000);
@@ -3379,7 +3392,7 @@ function incRunHtml(inc){
   const rv=runView(inc);if(!rv)return `<p class="empty">${IR.isMuster(inc.run)?'Reading the incident from Muster…':`Playbook ${esc(inc.run.pb)} is unknown here.`}</p>`;
   const {pb,run}=rv,R=IR.route(pb,run),w=Inc.canWrite;if(!run.cur)return '<p class="empty">This response has no step.</p>';
   return `<ol class="inc-steps">${R.map((sid,i)=>{const s=IR.step(pb,sid),cur=sid===run.cur&&!run.closed,done=i<run.path.length-1||(run.closed&&sid===run.cur),ahead=i>=run.path.length;
-    let h=`<li class="inc-step ${s.type}${done?' done':''}${cur?' cur':''}${ahead?' ahead':''}"><span class="dot">${done?'✓':i+1}</span><div class="inc-sb"><b>${esc(s.title)}</b><small>${esc(s.phase)}${s.role?' · '+esc(s.role):''}${s.sla?` · SLA ${s.sla} min`:''}</small>${run.answers[sid]?`<span class="inc-ans">→ ${esc(run.answers[sid])}</span>`:''}`;
+    let h=`<li class="inc-step ${esc(s.type)}${done?' done':''}${cur?' cur':''}${ahead?' ahead':''}"><span class="dot">${done?'✓':i+1}</span><div class="inc-sb"><b>${esc(s.title)}</b><small>${esc(s.phase)}${s.role?' · '+esc(s.role):''}${s.sla?` · SLA ${+s.sla||0} min`:''}</small>${run.answers[sid]?`<span class="inc-ans">→ ${esc(run.answers[sid])}</span>`:''}`;
     if(cur){
       const out=IR.nextOf(pb,sid);
       h+=`<div class="inc-cur">${s.desc?`<p class="fhint">${esc(s.desc)}</p>`:''}
@@ -4145,7 +4158,7 @@ function backToOverview(){state.focus=null;renderFocusBar();
 }
 function select(a,focus){
   if(a&&state.path){state.path=false;$('#pathBtn').setAttribute('aria-pressed','false');}
-  if(a&&state.hidden.has(a.vlan)){state.hidden.delete(a.vlan);const cb=$('#vl-'+a.vlan);if(cb)cb.checked=true;}
+  if(a&&state.hidden.has(a.vlan)){state.hidden.delete(a.vlan);const cb=$('#vl-'+CSS.escape(a.vlan));if(cb)cb.checked=true;}
   // the view before the first asset selected, to zoom back out to it once nothing is selected
   if(a&&focus&&!state.selView)state.selView={view3d:{t:controls.target.clone(),c:camera.position.clone()},view2d:Object.assign({},flatView)};
   state.selId=a?a.id:null;

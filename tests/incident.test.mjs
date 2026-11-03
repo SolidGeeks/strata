@@ -176,3 +176,24 @@ test('decision effects only move forward: suspected, compromised, contained', ()
   assert.deepEqual(eff('suspected', 'affected'), [], 'never back to suspected');
   assert.deepEqual(eff('compromised', 'affected'), [['pc-01', 'compromised']]);
 });
+
+test('prompts: names in free text are replaced, and the leak check finds addresses and host names it does not know', () => {
+  const s = site();
+  s.name = 'AcmeCorp';
+  Object.assign(s.byId['db-01'], { role: 'Payroll of AcmeCorp, admin at john.doe@acme.example, peers with web-01', apps: [{ name: 'AcmeCorp HR portal', version: '2.1', ports: ['tcp/443'] }], vulns: [{ id: 'CFG-1', title: 'Weak password on vpn.acme.example (10.9.9.9)', cvss: 7, sev: 'high' }] });
+  s.vlans[1].name = 'AcmeCorp servers';
+  const { risk, play } = I.prompts(s, 'db-01', { lang: 'en' });
+  for (const t of [risk, play]) {
+    for (const bad of ['AcmeCorp', 'john.doe', 'acme.example', '10.9.9.9', 'web-01']) assert.ok(!t.includes(bad), `${bad} reached the prompt`);
+    assert.deepEqual(J(I.leaks(s, t, '')), []);
+  }
+  assert.ok(risk.includes('ASSET-01') || risk.includes('[asset]'));
+  // a pasted text with an address nobody listed is still flagged
+  assert.deepEqual(J(I.leaks(s, 'mail ops@other.example or 192.168.1.1', '')).sort(), ['192.168.1.1', 'ops@other.example', 'other.example'].sort());
+});
+
+test('Muster steps: an unknown type becomes an action and the SLA a number', () => {
+  const pb = I.fromGraph({ graph: { nodes: [{ id: 'a', type: 'action"><img src=x>', title: 't', sla: '5<b>' }], edges: [] } });
+  assert.equal(pb.steps[0].type, 'action');
+  assert.equal(pb.steps[0].sla, 0);
+});

@@ -20,7 +20,7 @@
     {
       "id": "netbox",
       "name": "NetBox",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Devices, virtual machines, VLANs and prefixes of each IS, from the NetBox source of truth",
       "author": "Solid Geeks",
       "license": "AGPL-3.0-or-later",
@@ -30,8 +30,8 @@
         "map": true,
         "network": true
       },
-      "url": "netbox-1.0.0.tgz",
-      "sha256": "c78f5a8ba6556b50cbb0c5b89e54800a5f73912dbe674de879a4450ea44dddaa"
+      "url": "netbox-1.0.1.tgz",
+      "sha256": "56ccd39b2baa01d5a48f11797be802cb31dad375bb35af9564ca37a5d36ed92e"
     },
     {
       "id": "nmap",

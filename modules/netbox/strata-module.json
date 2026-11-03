@@ -2,7 +2,7 @@
   "strataModule": 1,
   "id": "netbox",
   "name": "NetBox",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Devices, virtual machines, VLANs and prefixes of each IS, from the NetBox source of truth",
   "author": "Solid Geeks",
   "license": "AGPL-3.0-or-later",

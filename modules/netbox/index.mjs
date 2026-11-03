@@ -85,7 +85,7 @@ export async function run(cfg, ctx) {
       w.si.zones = w.si.zones && w.si.zones.length ? w.si.zones : [{ id: 'z-def', name: 'Main zone' }];
       let z = w.si.zones.find(x => x.id === `z-${sid}-imported`);
       if (!z) { z = { id: `z-${sid}-imported`, name: 'Imported' }; w.si.zones.push(z); }
-      let id = `v-${sid}-${v.vid}`, k = 2; while (w.si.vlans.some(x => x.id === id)) id = `v-${sid}-${v.vid}-${k++}`;
+      const vid = parseInt(v.vid, 10) || 0; let id = `v-${sid}-${vid}`, k = 2; while (w.si.vlans.some(x => x.id === id)) id = `v-${sid}-${vid}-${k++}`;
       w.si.vlans.push({ id, num: +v.vid, name: v.name || `VLAN ${v.vid}`, cidr, zone: z.id, ext: { netbox: String(v.id) } });
       report.vlansNew++;
     }

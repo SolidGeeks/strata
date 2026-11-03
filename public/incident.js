@@ -150,10 +150,11 @@ function advance(site,inc,pb,to,label){
 // A run that points to a real Muster incident (an example has no Muster id; older ones say source:'muster')
 const isMuster=r=>!!(r&&r.source==='muster'&&r.id);
 // The playbook frozen in the incident, in the shape above; edges keep their Muster id
+const STEP_TYPES=['start','action','decision','escalation','end'];
 function fromGraph(m){
   const g=m.graph||{nodes:[],edges:[]};
   return {code:m.pbCode,name:m.pbName,v:m.v,severity:m.severity,
-    steps:g.nodes.map(n=>({id:n.id,type:n.type,title:n.title,phase:n.phase||'',role:n.role||'',sla:n.sla||0,desc:n.desc||'',checklist:n.checklist||[],targets:Array.isArray(n.targets)?n.targets:[],effects:n.effects||null})),
+    steps:g.nodes.map(n=>({id:n.id,type:STEP_TYPES.includes(n.type)?n.type:'action',title:n.title,phase:n.phase||'',role:n.role||'',sla:Math.max(0,+n.sla||0),desc:n.desc||'',checklist:n.checklist||[],targets:Array.isArray(n.targets)?n.targets:[],effects:n.effects||null})),
     edges:g.edges.map(e=>[e.from,e.to,e.label||'',e.id])};
 }
 // Where the response stands: the steps taken, the answers given, the tasks ticked
@@ -242,7 +243,22 @@ function placeholders(site,id,opts){
   const via=[...new Set(own.flatMap(f=>f.via||[]))].filter(x=>site.byId[x]&&!neigh.includes(x)&&x!==id);
   const r=reach(site,[id],2),crit=Object.keys(r).filter(x=>!neigh.includes(x)&&!via.includes(x)&&(site.byId[x].crit===3||(site.critIds||[]).includes(x)));
   [...neigh,...via,...crit].forEach(x=>put(x,'ASSET-'+pad2(n++),'asset'));
-  return {map,rev,neigh,via,crit,
+  // Free text (a role, an application, a vulnerability title, a flow note) can name things too: every name this IS
+  // knows is replaced (by its placeholder when it has one), then e-mail addresses, IP addresses and host names
+  const known=[];
+  const add=(real,to)=>{real=String(real||'').trim();if(real.length>2)known.push([real,to]);};
+  site.assets.forEach(a=>{add(a.name,map.get(a.id)||'[asset]');add(a.ip,'[ip]');(a.contacts||[]).forEach(c=>{add(c.name,'[person]');add(c.email,'[email]');add(c.phone,'[phone]');});});
+  site.contacts.forEach(c=>{add(c.name,'[person]');add(c.email,'[email]');add(c.phone,'[phone]');});
+  site.vlans.forEach(v=>{add(v.name,'[segment]');add(v.cidr,'[subnet]');});
+  (site.zones||[]).forEach(z=>add(z.name,'[zone]'));
+  if(!opts.biz)site.business.forEach(b=>{add(b.name,'[service]');add(b.owner,'[person]');});
+  add(site.name,'[organisation]');
+  String(opts.never||'').split(',').forEach(x=>add(x,'[redacted]'));
+  known.sort((a,b)=>b[0].length-a[0].length);
+  const rx=known.length?new RegExp(known.map(([r])=>r.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|'),'gi'):null,low=new Map(known.map(([r,t])=>[r.toLowerCase(),t]));
+  const scrub=t=>{let x=String(t??'');if(rx)x=x.replace(rx,m=>low.get(m.toLowerCase())||'[redacted]');
+    return x.replace(EMAIL_RE,'[email]').replace(IP_RE,'[ip]').replace(HOST_RE,'[host]');};
+  return {map,rev,neigh,via,crit,scrub,
     seg:x=>{const v=site.vlanById[site.byId[x].vlan];return map.get('vlan:'+v.id)||put('vlan:'+v.id,'SEG-'+(sg++),'segment');},
     biz:b=>opts.biz?b.name:(map.get('biz:'+b.id)||put('biz:'+b.id,'SVC-B'+(bz++),'business')),
     ph:x=>isNet(x)?(x==='internet'?'Internet':`${(site.svcById[x]||{}).name||'Internet service'} (${(site.svcById[x]||{}).category||'Internet service'})`):map.get(x)};
@@ -253,20 +269,24 @@ const L={
   fr:{type:'Type',role:'Rôle',sys:'Système',apps:'Applications',crit:'Criticité',seg:'Segment réseau',zone:'zone',expo:'Exposition',vul:'Vulnérabilités connues',none:'aucune enregistrée',in:'Flux entrants (qui lui parle)',out:'Flux sortants (à qui il parle)',biz:'Services métier qui en dépendent',neigh:'Voisins cités ci-dessus',reach:'Actifs critiques atteignables en 2 sauts',direct:'directement joignable depuis Internet',hops:n=>`joignable depuis Internet en ${n} sauts via les flux autorisés`,unreach:'non joignable depuis Internet selon les flux connus',risky:'signalé à risque',logs:'Envoie ses journaux à un SIEM',backup:'Sauvegardé par',yes:'oui',no:'aucun flux enregistré',via:'via',levels:['','faible','moyenne','haute'],ctx:'Contexte',
     defCtx:'Organisation de taille moyenne, un site, une équipe informatique interne et un SOC externalisé.'}
 };
+const EMAIL_RE=/[\w.+-]+@[\w-]+(\.[\w-]+)+/g,IP_RE=/\b\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?\b/g;
+// host names: labels ending with a usual top-level or internal domain (node.js or a version number are left alone)
+const HOST_RE=/\b[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)*\.(com|net|org|fr|de|be|ch|es|it|nl|uk|eu|io|gov|gouv|edu|info|biz|local|lan|corp|internal|intra|intranet|example|home|priv)\b/gi;
 const ver=(s,opts)=>opts.versions?String(s||''):String(s||'').replace(/(\d+)(\.\d+)+/g,'$1.x');
 function assetBlock(site,id,P,opts){
   const a=site.byId[id],v=site.vlanById[a.vlan],T=L[opts.lang]||L.en,ty=x=>TYPE_LABEL[x]||x;
-  const peer=x=>{if(isNet(x))return P.ph(x);const b=site.byId[x];return `${P.ph(x)} (${ty(b.type)}${b.role?', '+b.role:''}, ${P.seg(x)})`;};
+  const S=P.scrub;
+  const peer=x=>{if(isNet(x))return P.ph(x);const b=site.byId[x];return `${P.ph(x)} (${ty(b.type)}${b.role?', '+S(b.role):''}, ${P.seg(x)})`;};
   const thru=f=>(f.via||[]).length?` · ${T.via} ${f.via.map(x=>`${P.ph(x)} (${ty(site.byId[x].type)})`).join(' → ')}`:'';
-  const fl=f=>`${f.src===id?peer(f.dst):peer(f.src)} · ${f.port} · ${f.vol} MB/h${thru(f)}${f.risk?` · ${T.risky}${f.note?': '+f.note:''}`:''}`;
-  const vul=a.vulns.map(x=>{const cfg=!/^CVE-|^GHSA-/i.test(x.id);return `  - ${cfg?'Configuration':opts.cves?x.id:'Vulnerability'}: ${x.title}${x.cvss!=null?`, CVSS ${x.cvss}`:''}${x.epss!=null?`, EPSS ${Math.round(x.epss*100)}%`:''}${x.kev?', CISA KEV':''}`;});
+  const fl=f=>`${f.src===id?peer(f.dst):peer(f.src)} · ${f.port} · ${f.vol} MB/h${thru(f)}${f.risk?` · ${T.risky}${f.note?': '+S(f.note):''}`:''}`;
+  const vul=a.vulns.map(x=>{const cfg=!/^CVE-|^GHSA-/i.test(x.id);return `  - ${cfg?'Configuration':opts.cves?x.id:'Vulnerability'}: ${S(x.title)}${x.cvss!=null?`, CVSS ${x.cvss}`:''}${x.epss!=null?`, EPSS ${Math.round(x.epss*100)}%`:''}${x.kev?', CISA KEV':''}`;});
   const siem=site.flows.some(f=>f.src===id&&site.byId[f.dst]&&/siem|log/i.test(site.byId[f.dst].role||''));
   const bk=site.flows.filter(f=>f.dst===id&&site.byId[f.src]&&/backup|sauvegarde/i.test(site.byId[f.src].role||'')).map(f=>P.ph(f.src));
   const bz=business(site,[id]),inn=site.flows.filter(f=>f.dst===id),out=site.flows.filter(f=>f.src===id),hops=site.expo[id];
   const direct=site.flows.some(f=>isNet(f.src)&&f.dst===id);
-  const lines=[`## ASSET-T`,`- ${T.type}: ${ty(a.type)}`,`- ${T.role}: ${a.role||'—'}`,`- ${T.sys}: ${ver(a.os,opts)||'—'}`];
-  if((a.apps||[]).length)lines.push(`- ${T.apps}: ${a.apps.map(x=>`${x.name}${x.version?' '+ver(x.version,opts):''}${x.ports.length?' ('+x.ports.join(', ')+')':''}`).join('; ')}`);
-  lines.push(`- ${T.crit}: ${T.levels[a.crit]||'—'} (${a.crit}/3)`,`- ${T.seg}: ${P.seg(id)} "${v.name}", ${T.zone} "${v.zone}"`,
+  const lines=[`## ASSET-T`,`- ${T.type}: ${ty(a.type)}`,`- ${T.role}: ${S(a.role)||'—'}`,`- ${T.sys}: ${S(ver(a.os,opts))||'—'}`];
+  if((a.apps||[]).length)lines.push(`- ${T.apps}: ${a.apps.map(x=>`${S(x.name)}${x.version?' '+S(ver(x.version,opts)):''}${x.ports.length?' ('+x.ports.join(', ')+')':''}`).join('; ')}`);
+  lines.push(`- ${T.crit}: ${T.levels[a.crit]||'—'} (${a.crit}/3)`,`- ${T.seg}: ${P.seg(id)}${opts.segNames?` "${v.name}", ${T.zone} "${v.zone}"`:''}`,
     `- ${T.expo}: ${direct?T.direct:hops!=null?T.hops(hops):T.unreach}`,
     `- ${T.biz}: ${bz.map(b=>`${P.biz(b)} (${T.crit.toLowerCase()} ${T.levels[b.crit]})`).join(', ')||T.none}`,
     `- ${T.logs}: ${siem?T.yes:T.no}`,`- ${T.backup}: ${bk.join(', ')||T.no}`,
@@ -275,9 +295,9 @@ function assetBlock(site,id,P,opts){
     `- ${T.out}:`,...(out.length?out.map(f=>'  - '+fl(f)):[`  - ${T.none}`]));
   if(opts.neigh){
     const nb=[...P.neigh,...P.via].map(x=>{const b=site.byId[x],k=b.vulns.filter(z=>z.kev||z.sev==='crit');
-      return `  - ${P.ph(x)}: ${ty(b.type)}, ${ver(b.os,opts)||'—'}${k.length?' — '+k.map(z=>(opts.cves&&/^CVE-/i.test(z.id)?z.id+' ':'')+z.title+(z.kev?' (KEV)':'')).join('; '):''}`;});
+      return `  - ${P.ph(x)}: ${ty(b.type)}, ${S(ver(b.os,opts))||'—'}${k.length?' — '+k.map(z=>(opts.cves&&/^CVE-/i.test(z.id)?z.id+' ':'')+S(z.title)+(z.kev?' (KEV)':'')).join('; '):''}`;});
     if(nb.length)lines.push(`- ${T.neigh}:`,...nb);
-    if(P.crit.length)lines.push(`- ${T.reach}:`,...P.crit.map(x=>`  - ${P.ph(x)}: ${ty(site.byId[x].type)}, ${site.byId[x].role||''}`));
+    if(P.crit.length)lines.push(`- ${T.reach}:`,...P.crit.map(x=>`  - ${P.ph(x)}: ${ty(site.byId[x].type)}, ${S(site.byId[x].role)}`));
   }
   return lines.join('\n');
 }
@@ -428,7 +448,12 @@ function sensitive(site,never){
   String(never||'').split(',').forEach(add);
   return [...s];
 }
-function leaks(site,text,never){const low=String(text).toLowerCase();return sensitive(site,never).filter(x=>low.includes(x.toLowerCase()));}
+// The listed strings found in the text, and any e-mail address, IP address or host name, known or not
+function leaks(site,text,never){
+  const t=String(text),low=t.toLowerCase(),out=new Set(sensitive(site,never).filter(x=>low.includes(x.toLowerCase())));
+  for(const re of [EMAIL_RE,IP_RE,HOST_RE])for(const m of t.matchAll(re))out.add(m[0]);
+  return [...out];
+}
 function reidentify(site,text,P){
   return String(text).replace(/\b(ASSET-T|ASSET-\d\d|SEG-\d+|SVC-B\d+)\b/g,ph=>{const r=P.rev.find(x=>x.ph===ph);if(!r)return ph;
     if(r.kind==='asset')return site.byId[r.real].name;
