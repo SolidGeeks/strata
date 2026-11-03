@@ -16,12 +16,13 @@ Type=simple
 User=strata
 Group=strata
 WorkingDirectory=/opt/strata
-EnvironmentFile=/etc/strata.env
 Environment=NODE_ENV=production
 Environment=PORT=8080
-Environment=HOST=127.0.0.1
-Environment=DATA_DIR=/var/lib/strata
-ExecStart=/usr/bin/node server/server.js
+EnvironmentFile=/etc/strata.env
+# HOST and DATA_DIR are given on the command line, so they win over /etc/strata.env (in systemd, the
+# EnvironmentFile overrides Environment=, and .env.example says HOST=0.0.0.0). Put a reverse proxy with TLS in
+# front; to listen on the network anyway, change HOST here.
+ExecStart=/usr/bin/env HOST=127.0.0.1 DATA_DIR=/var/lib/strata /usr/bin/node server/server.js
 Restart=on-failure
 RestartSec=3
 

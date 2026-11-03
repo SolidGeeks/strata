@@ -41,6 +41,7 @@
       <li><a href="#map">The map</a></li>
       <li><a href="#history">History</a></li>
       <li><a href="#proposals">Proposals</a></li>
+      <li><a href="#incidents">Incidents and Muster</a></li>
       <li><a href="#connectors">Connectors</a></li>
       <li><a href="#modules">Module store</a></li>
       <li><a href="#admin">Accounts, tokens, sessions</a></li>
@@ -60,7 +61,7 @@
     <ul>
       <li>All routes are under the server’s own address, for example <code>https://strata.example.lan/api/…</code>. Bodies and answers are JSON (UTF-8).</li>
       <li><strong>Writes</strong> (every method but <code>GET</code> and <code>HEAD</code>) must send both headers <code>Content-Type: application/json</code> and <code>X-Requested-With: strata</code>, or they are refused with <code>400</code>. This is what stops another site from writing through a signed-in browser.</li>
-      <li><strong>Roles</strong>, from least to most: <code>viewer</code> (reads), <code>contributor</code> (proposes), <code>approver</code> (changes the map, reviews proposals, runs connectors), <code>admin</code> (accounts, tokens, connector settings, modules). A role can do everything the roles below it can. With <code>READ_ONLY=true</code> everybody is a viewer.</li>
+      <li><strong>Roles</strong>, from least to most: <code>viewer</code> (reads), <code>contributor</code> (proposes), <code>approver</code> (changes the map, reviews proposals, runs connectors), <code>admin</code> (accounts, tokens, connector settings, modules). A role can do everything the roles below it can. With <code>READ_ONLY=true</code> everybody is a viewer, and every write is refused with <code>403</code>.</li>
       <li><strong>Ids</strong> (IS, assets, proposals) are 1 to 120 characters among <code>A-Z a-z 0-9 _ . : @ + ~ -</code>.</li>
       <li><strong>Batches</strong>: send <code>X-Batch: &lt;any id&gt;</code> on several writes to show them as one entry in the history, with <code>X-Batch-Label: &lt;URL-encoded label&gt;</code> as its title.</li>
       <li><strong>Sizes</strong>: one IS or asset document is 512 KB at most; an import, a proposal or a file sent to a connector is <code>MAX_IMPORT_MB</code> (20 MB) at most. Bigger bodies answer <code>413</code>.</li>
@@ -75,7 +76,7 @@
         <tr><td>API token</td><td><code>Authorization: Bearer stk_…</code>. Created by an admin (<a href="#admin">below</a>) with its own role and expiry. Not available on a server with no accounts.</td><td><code>token</code></td></tr>
         <tr><td>Single sign-on session</td><td>The <code>strata_session</code> cookie (<code>__Host-strata_session</code> over HTTPS) set by <code>/auth/oidc/callback</code>. Meant for browsers.</td><td><code>sso</code></td></tr>
         <tr><td>Trusted proxy header</td><td><code>SSO_HEADER_USER</code> (and <code>SSO_HEADER_GROUPS</code>), believed only from the addresses in <code>SSO_HEADER_TRUST</code>.</td><td><code>header</code></td></tr>
-        <tr><td>No accounts</td><td>When no account and no single sign-on is set up, every request is an admin (or a viewer with <code>READ_ONLY</code>). Use this on a laptop only.</td><td><code>open</code></td></tr>
+        <tr><td>No accounts</td><td>When no account and no single sign-on is set up, every request is an admin (or a viewer with <code>READ_ONLY</code>). Use this on a laptop only: the server refuses to start this way unless it listens on <code>127.0.0.1</code> or <code>ALLOW_OPEN=true</code>.</td><td><code>open</code></td></tr>
       </tbody>
     </table></div>
     <p>For scripts, use an API token with the lowest role that does the job: a <code>contributor</code> token for a tool that should only propose, an <code>approver</code> token for one that writes. Repeated failed sign-ins answer <code>429</code> with a <code>Retry-After</code> header.</p>
@@ -155,12 +156,12 @@
         <tr><td><code>POST /api/proposals</code></td><td>contributor</td><td><code>{title, description?, siteId?, changes, source?}</code> → <code>{ok, proposal}</code>, a draft</td></tr>
         <tr><td><code>GET /api/proposals/{id}</code></td><td>viewer</td><td>→ <code>{proposal, conflicts}</code>: the whole proposal (with <code>changes</code>, <code>base</code>, the documents as they were when it was prepared, and <code>comments</code>), and the items changed on the map since</td></tr>
         <tr><td><code>PUT /api/proposals/{id}</code></td><td>contributor, author or admin</td><td><code>{title?, description?, changes?}</code> → <code>{ok, proposal}</code>. Drafts and rejected proposals only (<code>409</code> otherwise).</td></tr>
-        <tr><td><code>DELETE /api/proposals/{id}</code></td><td>author (draft, rejected, withdrawn) or admin</td><td>→ <code>{ok}</code></td></tr>
+        <tr><td><code>DELETE /api/proposals/{id}</code></td><td>contributor, author (draft, rejected) or admin</td><td>→ <code>{ok}</code></td></tr>
         <tr><td><code>POST /api/proposals/{id}/comment</code></td><td>contributor</td><td><code>{text}</code> → <code>{ok, proposal}</code></td></tr>
         <tr><td><code>POST /api/proposals/{id}/submit</code></td><td>contributor, author</td><td><code>{text?}</code> → <code>{ok, proposal}</code>. <code>400</code> if it changes nothing.</td></tr>
-        <tr><td><code>POST /api/proposals/{id}/withdraw</code></td><td>author or admin</td><td>→ <code>{ok, proposal}</code></td></tr>
+        <tr><td><code>POST /api/proposals/{id}/withdraw</code></td><td>contributor, author or admin</td><td>→ <code>{ok, proposal}</code></td></tr>
         <tr><td><code>POST /api/proposals/{id}/reject</code></td><td>approver</td><td><code>{text?}</code> → <code>{ok, proposal}</code></td></tr>
-        <tr><td><code>POST /api/proposals/{id}/approve</code></td><td>approver, not the author</td><td><code>{text?, force?}</code> → <code>{ok, rev, proposal}</code>. <code>409</code> with <code>{conflicts}</code> when the map changed under it, unless <code>force: true</code>. <code>403</code> for the author’s own proposal unless <code>ALLOW_SELF_APPROVAL=true</code>.</td></tr>
+        <tr><td><code>POST /api/proposals/{id}/approve</code></td><td>approver, not the author</td><td><code>{text?, force?, updatedAt?}</code> → <code>{ok, rev, proposal}</code>. <code>updatedAt</code>: the one of the proposal as reviewed; if it changed since (withdrawn, edited and submitted again, refreshed by a connector), <code>409</code> with <code>{changed: true}</code>. <code>409</code> with <code>{conflicts}</code> when the map changed under it, unless <code>force: true</code>. <code>403</code> for the author’s own proposal unless <code>ALLOW_SELF_APPROVAL=true</code>.</td></tr>
       </tbody>
     </table></div>
     <div class="code"><pre><code># a scanner that proposes instead of writing (contributor token)
@@ -169,6 +170,21 @@ curl -H "Authorization: Bearer $STRATA_TOKEN" \
   -X POST https://strata.example.lan/api/proposals \
   -d '{"title":"Weekly scan, Lyon","siteId":"lyon",
        "changes":{"assets":{"lyo-old-ftp":null}}}'</code></pre><button class="copy" type="button">Copy</button></div>
+
+    <h2 id="incidents" style="--edge:var(--s1)">Incidents and Muster</h2>
+    <p>Incident mode keeps one document per IS, outside the map and its history: <code>{on, marks: {assetId: "compromised" | "suspected" | "contained"}, cuts: [flowId], run, log: [{at, msg, kind, by}], from, rev, updatedAt, updatedBy}</code>. Contributors and up change it, without a proposal. The Muster routes answer <code>404</code> without <code>MUSTER_URL</code>; Muster’s own refusals come back with their status and message.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Route</th><th scope="col">Role</th><th scope="col">Request → answer</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/incidents</code></td><td>viewer</td><td>→ <code>{incidents: {IS id: document}}</code></td></tr>
+        <tr><td><code>PUT /api/incidents/{IS id}</code></td><td>contributor</td><td>the document, with the <code>rev</code> it was made on → <code>{ok, incident}</code>, with the new <code>rev</code>. <code>409</code> with <code>{incident}</code> when someone saved meanwhile: read it again and redo the change. New timeline entries are signed with the caller’s name; <code>run</code> is 256 KB at most.</td></tr>
+        <tr><td><code>GET /api/muster</code></td><td>viewer</td><td>→ <code>{url, ok, error, checkedAt, incidents}</code>: the connection and the list of Muster responses</td></tr>
+        <tr><td><code>GET /api/muster/incidents/{id}</code></td><td>viewer</td><td>→ the Muster response, with its playbook</td></tr>
+        <tr><td><code>POST /api/muster/incidents/{id}/advance</code></td><td>contributor</td><td><code>{edgeId}</code>: answers a decision or finishes a step</td></tr>
+        <tr><td><code>POST /api/muster/incidents/{id}/tasks</code></td><td>contributor</td><td><code>{nodeId, index, done}</code>: ticks a task</td></tr>
+        <tr><td><code>POST /api/muster/incidents/{id}/strata</code></td><td>contributor</td><td><code>{site, marks, names, log}</code>: the assets hit and the timeline, for Muster’s report</td></tr>
+      </tbody>
+    </table></div>
 
     <h2 id="connectors" style="--edge:var(--s7)">Connectors</h2>
     <p>Connector routes answer <code>404</code> when connectors are off (<code>CONNECTORS=false</code>). A connector’s <code>id</code> is <code>cyberwatch</code>, <code>glpi</code>, <code>phpipam</code>, <code>paloalto</code> or the id of an installed module.</p>

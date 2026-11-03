@@ -93,7 +93,8 @@ in
         LOGIN_LOCK_MINUTES, TRUST_PROXY (set it to "loopback" behind a reverse proxy on this
         host), PUBLIC_URL, SSO_ISSUER, SSO_CLIENT_ID, SSO_NAME, SSO_ROLE_ADMIN, SSO_ROLE_APPROVER,
         SSO_ROLE_CONTRIBUTOR, SSO_ROLE_VIEWER, SSO_DEFAULT_ROLE, SSO_USER_CLAIM, SSO_GROUPS_CLAIM,
-        SSO_HEADER_USER, SSO_HEADER_GROUPS, SSO_HEADER_TRUST, LOCAL_LOGIN, SESSION_HOURS, CONNECTORS, CONNECTOR_TIMEOUT_MINUTES, MODULE_REGISTRY, MODULE_UPLOAD, SOURCE_URL. The module sets DATA_DIR to
+        SSO_HEADER_USER, SSO_HEADER_GROUPS, SSO_HEADER_TRUST, LOCAL_LOGIN, SESSION_HOURS, CONNECTORS, CONNECTOR_TIMEOUT_MINUTES, MODULE_REGISTRY, MODULE_UPLOAD, SOURCE_URL,
+        MUSTER_URL, MUSTER_USER, MUSTER_POLL_SECONDS, SSO_SCOPES, SSO_TOKEN_AUTH. The module sets DATA_DIR to
         /var/lib/strata. These values end up in the Nix store: put passwords in
         {option}`services.strata.secretFiles` or {option}`services.strata.environmentFile`.
       '';
@@ -103,6 +104,7 @@ in
       EDIT_PASS = secretFile "the first admin account (EDIT_USER), recreated or reset on every start";
       VIEW_PASS = secretFile "the shared read-only account (VIEW_USER)";
       SSO_CLIENT_SECRET = secretFile "the OpenID Connect client (SSO_CLIENT_ID)";
+      MUSTER_PASSWORD = secretFile "the Muster account Strata signs in with (MUSTER_USER)";
     };
 
     environmentFile = mkOption {

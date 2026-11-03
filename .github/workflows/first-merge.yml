@@ -12,4 +12,5 @@ permissions:
 
 jobs:
   celebrate:
-    uses: SolidGeeks/.github/.github/workflows/first-merge.yml@main
+    # pinned by commit: it runs with pull-requests: write on pull_request_target; update the SHA after a review
+    uses: SolidGeeks/.github/.github/workflows/first-merge.yml@4370254cd8fcc97ce72dbedf94a77abb99fc942e # main, 2026-11-03

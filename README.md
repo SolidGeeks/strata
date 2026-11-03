@@ -219,7 +219,8 @@ By default, the port only listens on the machine itself (`127.0.0.1:8080`). To o
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `EDIT_USER` / `EDIT_PASS` | `admin` / empty | First admin account, recreated or reset on every start. **With no `EDIT_PASS` and no account in `data/users.json`, there is no authentication at all.** |
+| `EDIT_USER` / `EDIT_PASS` | `admin` / empty | First admin account, recreated or reset on every start. **With no `EDIT_PASS`, no account in `data/users.json` and no single sign-on, there is no authentication at all**: the server then refuses to start unless it listens on `127.0.0.1` only (`HOST`) or `ALLOW_OPEN=true`. |
+| `ALLOW_OPEN` | `false` | `true` lets a server with no account at all listen on the network (everyone is admin). |
 | `VIEW_USER` / `VIEW_PASS` | `viewer` / empty | Shared read-only account, ignored while `VIEW_PASS` is empty. |
 | `EDIT_PASS_FILE` / `VIEW_PASS_FILE` | — | Read the password from this file instead (Docker secrets, systemd credentials, sops-nix, agenix). The file wins over the variable; a trailing newline is ignored. If the file cannot be read, the server does not start. |
 | `ALLOW_SELF_APPROVAL` | `false` | `true` lets an approver approve their own proposals. |
