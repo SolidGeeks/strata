@@ -52,7 +52,7 @@ test('data files are readable by the server user only, including those of older 
 
 test('a large IS (3500 flows) can be saved, and the history stops at HISTORY_MAX_MB', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'strata-big-'));
-  const port = 9300 + Math.floor(Math.random() * 90) + 100, pass = 'admin-pass-123', base = `http://127.0.0.1:${port}`;
+  const port = 13100 + Math.floor(Math.random() * 400), pass = 'admin-pass-123', base = `http://127.0.0.1:${port}`;
   const proc = spawn(process.execPath, [join(root, 'server/server.js')], {
     env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, EDIT_USER: 'admin', EDIT_PASS: pass, VIEW_PASS: '', CONNECTORS: 'false', HISTORY_MAX_MB: '1' },
     stdio: ['ignore', 'pipe', 'inherit'],
