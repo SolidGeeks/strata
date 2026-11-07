@@ -88,6 +88,7 @@
       <button class="btn small" data-act="new-vlan"><span>+ VLAN</span></button>
       <button class="btn small" data-act="edit-site"><span>Zones, contacts</span></button>
     </div>
+    <div class="btns" style="margin-top:6px"><button class="btn small" data-suggest-zones title="Zones from the flows: what the Internet reaches on top, then by depth, then by role"><span>Suggest zones from the flows</span><span class="mono">auto</span></button></div>
     <div class="btns" style="margin-top:6px"><button class="btn small" data-act="import-vlans" title="Pick VLANs from a CSV, a JSON list or a Strata export and put them in the zones you choose"><span>Import VLANs</span><span class="mono">CSV · JSON</span></button></div>
   </div>
   <div class="sec" data-view="site">
@@ -150,7 +151,7 @@
       <p class="sub" id="arrangeNote">Drag a plate anywhere on its level (left, right, front, back), or use the arrows that appear in the VLAN list. “Line up” puts a level back in a row. The Internet cloud can be dragged too.</p>
     </div>
     <div class="ctlgrp propose-only">
-      <button class="btn small" id="suggestZonesBtn" title="Zones from the flows: what the Internet reaches on top, then by depth, then by role"><span>Suggest zones</span><span class="mono">flows</span></button>
+      <button class="btn small" id="suggestZonesBtn" data-suggest-zones title="Zones from the flows: what the Internet reaches on top, then by depth, then by role"><span>Suggest zones</span><span class="mono">flows</span></button>
       <p class="sub">The Internet on top: each VLAN on the floor of its distance from the Internet along the flows, the others by role. You review it before anything changes.</p>
     </div>
     <div class="ctlgrp edit-only">

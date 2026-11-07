@@ -4776,7 +4776,7 @@ function suggestZonesForm(){
   $('#frm').addEventListener('input',e=>{const n=e.target.closest('[data-sz-name]');if(n){const z=Z.find(x=>x.id===n.dataset.szName);if(z)z.name=n.value;}});
   count();
 }
-$('#suggestZonesBtn').addEventListener('click',()=>{if(state.view!=='site'||!SITE)return;suggestZonesForm();});
+document.addEventListener('click',e=>{if(e.target.closest('[data-suggest-zones]')&&state.view==='site'&&SITE)suggestZonesForm();});
 // "Arrange VLANs": the plates of every zone on a grid, the VLANs that talk side by side (SA.arrangeGrid)
 try{const c=localStorage.getItem('strata-arrange-cols');if(c!==null&&$('#arrCols').querySelector(`option[value="${CSS.escape(c)}"]`))$('#arrCols').value=c;}catch(e){}
 $('#arrCols').addEventListener('change',e=>{try{localStorage.setItem('strata-arrange-cols',e.target.value);}catch(err){}});
