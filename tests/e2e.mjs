@@ -315,6 +315,17 @@ test('plates: all or none, empty VLANs hidden, VLANs imported into chosen zones,
   const boxes = () => admin.locator('#vlans input[type=checkbox]:checked').count();
   const total = await admin.locator('#vlans input[type=checkbox]').count();
 
+  // the title block folds into one line, and the controls move up with it
+  const cartH = () => admin.evaluate(() => document.getElementById('cart').getBoundingClientRect().height);
+  const ctlTop = () => admin.evaluate(() => document.getElementById('ctl').getBoundingClientRect().top);
+  const [h0, t0] = [await cartH(), await ctlTop()];
+  await admin.click('#cart [data-cart-tog]');
+  assert.ok(await cartH() < h0 / 2, 'the title block did not fold');
+  assert.ok(await ctlTop() < t0 - 50, 'the controls did not move up');
+  assert.match(await admin.locator('#cart .mini').textContent(), /IS Lyon.*assets.*exposed.*crit.*risky/s);
+  await admin.click('#cart [data-cart-tog]');
+  assert.ok(Math.abs(await cartH() - h0) < 2);
+
   // all / none, for the IS and for one zone
   await admin.click('.vtools [data-vsel="none"]');
   assert.equal(await boxes(), 0);

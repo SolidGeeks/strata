@@ -657,16 +657,29 @@ function toast(msg,err,sticky){const t=$('#toast');t.textContent=msg;t.className
 /* ================= Title block and lists ================= */
 const nums=arr=>`<div class="nums">${arr.map(([n,l,c])=>`<div class="${c||''}"><b>${n}</b><span class="cap">${l}</span></div>`).join('')}</div>`;
 function storeBadge(){return Store.mode==='api'?`<span class="store"><i></i><b>Server${Store.user?' · '+esc(Store.user)+' ('+esc(Store.role)+')':''}</b></span>${Store.me&&Store.me.signOut?' <button class="ibtn signout" data-signout title="End this session and go back to the sign-in page">Sign out</button>':''}`:`<span class="store local"><i></i><b>This browser only</b></span>`;}
+// The title block can be folded into one line (remembered in this browser): the name, the four key
+// figures, back to the overview and sign out stay; the controls below move up with it
+let cartMin=false;try{cartMin=localStorage.getItem('strata-cart-min')==='1';}catch(e){}
+const cartTog=()=>`<button class="ibtn cart-tog" data-cart-tog aria-expanded="${!cartMin}" title="${cartMin?'Show the title block':'Fold the title block into one line'}" aria-label="${cartMin?'Show the title block':'Fold the title block'}">${cartMin?'▾':'▴'}</button>`;
 function renderCart(){
   const c=$('#cart');
+  c.classList.toggle('min',cartMin);
+  if(cartMin){
+    const ov=state.view==='overview',T=k=>SITES.reduce((n,s)=>n+s.stats[k],0);
+    const f=ov?{a:T('assets'),x:T('xNet'),c:T('crit'),r:T('risk')+WAN.filter(w=>w.risk).length}:{a:SITE.stats.assets,x:SITE.stats.xNet,c:SITE.stats.crit,r:SITE.stats.risk};
+    c.innerHTML=`<div class="mini">${ov?'':'<button class="back" data-back title="Back to the overview" aria-label="Back to the overview">←</button>'}<b class="ttl">${ov?'Strata':'IS '+esc(SITE.name)}</b>
+      <span class="mn" title="Assets · Internet-facing · critical vulnerabilities · risky flows"><span>${f.a} assets</span><span class="net">${f.x} exposed</span><span class="alert">${f.c} crit.</span><span class="alert">${f.r} risky</span></span>
+      ${Store.me&&Store.me.signOut?'<button class="ibtn signout" data-signout title="End this session">Sign out</button>':''}${cartTog()}</div>${ov?'':incBand()}`;
+    document.body.classList.toggle('incident-on',incOn());placeCtl();return;
+  }
   if(state.view==='overview'){
     const T=k=>SITES.reduce((n,s)=>n+s.stats[k],0);
-    c.innerHTML=`<div class="t"><h1>Strata</h1><span class="cap">Overview</span></div><div class="pl"><span class="cap">Sheet</span><b>00</b></div>
+    c.innerHTML=`${cartTog()}<div class="t"><h1>Strata</h1><span class="cap">Overview</span></div><div class="pl"><span class="cap">Sheet</span><b>00</b></div>
     <div class="meta"><span>Scope <b>${plural(SITES.length,'IS').replace('ISs','IS')} · ${plural(T('vlans'),'VLAN')}</b></span><span>Storage ${storeBadge()}</span></div>
     ${nums([[T('assets'),'assets'],[T('xNet'),'internet-facing','net'],[T('crit'),'critical vulns','alert'],[T('risk')+WAN.filter(w=>w.risk).length,'risky flows','alert']])}`;
   }else{
     const s=SITE.stats;
-    c.innerHTML=`<div class="t"><button class="back" data-back>← Overview</button><h1>IS ${esc(SITE.name)}</h1><span class="cap">${esc(SITE.kind||'Information system')}</span></div><div class="pl"><span class="cap">Sheet</span><b>${SITE.planche}</b></div>
+    c.innerHTML=`${cartTog()}<div class="t"><button class="back" data-back>← Overview</button><h1>IS ${esc(SITE.name)}</h1><span class="cap">${esc(SITE.kind||'Information system')}</span></div><div class="pl"><span class="cap">Sheet</span><b>${SITE.planche}</b></div>
     <div class="meta"><span>Zones <b>${ZONES.length}</b></span><span>Scale <b>1 plate = 1 VLAN</b></span><span>Storage ${storeBadge()}</span></div>
     ${nums([[s.assets,'assets'],[s.xNet,'internet-facing','net'],[s.crit,'critical vulns','alert'],[s.risk,'risky flows','alert']])}${incBand()}`;
   }
@@ -4699,7 +4712,8 @@ function stopRotate(){if(state.rotate){state.rotate=false;$('#optRotate').checke
 /* ================= Controls ================= */
 const rerender=()=>state.view==='site'?refresh():refreshOverview();
 const segPress=(sel,b)=>document.querySelectorAll(sel+' button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
-$('#cart').addEventListener('click',e=>{if(e.target.closest('[data-back]'))backToOverview();});
+$('#cart').addEventListener('click',e=>{if(e.target.closest('[data-back]'))backToOverview();
+  if(e.target.closest('[data-cart-tog]')){cartMin=!cartMin;try{localStorage.setItem('strata-cart-min',cartMin?'1':'0');}catch(err){}renderCart();const t=$('#cart [data-cart-tog]');if(t)t.focus();}});
 $('#siteList').addEventListener('click',e=>{const b=e.target.closest('[data-site]');if(b)selectSite(siteById[b.dataset.site],true);});
 $('#vlans').addEventListener('change',e=>{const id=e.target.dataset.vlan;if(!id)return;if(state.focus){state.focus=null;renderFocusBar();}e.target.checked?state.hidden.delete(id):state.hidden.add(id);
   const a=selAsset();if(a&&state.hidden.has(a.vlan))select(null);else refresh();});
