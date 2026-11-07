@@ -3465,6 +3465,11 @@ function fileImportForm(c){
     const overrides=connValues(),miss=ff.find(x=>x.required&&!String(overrides[x.k]||'').trim());if(miss)return formErr(`Fill in “${miss.label}”.`,'cf_'+miss.k);
     const text=await f.text();
     const btn=det.querySelector('.form-foot [type=submit]');btn.disabled=true;btn.textContent='Reading the file…';
+    // a module that asks for a choice first: what the file holds, then the choice, then the import
+    if(c.file.pick){
+      try{const P=await Busy.track(()=>Store.api('POST',`api/connectors/${c.id}/preview`,{file:{name:f.name,text},overrides}),'Reading the file');onSave=null;return pickForm(c,P,{name:f.name,text},overrides);}
+      catch(e){btn.disabled=false;btn.textContent='Next';return formErr(e.message);}
+    }
     try{const j=await Store.api('POST',`api/connectors/${c.id}/run`,{file:{name:f.name,text},wait:true,overrides});
       onSave=null;const r=j.run;
       if(!r.ok){btn.disabled=false;btn.textContent='Import';return formErr(r.error);}
@@ -3472,8 +3477,69 @@ function fileImportForm(c){
       if(r.proposals.length)openProposal(r.proposals[0].id);else showConnectors();
     }catch(e){btn.disabled=false;btn.textContent='Import';formErr(e.message);}
   },{cancel:()=>showConnectors()});
-  det.querySelector('.form-foot [type=submit]').textContent='Import';
+  det.querySelector('.form-foot [type=submit]').textContent=c.file.pick?'Next':'Import';
   connWireSite(c);
+}
+// The choice a module asks for before its import (file.pick): tick the items of the file and, when the
+// module offers zones, choose the zone of the IS each one goes to, one by one or all the ticked at once
+function pickForm(c,P,file,overrides){
+  const pk=P.pick||{},S=siteById[overrides.site],zoned=!!(pk.zones&&S);
+  const zones=zoned?S.zones.map(z=>({id:z.id,name:z.name})):[];
+  const zByName=n=>zones.find(z=>z.name.toLowerCase()===String(n).trim().toLowerCase());
+  const top=zones.length?zones[zones.length-1].id:'';
+  let extra=[...new Set(P.items.map(i=>i.zone).filter(z=>z&&!zByName(z)))];
+  const rows=P.items.map((it,i)=>Object.assign({},it,{i,zoneSel:it.zone?(zByName(it.zone)?zByName(it.zone).id:'new:'+it.zone):top}));
+  const zOpts=(sel,bulk)=>[...zones.slice().reverse().map(z=>[z.id,z.name]),...extra.map(n=>['new:'+n,`New zone: ${n}`]),...(bulk?[['__new','New zone…']]:[])]
+    .map(([v,t])=>`<option value="${esc(v)}"${v===sel?' selected':''}>${esc(t)}</option>`).join('');
+  const row=r=>`<tr data-vi-row="${r.i}"${r.on?' class="on"':''}><td><input type="checkbox" data-vi-on aria-label="Import ${esc(r.label)}"${r.on?' checked':''}></td>
+    <td><b>${esc(r.label)}</b>${r.detail?`<small class="m">${esc(r.detail)}</small>`:''}${r.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}${r.warn.map(t=>`<span class="tag warn">${esc(t)}</span>`).join('')}</td>
+    ${zoned?`<td><select data-vi-zone aria-label="Zone of ${esc(r.label)}">${zOpts(r.zoneSel)}</select></td>`:''}</tr>`;
+  openForm(pk.title||'Choose what to import',c.name,`
+    <p class="fhint">${esc(file.name)}${S?` · IS ${esc(S.name)}`:''}${P.summary?` · ${esc(P.summary)}`:''}</p>
+    ${pk.help?`<p class="fhint">${esc(pk.help)}</p>`:''}
+    ${P.skipped&&P.skipped.length?`<details class="fhint"><summary>${plural(P.skipped.length,'line')} left out</summary><ul>${P.skipped.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></details>`:''}
+    <div class="vi-tools"><button type="button" class="ibtn" data-vi="all">All</button><button type="button" class="ibtn" data-vi="none">None</button><button type="button" class="ibtn" data-vi="new" title="Only those ticked at first (new)">Suggested</button>
+      <input type="search" id="viFilter" class="search" placeholder="Filter" autocomplete="off"></div>
+    ${zoned?`<div class="vi-bulk"><label for="viZone">Zone for the ticked ones</label><div class="arrRow"><select id="viZone" class="search">${zOpts(top,true)}</select><button type="button" class="btn small" data-vi="apply">Apply</button></div>
+      <div class="f" id="viZoneNewBox" hidden><label for="viZoneNew">New zone name (placed at the top)</label><input id="viZoneNew" maxlength="40"></div></div>`:''}
+    <div class="vi-list"><table class="vi"><thead><tr><th></th><th>Item</th>${zoned?'<th>Zone</th>':''}</tr></thead><tbody id="viBody">${rows.map(row).join('')}</tbody></table></div>
+    <p class="fhint" id="viCount"></p>
+    <p class="fhint">The result is a proposal: nothing changes on the map until it is approved.</p>`,
+  async()=>{
+    const chosen=rows.filter(r=>r.on);if(!chosen.length)return formErr('Tick at least one item.');
+    const picks={};chosen.forEach(r=>{picks[r.key]=zoned?{zone:r.zoneSel}:{};});
+    const btn=det.querySelector('.form-foot [type=submit]');btn.disabled=true;btn.textContent='Importing…';
+    try{const j=await Busy.track(()=>Store.api('POST',`api/connectors/${c.id}/run`,{file,wait:true,overrides,picks}),'Importing');
+      onSave=null;const r=j.run;
+      if(!r.ok){btn.disabled=false;btn.textContent='Import';return formErr(r.error);}
+      toast(r.proposals.length?'Imported: review the proposal.':'Nothing new: the map already matches your choice.');
+      if(r.proposals.length)openProposal(r.proposals[0].id);else showConnectors();
+    }catch(e){btn.disabled=false;btn.textContent='Import';formErr(e.message);}
+  },{cancel:()=>showConnectors()});
+  det.querySelector('.form-foot [type=submit]').textContent='Import';
+  const body=$('#viBody'),frm=$('#frm'),first=new Set(rows.filter(r=>r.on).map(r=>r.i));
+  const count=()=>{$('#viCount').textContent=`${rows.filter(r=>r.on).length} of ${rows.length} ticked`;};
+  const paint=()=>{const q=$('#viFilter').value.trim().toLowerCase();
+    body.querySelectorAll('tr[data-vi-row]').forEach(tr=>{const r=rows[+tr.dataset.viRow];tr.hidden=!!q&&!`${r.label} ${r.detail} ${r.zone} ${r.tags.join(' ')}`.toLowerCase().includes(q);
+      tr.classList.toggle('on',r.on);tr.querySelector('[data-vi-on]').checked=r.on;});count();};
+  frm.addEventListener('change',e=>{const tr=e.target.closest('tr[data-vi-row]');if(!tr)return;const r=rows[+tr.dataset.viRow];
+    if(e.target.matches('[data-vi-on]')){r.on=e.target.checked;tr.classList.toggle('on',r.on);count();}
+    if(e.target.matches('[data-vi-zone]'))r.zoneSel=e.target.value;});
+  if(zoned)$('#viZone').addEventListener('change',e=>{$('#viZoneNewBox').hidden=e.target.value!=='__new';});
+  $('#viFilter').addEventListener('input',paint);
+  frm.addEventListener('click',e=>{const b=e.target.closest('[data-vi]');if(!b)return;const k=b.dataset.vi;
+    const vis=[...body.querySelectorAll('tr[data-vi-row]')].filter(tr=>!tr.hidden).map(tr=>rows[+tr.dataset.viRow]);
+    if(k==='all'||k==='none'||k==='new'){vis.forEach(r=>r.on=k==='all'?true:k==='new'?first.has(r.i):false);paint();return;}
+    if(k==='apply'){let sel=$('#viZone').value;
+      if(sel==='__new'){const n=$('#viZoneNew').value.trim();if(!n)return formErr('Name the new zone.','viZoneNew');
+        const z=zByName(n);sel=z?z.id:'new:'+n;if(!z&&!extra.includes(n))extra.push(n);}
+      const t=rows.filter(r=>r.on);if(!t.length)return formErr('Tick the items to put in this zone first.');
+      t.forEach(r=>r.zoneSel=sel);$('#ferr').hidden=true;
+      body.innerHTML=rows.map(row).join('');paint();
+      $('#viZone').innerHTML=zOpts(sel,true);$('#viZoneNewBox').hidden=true;$('#viZoneNew').value='';
+      toast(`${plural(t.length,'item')} set to zone ${sel.startsWith('new:')?sel.slice(4):(zones.find(z=>z.id===sel)||{}).name}.`);}
+  });
+  count();
 }
 det.addEventListener('change',async e=>{
   if(e.target.id!=='modFile'||!e.target.files[0])return;

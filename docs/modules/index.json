@@ -18,6 +18,22 @@
       "sha256": "a2c1bb73afd5102c7e91ce84046e4b9d96e1931bfdf2856af73f885708642fab"
     },
     {
+      "id": "csv-vlans",
+      "name": "CSV VLANs",
+      "version": "1.0.0",
+      "description": "VLANs of an IS from a CSV (number, name, address range): choose the VLANs to bring and the zone of each",
+      "author": "Solid Geeks",
+      "license": "AGPL-3.0-or-later",
+      "homepage": "https://github.com/SolidGeeks/strata/tree/main/modules/csv-vlans",
+      "badge": "VLAN",
+      "permissions": {
+        "map": true,
+        "network": false
+      },
+      "url": "csv-vlans-1.0.0.tgz",
+      "sha256": "166097ebd979206b10d22831e0b70045b2861f101b1d0975e9d2ec736be783ef"
+    },
+    {
       "id": "netbox",
       "name": "NetBox",
       "version": "1.0.0",

@@ -96,7 +96,19 @@ export function checkManifest(m, { strataVersion } = {}) {
     if (f.help !== undefined && !str(f.help, 1200)) throw new Error('file.help must be text');
     if (f.role !== undefined && !['contributor', 'approver'].includes(f.role)) throw new Error('file.role must be contributor or approver');
     if (f.fields !== undefined && !(Array.isArray(f.fields) && f.fields.every(k => keys.has(k)))) throw new Error('file.fields must list some of its settings');
-    file = { label: f.label, accept: f.accept || '', help: f.help || '', role: f.role || 'approver', fields: f.fields || [] };
+    // pick: before the import, the module reads the file (preview) and people choose what to bring,
+    // and, with zones: true, the zone of the IS each chosen item goes to
+    let pick = null;
+    if (f.pick !== undefined) {
+      const p = f.pick;
+      if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('file.pick must be an object');
+      if (p.title !== undefined && !str(p.title, 80)) throw new Error('file.pick.title must be text (80 characters at most)');
+      if (p.help !== undefined && !str(p.help, 600)) throw new Error('file.pick.help must be text');
+      if (p.zones !== undefined && typeof p.zones !== 'boolean') throw new Error('file.pick.zones must be true or false');
+      if (p.zones && !fields.some(x => x.type === 'site' && (f.fields || []).includes(x.k))) throw new Error('file.pick.zones needs a setting of type site in file.fields (the IS whose zones are offered)');
+      pick = { title: p.title || 'Choose what to import', help: p.help || '', zones: !!p.zones };
+    }
+    file = { label: f.label, accept: f.accept || '', help: f.help || '', role: f.role || 'approver', fields: f.fields || [], pick };
   }
   if (live === false && !file) throw new Error('a module with live: false must import files');
   return {

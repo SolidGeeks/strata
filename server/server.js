@@ -9,7 +9,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { createConnectors } from './connectors/index.js';
+import { createConnectors, cleanPicks } from './connectors/index.js';
 import { createStore } from './connectors/store.js';
 import { ID_RE as MODULE_ID_RE } from './connectors/modules.js';
 import { ssoConfig, createSso, loginPage } from './sso.js';
@@ -761,6 +761,15 @@ async function api(req, res, parts, url, auth) {
       try { return send(res, 200, { ok: true, message: await connectors.test(id) }); }
       catch (e) { return send(res, 200, { ok: false, message: e.constructor.name === 'ConnectorError' ? e.message : `Unexpected error: ${e.message}` }); }
     }
+    // A module whose file import starts with a choice: reads the file and answers what there is to choose
+    if (r3 === 'preview' && method === 'POST') {
+      const b = await readBody(req, CONFIG.maxImportBytes) || {}, m = connectors.module(id);
+      if (!m.file || !m.file.pick) throw httpError(400, `${m.name} has no choice to make before an import.`);
+      need(auth, m.file.role === 'contributor' ? 'contributor' : 'approver');
+      if (!isObj(b.file) || typeof b.file.text !== 'string' || !b.file.text.length) throw httpError(400, 'Choose the file.');
+      try { return send(res, 200, { ok: true, pick: m.file.pick, ...(await connectors.preview(id, { file: b.file, overrides: isObj(b.overrides) ? b.overrides : {} })) }); }
+      catch (e) { if (e.constructor.name === 'ConnectorError') throw httpError(400, e.message); log('ERROR connector preview', id, e.stack || e.message); throw httpError(500, `Unexpected error: ${e.message}`); }
+    }
     if (r3 === 'run' && method === 'POST') {
       const b = await readBody(req, CONFIG.maxImportBytes) || {};
       // {file: {name, text}}; the Palo Alto import also took {xml, fileName}, kept for scripts written for it
@@ -772,7 +781,9 @@ async function api(req, res, parts, url, auth) {
       need(auth, f && m.file.role === 'contributor' ? 'contributor' : 'approver');
       if (connectors.isRunning(id)) throw httpError(409, 'This connector is already running.');
       if (!f && !connectors.get(id).live) throw httpError(400, m.live === false ? `${m.name} only imports files.` : 'Fill in its settings first.');
-      const p = connectors.run(id, { by: auth.user || 'admin', file: f || undefined, overrides: isObj(b.overrides) ? b.overrides : {} });
+      let picks;
+      try { picks = cleanPicks(b.picks); } catch (e) { throw httpError(400, e.message); }
+      const p = connectors.run(id, { by: auth.user || 'admin', file: f || undefined, overrides: isObj(b.overrides) ? b.overrides : {}, picks });
       if (b.wait) return send(res, 200, { ok: true, run: await p });
       p.catch(() => { });
       return send(res, 202, { ok: true, started: true });

@@ -521,7 +521,8 @@ Every route needs the same credentials as the interface (an API token as `Author
 | `GET /api/connectors` | Connectors, settings (secrets masked) and latest syncs |
 | `PUT /api/connectors/{id}` | A connector's settings (admin); `id`: `cyberwatch`, `glpi`, `phpipam`, `paloalto`, or a module's id |
 | `POST /api/connectors/{id}/test` | Tests access (approver) |
-| `POST /api/connectors/{id}/run` | Runs a sync (approver); `{"wait": true}` waits for the result. `{"file": {"name", "text"}, "overrides": {…}}` imports a file, for the modules that do (Palo Alto, CSV inventory: contributor); `overrides`: the settings the module lets one import change. The older Palo Alto form `{"xml", "fileName"}` still works |
+| `POST /api/connectors/{id}/preview` | For a module that asks for a choice before its import (CSV VLANs): `{"file", "overrides"}` → the items of the file to choose from (`{items, summary, skipped, pick}`); nothing is recorded |
+| `POST /api/connectors/{id}/run` | Runs a sync (approver); `{"wait": true}` waits for the result. With a choice: `"picks": {"<key>": {"zone": "<zone id or new:Name>"}}` next to `file`. `{"file": {"name", "text"}, "overrides": {…}}` imports a file, for the modules that do (Palo Alto, CSV inventory: contributor); `overrides`: the settings the module lets one import change. The older Palo Alto form `{"xml", "fileName"}` still works |
 | `GET /api/modules` | The module store: what the registry offers, and what is installed (admin; `?fresh=1` reads the registry again) |
 | `POST /api/modules/{id}/install` | Installs or updates a module from the store (admin) |
 | `POST /api/modules/upload` | Installs a package: `{"data": "<.tgz in base64>"}` (admin, with `MODULE_UPLOAD=true`) |

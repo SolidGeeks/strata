@@ -30,6 +30,7 @@ has; administrators also see a *Module store* tab.
 | phpIPAM | Built-in | Sections, subnets, VLANs, addresses | Approvers |
 | Palo Alto | Built-in | Allow rules, as flows: from the XML API, or a configuration file | Approvers; any contributor for a file |
 | CSV inventory | Store | Assets of an IS from a spreadsheet saved as CSV | Any contributor (file import) |
+| CSV VLANs | Store | VLANs of an IS (number, name, range): you choose the VLANs and the zone of each | Any contributor (file import) |
 | Nmap scan | Store | Hosts, systems and open ports from `nmap -oX` | Any contributor (file import) |
 | NetBox | Store | Devices, virtual machines, VLANs and prefixes | Approvers |
 
@@ -378,6 +379,32 @@ export async function run(cfg, ctx) {
 }
 ```
 
+### Letting people choose before an import: `file.pick` and `preview()`
+
+Some files hold more than people want to bring: a list of every VLAN of the company, a whole CMDB
+export. Add `pick` to `file` in the manifest, and export `preview(cfg, ctx)`:
+
+```json
+"file": { "label": "Import VLANs from a CSV", "fields": ["site"], "role": "contributor",
+  "pick": { "title": "Choose the VLANs and their zone", "zones": true, "help": "Tick the VLANs to bring…" } }
+```
+
+1. People choose the file and the settings of `file.fields`, then *Next*: Strata calls
+   `preview(cfg, ctx)` (with `ctx.file`, and the map if the module reads it). Nothing is recorded.
+2. `preview` returns `{items, summary, skipped}`. Each item: `key` (unique, given back in `ctx.picks`),
+   `label`, `detail`, `tags` and `warn` (short notes, shown as badges), `on` (ticked at first; default
+   `true`), `zone` (with `pick.zones`: the name of the zone suggested for it, an existing one or one to
+   create). At most 5000 items.
+3. Strata shows the items: tick, filter, and with `pick.zones` choose a zone of the IS for each, or for
+   all the ticked ones at once (an existing zone, a suggested one, or a new one). `pick.zones` needs a
+   setting of type `site` in `file.fields`: the IS whose zones are offered.
+4. *Import* runs `run(cfg, ctx)` with `ctx.picks`, and the result is a proposal, as usual.
+
+From a script: `POST /api/connectors/{id}/preview` with `{file, overrides}` answers `{items, summary,
+skipped, pick}`; `POST /api/connectors/{id}/run` takes `picks` next to `file`. A Strata older than 0.11
+ignores `pick` and runs the import with `ctx.picks` undefined: handle that case as "no choice".
+[`modules/csv-vlans`](modules/csv-vlans) is the example.
+
 `test(cfg, ctx)` checks the access and returns a sentence for the person who clicked *Test the
 connection*. `run(cfg, ctx)` reads and returns `{proposals, summary, report}`:
 
@@ -398,6 +425,7 @@ connection*. `run(cfg, ctx)` reads and returns `{proposals, summary, report}`:
 |---|---|
 | `ctx.state` | The map, `{si, assets, wan, services}`, when the manifest asks for it (`permissions.map`), `null` otherwise. A copy: changing it changes nothing. |
 | `ctx.file` | `{name, text}` for a file import, `null` for a sync. |
+| `ctx.picks` | For a module with `file.pick`: what people chose after the preview, `{key: {zone}}` (the keys of the items chosen; `zone` with `pick.zones`: a zone id of the IS, or `"new:<name>"` for a zone to create). `null` when no choice was made (a script that left `picks` out, or a sync): then do what the settings say. |
 | `ctx.sdk` | The helpers below. |
 | `ctx.log(...)` | A line in the server log, prefixed with the module id. |
 
