@@ -378,6 +378,14 @@ test('plates: all or none, empty VLANs hidden, VLANs imported into chosen zones,
   await admin.click('#cloudReset');
   await admin.waitForFunction(async () => !(await (await fetch('api/state')).json()).si.lyon.cloud2d);
 
+  // Suggest zones: the Internet on top; applied by the admin
+  await admin.click('#viewSeg [data-v="3d"]');
+  await admin.click('#suggestZonesBtn');
+  await admin.waitForSelector('#szBody .sz');
+  assert.equal(await admin.locator('#frm button[type=submit]').textContent(), 'Apply');
+  await admin.click('#frm button[type=submit]');
+  await admin.waitForFunction(async () => { const s = (await (await fetch('api/state')).json()).si.lyon; const top = s.zones[s.zones.length - 1]; return s.vlans.some(v => v.num === 10 && v.zone === top.id); });
+
   // the 3D view is cheap to draw: a few hundred draw calls, nothing drawn while idle, nothing leaked on a rebuild
   await admin.click('#viewSeg [data-v="3d"]');
   await admin.click('.vtools [data-vsel="all"]');
@@ -391,10 +399,11 @@ test('plates: all or none, empty VLANs hidden, VLANs imported into chosen zones,
   const idle0 = (await rs()).frames;
   await admin.waitForTimeout(1500);
   assert.ok((await rs()).frames - idle0 <= 1, 'the model is drawn again while nothing changes');
-  const geo0 = (await rs()).geometries;
-  for (const sp of ['wide', 'compact', 'wide', 'compact']) { await admin.click(`#spaceSeg [data-space="${sp}"]`); await admin.waitForTimeout(400); }
-  await admin.waitForTimeout(800);
-  assert.ok((await rs()).geometries <= geo0 + 5, `GPU geometries grow on each rebuild (${geo0} → ${(await rs()).geometries})`);
+  // shared geometries (equipment models) go to the GPU the first time they are seen: one cycle warms them up,
+  // then rebuilding the model again and again must not add any
+  const cycle = async () => { for (const sp of ['wide', 'compact']) { await admin.click(`#spaceSeg [data-space="${sp}"]`); await admin.waitForTimeout(500); } await admin.waitForTimeout(600); return (await rs()).geometries; };
+  const geo0 = await cycle(), geos = [await cycle(), await cycle(), await cycle()];
+  assert.ok(Math.max(...geos) <= geo0 + 2, `GPU geometries grow on each rebuild (${geo0} → ${geos.join(', ')})`);
   await admin.click('#gfxSeg [data-gfx="quality"]');
   await admin.waitForTimeout(800);
   assert.equal((await rs()).mode, 'quality');

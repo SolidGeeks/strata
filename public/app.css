@@ -52,6 +52,7 @@ button:disabled{opacity:.5;cursor:default}
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,label:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 .cap{font-family:var(--f-display);font-weight:600;font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted)}
 body.readonly .edit-only{display:none!important}
+body.noprop .propose-only{display:none!important}
 
 /* Title block */
 #cart{position:fixed;top:calc(14px + env(safe-area-inset-top,0px));left:max(16px,env(safe-area-inset-left,0px));z-index:5;display:grid;grid-template-columns:1fr auto;width:min(440px,calc(100% - 32px));box-sizing:border-box;font-size:12px}
@@ -735,3 +736,10 @@ table.vi tr:not(.on) td:not(:first-child){opacity:.55}
 table.vi select{max-width:140px;font-size:11px;background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:3px;padding:3px}
 table.vi .tag{display:inline-block;font-size:10px;padding:0 5px;border:1px solid var(--line);border-radius:8px;margin:2px 3px 0 0;color:var(--muted)}
 table.vi .tag.warn{border-color:var(--high);color:var(--high)}
+/* Suggested zones */
+.sz-list{max-height:min(56vh,560px);padding:6px}
+.sz{border:1px solid var(--line);border-radius:3px;margin:0 0 8px;background:var(--panel)}
+.sz-h{display:flex;flex-direction:column;gap:2px;padding:6px;background:var(--panel-2)}
+.sz-h input{padding:5px 7px;font-weight:600}
+.sz-h small{color:var(--muted);font-size:11px}
+.sz table.vi td{padding:4px 6px}

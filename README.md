@@ -207,6 +207,8 @@ The server is idle between requests: CPU is spent on writes (each one saves the 
 | … 0.11, Quality | 397 | 400 000 | 2.8 | only those of the moving dots |
 | … 0.11, Economy | 365 | 134 000 | 21 | 2 |
 
+**Laying out a large IS.** *Layout › Suggest zones* proposes zones from the flows, the Internet on top (distance from the Internet along the flows, then the role of the assets for what the Internet never reaches); *Arrange VLANs* then puts each zone on rows and columns. Both are reviewed or can be undone (*History*).
+
 Without a GPU (a virtual desktop, a remote session), Auto chooses Economy; for very large IS, the 2D diagram and *Plates › None*, then the VLANs you need, stay the lightest.
 
 ---

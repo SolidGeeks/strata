@@ -288,3 +288,45 @@ test('VLAN files: a JSON list (NetBox style) and a Strata export', () => {
   assert.equal(strata.kind, 'strata');
   assert.deepEqual(strata.items, [{ num: 100, name: 'Web', cidr: '192.0.2.0/24', zone: 'DMZ', site: 'lyon', siteName: 'Lyon', vlanId: 'v1' }]);
 });
+
+test('zones from the flows: the Internet on top, by depth, then by role; matching zones kept, empty VLANs stay', () => {
+  const r = J(A.suggestZones({
+    zones: [{ id: 'z1', name: 'Main' }, { id: 'zd', name: 'Our DMZ' }],
+    vlans: [{ id: 'dmz', zone: 'zd' }, { id: 'app', zone: 'z1' }, { id: 'db', zone: 'z1' }, { id: 'pc', zone: 'z1' }, { id: 'ot', zone: 'z1' }, { id: 'mg', zone: 'z1' }, { id: 'empty', zone: 'z1' }],
+    assets: [{ id: 'w', vlan: 'dmz', type: 'server' }, { id: 'a', vlan: 'app', type: 'server' }, { id: 'd', vlan: 'db', type: 'db' }, { id: 'd2', vlan: 'db', type: 'db' },
+      { id: 'p', vlan: 'pc', type: 'workstation' }, { id: 'plc', vlan: 'ot', type: 'plc' }, { id: 'sw', vlan: 'mg', type: 'switch' }],
+    flows: [{ src: 'internet', dst: 'w' }, { src: 'w', dst: 'a' }, { src: 'a', dst: 'd' }, { src: 'p', dst: 'a' }, { src: 'p', dst: 'internet' }, { src: 'svc:x', dst: 'd2' }],
+  }));
+  // bottom first: empty VLANs keep their zone, then the roles of what the Internet never reaches, then depth, the exposed on top
+  // (db is reached by an Internet service: it is exposed too, on the floor of the DMZ)
+  assert.deepEqual(r.zones.map(z => [z.name, z.vlans]), [
+    ['Main', ['empty']], ['Network and administration', ['mg']], ['Industrial (OT)', ['ot']], ['Users', ['pc']],
+    ['Reached from the exposed zone', ['app']], ['Our DMZ', ['dmz', 'db']],
+  ]);
+  assert.equal(r.zones.at(-1).id, 'zd', 'the DMZ zone is kept, with its name');
+  assert.equal(r.byVlan.pc.depth, null, 'a VLAN that only calls the Internet is not reached from it');
+  assert.equal(r.byVlan.db.depth, 1, 'an Internet service counts as the Internet');
+  assert.equal(r.byVlan.empty.moved, false);
+  assert.equal(r.byVlan.app.moved, true);
+});
+
+test('zones from the flows: a VLAN with PLCs among its servers is industrial', () => {
+  const r = J(A.suggestZones({ zones: [{ id: 'z1', name: 'Main' }],
+    vlans: [{ id: 'v50', name: 'OT production', zone: 'z1' }, { id: 'v60', name: 'Lab', zone: 'z1' }],
+    assets: [{ id: 'plc', vlan: 'v50', type: 'plc' }, { id: 'hmi', vlan: 'v50', type: 'server' }, { id: 'hist', vlan: 'v50', type: 'server' },
+      { id: 's1', vlan: 'v60', type: 'server' }, { id: 's2', vlan: 'v60', type: 'server' }, { id: 's3', vlan: 'v60', type: 'server' }, { id: 'cam', vlan: 'v60', type: 'camera' }],
+    flows: [] }));
+  assert.equal(r.byVlan.v50.role, 'ot');
+  assert.equal(r.byVlan.v60.role, 'srv', 'one camera among four servers does not make it industrial');
+});
+
+test('zones from the flows: meeting-room screens are the users\', PLCs make a VLAN industrial', () => {
+  const r = J(A.suggestZones({ zones: [{ id: 'z1', name: 'Main' }],
+    vlans: [{ id: 'room', name: 'Salles de réunion étage 1', zone: 'z1' }, { id: 'line', name: 'Line 1', zone: 'z1' }, { id: 'cams', name: 'Vidéosurveillance', zone: 'z1' }],
+    assets: [{ id: 's1', vlan: 'room', type: 'iot' }, { id: 's2', vlan: 'room', type: 'iot' }, { id: 'p', vlan: 'line', type: 'plc' }, { id: 'h', vlan: 'line', type: 'server' }, { id: 'h2', vlan: 'line', type: 'server' },
+      { id: 'c1', vlan: 'cams', type: 'camera' }, { id: 'c2', vlan: 'cams', type: 'camera' }],
+    flows: [] }));
+  assert.equal(r.byVlan.room.role, 'users');
+  assert.equal(r.byVlan.line.role, 'ot');
+  assert.equal(r.byVlan.cams.role, 'ot');
+});

@@ -149,6 +149,10 @@
       <button class="btn small" id="arrangeBtn" aria-pressed="false"><span>Arrange plates</span><span class="mono">drag</span></button>
       <p class="sub" id="arrangeNote">Drag a plate anywhere on its level (left, right, front, back), or use the arrows that appear in the VLAN list. “Line up” puts a level back in a row. The Internet cloud can be dragged too.</p>
     </div>
+    <div class="ctlgrp propose-only">
+      <button class="btn small" id="suggestZonesBtn" title="Zones from the flows: what the Internet reaches on top, then by depth, then by role"><span>Suggest zones</span><span class="mono">flows</span></button>
+      <p class="sub">The Internet on top: each VLAN on the floor of its distance from the Internet along the flows, the others by role. You review it before anything changes.</p>
+    </div>
     <div class="ctlgrp edit-only">
       <span class="fl"><label for="arrCols">VLANs per row</label></span>
       <div class="arrRow"><select id="arrCols" class="search" title="The most VLANs on one row of a zone"><option value="0">Auto</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="8">8</option><option value="10">10</option><option value="12">12</option></select>

@@ -719,6 +719,7 @@ function syncUI(){
   $('#hint').textContent=flat?(state.tool==='flow'?'Draw a flow: press on the source asset and release on the destination':state.tool==='asset'?'Add an asset: click on a VLAN plate where it should go':'Drag the background to pan · scroll to zoom · drag an asset, or a plate by its header (anywhere on its level, or onto another level)'):state.view==='overview'?'Drag to orbit · middle or right button to move the view · click a plinth for its summary · click again to open it':state.arrange?'Arrange mode · drag a plate anywhere on its level (left, right, front, back) · click “Arrange plates” again to finish':'Drag to orbit · middle or right button to move the view · scroll to zoom · click an asset or a flow';
   document.querySelectorAll('#siteList .site').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.site===state.ovSelId)));
   document.body.classList.toggle('readonly',!Store.canWrite);
+  document.body.classList.toggle('noprop',!(Store.canWrite||(Store.me&&Store.me.canPropose&&!Store.view)));
   $('#portsBtn').setAttribute('aria-pressed',String(state.panel==='ports'));
   $('#riskBtn').setAttribute('aria-pressed',String(state.panel==='risk'));
   $('#atkBtn').setAttribute('aria-pressed',String(state.panel==='attack'));
@@ -4720,6 +4721,48 @@ $('#gfxSeg').addEventListener('click',e=>{const b=e.target.closest('[data-gfx]')
   try{if(GFX.pref==='auto')localStorage.removeItem(GFX_KEY);else localStorage.setItem(GFX_KEY,GFX.pref);}catch(err){}
   applyGfx();if(was&&!eco())toast('Quality graphics. Edges are smoothed again after a reload of the page.');});
 $('#optAnim').addEventListener('change',e=>{state.anim=e.target.checked;try{localStorage.setItem('strata-anim',state.anim?'1':'0');}catch(err){}if(state.view==='site')refresh();else refreshOverview();invalidate();});
+// "Suggest zones": the floors of the IS from its flows (SA.suggestZones), reviewed before they are applied
+const ROLE_LBL={srv:'servers',users:'users',ot:'industrial',net:'network',other:'other'};
+function suggestZonesForm(){
+  if(!SITE)return;
+  const raw=SITE.raw,zones=raw.zones&&raw.zones.length?raw.zones:[{id:'z-def',name:'Main zone'}];
+  const S=SA.suggestZones({zones,vlans:(raw.vlans||[]).map(v=>({id:v.id,num:v.num,name:v.name,zone:zones.some(z=>z.id===v.zone)?v.zone:zones[0].id})),
+    assets:ASSETS.map(a=>({id:a.id,vlan:a.vlan,type:a.type})),flows:FLOWS.map(f=>({src:f.src,dst:f.dst}))});
+  if(!S.zones.length){toast('No VLAN in this IS yet.',true);return;}
+  const Z=S.zones.map(z=>({id:z.id,name:z.name,suggested:z.suggested,existing:z.existing,key:z.key}));
+  const at={};S.zones.forEach(z=>z.vlans.forEach(id=>{at[id]=z.id;}));
+  const was=Object.fromEntries((raw.vlans||[]).map(v=>[v.id,v.zone]));
+  const zName=id=>{const z=Z.find(x=>x.id===id)||zones.find(x=>x.id===id);return z?z.name:'?';};
+  const dTxt=id=>{const v=S.byVlan[id];return v.role===null?'empty':v.depth===null?'not reached':v.depth===1?'1 hop':v.depth+' hops';};
+  const reached=Object.values(S.byVlan).filter(x=>x.depth!==null).length;
+  const body=()=>Z.slice().reverse().map(z=>{const ids=Object.keys(at).filter(id=>at[id]===z.id).map(id=>vlanById[id]).filter(Boolean).sort((a,b)=>a.num-b.num);
+    return `<div class="sz"><div class="sz-h"><input class="search" data-sz-name="${esc(z.id)}" value="${esc(z.name)}" maxlength="40" aria-label="Name of the zone"><small>${z.existing?'kept':'new'}${z.key.startsWith('depth:')?' · '+esc(z.suggested):z.key.startsWith('keep:')?' · empty VLANs, unchanged':''} · ${plural(ids.length,'VLAN')}</small></div>
+    ${ids.length?`<table class="vi"><tbody>${ids.map(v=>`<tr class="on"><td><b>VLAN ${esc(v.num)}</b> · ${esc(v.name)}<small>${esc(dTxt(v.id))}${S.byVlan[v.id].role?' · '+ROLE_LBL[S.byVlan[v.id].role]:''}${at[v.id]!==was[v.id]?` · was ${esc(zName(was[v.id]))}`:''}</small></td>
+      <td><select data-sz-vlan="${esc(v.id)}" aria-label="Zone of VLAN ${esc(v.num)}">${Z.slice().reverse().map(o=>`<option value="${esc(o.id)}"${o.id===z.id?' selected':''}>${esc(o.name)}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table>`:'<p class="fhint">No VLAN left: this zone will not be created.</p>'}</div>`;}).join('');
+  const moved=()=>Object.keys(at).filter(id=>at[id]!==was[id]).length;
+  const direct=Store.liveWrite||Store.view==='draft';
+  openForm('Suggested zones',`IS ${SITE.name}`,`
+    <p class="fhint">Top first, the Internet above: ${plural(reached,'VLAN')} reached from the Internet along the flows, on the floor of their distance; the others by the role of their assets; empty VLANs stay where they are. Rename a zone, or move a VLAN, before applying.</p>
+    <p class="fhint" id="szCount"></p>
+    <div id="szBody" class="vi-list sz-list">${body()}</div>
+    <p class="fhint">${direct?'Applied to the map at once (History can undo it).':'Your role cannot change the map: this opens a proposal with these zones.'} Plates that change zone are lined up again on their new level.</p>`,
+  async()=>{
+    const d=clone(raw),keep=Z.filter(z=>Object.values(at).includes(z.id));
+    d.zones=keep.map(z=>({id:z.id,name:(z.name||'').trim()||z.suggested}));
+    d.vlans=(d.vlans||[]).map(v=>{if(!at[v.id]||at[v.id]===v.zone)return v;const y=Object.assign({},v,{zone:at[v.id]});delete y.place;return y;});
+    if(JSON.stringify(d.zones)===JSON.stringify(raw.zones||[])&&!moved()){toast('The zones already match the flows: nothing to change.');return closeDet();}
+    if(direct){await Busy.track(()=>Store.putSite(SITE.id,d),'Applying the zones');toast(`Zones applied: ${plural(moved(),'VLAN')} moved, ${plural(d.zones.length,'zone')}.`);afterSave(()=>restorePanel());return;}
+    try{const j=await Store.api('POST','api/proposals',{title:`Zones of ${SITE.name} from the flows`,description:`Suggested from the flows (the Internet on top): ${moved()} VLAN(s) moved, ${d.zones.length} zone(s).`,siteId:SITE.id,changes:{si:{[SITE.id]:d},assets:{}}});
+      onSave=null;toast('Proposal opened with the suggested zones: check it, then submit it.');enterProp(j.proposal,'draft');}
+    catch(e){formErr(e.message||'Could not open the proposal.');}
+  });
+  det.querySelector('.form-foot [type=submit]').textContent=direct?'Apply':'Propose';
+  const count=()=>{$('#szCount').textContent=`${plural(moved(),'VLAN')} change zone · ${plural(Z.filter(z=>Object.values(at).includes(z.id)).length,'zone')}`;};
+  $('#frm').addEventListener('change',e=>{const s=e.target.closest('[data-sz-vlan]');if(s){at[s.dataset.szVlan]=s.value;$('#szBody').innerHTML=body();count();}});
+  $('#frm').addEventListener('input',e=>{const n=e.target.closest('[data-sz-name]');if(n){const z=Z.find(x=>x.id===n.dataset.szName);if(z)z.name=n.value;}});
+  count();
+}
+$('#suggestZonesBtn').addEventListener('click',()=>{if(state.view!=='site'||!SITE)return;suggestZonesForm();});
 // "Arrange VLANs": the plates of every zone on a grid, the VLANs that talk side by side (SA.arrangeGrid)
 try{const c=localStorage.getItem('strata-arrange-cols');if(c!==null&&$('#arrCols').querySelector(`option[value="${CSS.escape(c)}"]`))$('#arrCols').value=c;}catch(e){}
 $('#arrCols').addEventListener('change',e=>{try{localStorage.setItem('strata-arrange-cols',e.target.value);}catch(err){}});

@@ -332,6 +332,75 @@ function vlansFromFile(text,fileName=''){
   return {kind,items,skipped};
 }
 
+/* ---- Zones suggested from the flows ---- */
+// The floors of an IS, the Internet on top: each VLAN goes to the floor of its depth, the number of flow
+// hops from the Internet in the direction of the traffic (1: reached straight from the Internet), and the
+// VLANs never reached from it go below, by the role of their assets (servers, users, industrial,
+// network and administration). Empty VLANs stay in their zone. Existing zones that hold most of the same
+// VLANs are kept, with their name and id.
+// input: {vlans: [{id, num, name, zone}], assets: [{id, vlan, type}], flows: [{src, dst}],
+//   zones: [{id, name}] (bottom first, as stored), sources: ids that stand for the Internet (default
+//   'internet' and every 'svc:…')}
+// returns {zones: [{id, name, key, vlans: [ids], existing}] bottom first, byVlan: {vlanId: {zone, depth, role,
+//   moved}}, depth: {vlanId: n|null}}
+const ROLE_OF={server:'srv',dc:'srv',db:'srv',hypervisor:'srv',workstation:'users',phone:'users',printer:'users',ap:'users',
+  plc:'ot',camera:'ot',iot:'ot',switch:'net',router:'net',firewall:'net',gateway:'net'};
+const ROLE_NAME={srv:'Internal servers',users:'Users',ot:'Industrial (OT)',net:'Network and administration',other:'Other'};
+// bottom to top below the floors reached from the Internet
+const ROLE_ORDER=['net','ot','users','other','srv'];
+function suggestZones({vlans,assets,flows,zones,sources}){
+  const isNet=id=>sources?sources.includes(id):(id==='internet'||String(id).startsWith('svc:'));
+  const vOf={};assets.forEach(a=>{vOf[a.id]=a.vlan;});
+  // hops from the Internet, following the flows from source to destination
+  const out={};flows.forEach(f=>{(out[f.src]=out[f.src]||[]).push(f.dst);});
+  const dist={},q=[];
+  Object.keys(out).filter(isNet).forEach(id=>{dist[id]=0;q.push(id);});
+  while(q.length){const n=q.shift();(out[n]||[]).forEach(m=>{if(dist[m]===undefined&&!isNet(m)){dist[m]=dist[n]+1;q.push(m);}});}
+  const depth={},role={},count={},types={};
+  vlans.forEach(v=>{depth[v.id]=null;count[v.id]={};types[v.id]={};});
+  assets.forEach(a=>{if(!(a.vlan in depth))return;const d=dist[a.id];if(d!==undefined&&(depth[a.vlan]===null||d<depth[a.vlan]))depth[a.vlan]=d;
+    const r=ROLE_OF[a.type]||'other';count[a.vlan][r]=(count[a.vlan][r]||0)+1;types[a.vlan][a.type]=(types[a.vlan][a.type]||0)+1;});
+  // the role most of its assets have; a VLAN with PLCs, cameras or sensors (a third of it, or named so) is industrial
+  // (cameras and sensors alone, in a VLAN named for offices — meeting rooms, floors, VoIP, Wi-Fi — are the users')
+  const OT_NAME=/(^|[^a-z])(ot|scada|ics|plc|automat\w*|industri\w*|atelier|usine|production)([^a-z]|$)/i;
+  const USER_NAME=/(r[ée]union|meeting|bureau|office|[ée]tage|floor|poste|user|utilisateur|voip|t[ée]l[ée]phon|imprim|print|wi-?fi|accueil)/i;
+  vlans.forEach(v=>{const C=count[v.id],c=Object.entries(C).sort((x,y)=>y[1]-x[1]||ROLE_ORDER.indexOf(y[0])-ROLE_ORDER.indexOf(x[0]));
+    const n=c.reduce((t,x)=>t+x[1],0),ot=C.ot||0,name=v.name||'',plcs=types[v.id].plc||0;
+    if(!n)role[v.id]=null;
+    else if(plcs||(ot&&OT_NAME.test(name)))role[v.id]='ot';
+    else if(USER_NAME.test(name)&&((C.users||0)+ot)*2>=n)role[v.id]='users';
+    else if(ot*3>=n)role[v.id]='ot';
+    else role[v.id]=c[0][0];});
+  // the floors, bottom first
+  const maxD=Math.max(0,...vlans.map(v=>depth[v.id]||0)),deep=Math.min(maxD,3);
+  const floors=[...ROLE_ORDER.map(r=>({key:'role:'+r,name:ROLE_NAME[r]})),
+    ...[3,2,1].filter(d=>d<=deep).map(d=>({key:'depth:'+d,name:d===1?'Exposed to the Internet':d===2?'Reached from the exposed zone':'Back end, 3 hops or more'}))];
+  const keyOf=v=>{if(role[v.id]===null)return null;const d=depth[v.id];if(d!==null)return 'depth:'+Math.min(d,3);return 'role:'+role[v.id];};
+  const want={};vlans.forEach(v=>{const k=keyOf(v);if(k)(want[k]=want[k]||[]).push(v.id);});
+  // keep an existing zone for the floor that holds most of its VLANs (and at least half of the floor)
+  const cur={};zones.forEach(z=>{cur[z.id]=new Set(vlans.filter(v=>v.zone===z.id).map(v=>v.id));});
+  // (and that floor holds at least half of the zone's own VLANs with assets: a catch-all zone is not reused)
+  const full=z=>[...cur[z]].filter(id=>role[id]!==null).length;
+  const pairs=[];floors.forEach(f=>{const ids=want[f.key]||[];zones.forEach(z=>{const n=ids.filter(id=>cur[z.id].has(id)).length;if(n&&n*2>=ids.length&&n*2>=full(z.id))pairs.push({f:f.key,z:z.id,n});});});
+  pairs.sort((a,b)=>b.n-a.n);
+  const zoneFor={},taken=new Set();pairs.forEach(p=>{if(!zoneFor[p.f]&&!taken.has(p.z)){zoneFor[p.f]=p.z;taken.add(p.z);}});
+  const usedIds=new Set(zones.map(z=>z.id));
+  const newId=key=>{let id='z-'+key.replace(/[^a-z0-9]+/g,'-');for(let i=2;usedIds.has(id);i++)id='z-'+key.replace(/[^a-z0-9]+/g,'-')+'-'+i;usedIds.add(id);return id;};
+  const outZones=[],byVlan={};
+  floors.forEach(f=>{const ids=want[f.key]||[];if(!ids.length)return;
+    const z=zoneFor[f.key],ex=z?zones.find(x=>x.id===z):null;
+    outZones.push({id:ex?ex.id:newId(f.key),name:ex?ex.name:f.name,key:f.key,vlans:ids.slice(),existing:!!ex,suggested:f.name});});
+  // empty VLANs keep their zone: kept zones stay where they were, below the floors
+  const stay=vlans.filter(v=>role[v.id]===null);
+  const kept=new Set(outZones.map(z=>z.id));
+  zones.forEach(z=>{const ids=stay.filter(v=>v.zone===z.id).map(v=>v.id);if(!ids.length)return;
+    const hit=outZones.find(o=>o.id===z.id);if(hit){hit.vlans.push(...ids);return;}
+    outZones.unshift({id:z.id,name:z.name,key:'keep:'+z.id,vlans:ids,existing:true,suggested:z.name});kept.add(z.id);});
+  stay.filter(v=>!zones.some(z=>z.id===v.zone)).forEach(v=>{const z=outZones[0];if(z)z.vlans.push(v.id);});
+  outZones.forEach(z=>z.vlans.forEach(id=>{const v=vlans.find(x=>x.id===id);byVlan[id]={zone:z.id,depth:depth[id],role:role[id],moved:v.zone!==z.id};}));
+  return {zones:outZones,byVlan,depth};
+}
+
 /* ---- Arranging the plates of a level on rows and columns ---- */
 // plates: [{id, w, D}] in their current order; weight(a, b): how much two VLANs talk (symmetric, >= 0);
 // cols: the most plates per row (0 or less: about the square root of their number, a little wider than deep);
@@ -362,6 +431,6 @@ function arrangeGrid(plates,weight,cols,gap=2){
   return {places,cols:C,rows:R,order:grid.map(p=>p.id)};
 }
 
-root.StrataAnalysis={arrangeGrid,vlansFromFile,riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph,
+root.StrataAnalysis={suggestZones,arrangeGrid,vlansFromFile,riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph,
   stepOdds,blastRadius,attackPaths,chokePoints,outside};
 })(typeof globalThis!=='undefined'?globalThis:this);
