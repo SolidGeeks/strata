@@ -952,16 +952,43 @@ function thread(curve,vol,colorVar,nseg=1){
 
 /* ================= Overview ================= */
 const MINI={slab:0.18,D:4.6,lg:3.1,sp:1.05,gap:0.8};
-function miniPlan(s){
-  let ext=0;const lv=s.zones.filter(z=>z.vlans.length).map((z,li)=>{
-    const vs=z.vlans.map(v=>{const n=s.assets.filter(a=>a.vlan===v.id).length;return {v,n,w:Math.max(3.4,n*MINI.sp+1.4)};});
-    const tot=vs.reduce((t,x)=>t+x.w,0)+(vs.length-1)*MINI.gap;let cx=-tot/2;vs.forEach(x=>{x.x0=cx+x.w/2;cx+=x.w+MINI.gap;});
-    ext=Math.max(ext,tot);return {li,vs};});
-  return {lv,ext:Math.max(ext,8)};
+// The rows of a zone in the small model: those of "Arrange VLANs" (or of plates placed by hand), read from
+// the saved places, front to back and left to right; a zone never arranged keeps one row up to 8 VLANs,
+// and wraps into a grid past that
+function miniRows(vs){
+  if(vs.some(v=>v.place)){
+    const placed=vs.filter(v=>v.place).sort((a,b)=>a.place[1]-b.place[1]),rows=[];let rz=null;
+    placed.forEach(v=>{if(rz===null||v.place[1]-rz>2.5){rows.push([]);rz=v.place[1];}rows[rows.length-1].push(v);});
+    rows.forEach(r=>r.sort((a,b)=>a.place[0]-b.place[0]));
+    const rest=vs.filter(v=>!v.place);if(rest.length)rows.push(rest);
+    return rows;
+  }
+  if(vs.length<=8)return [vs];
+  const C=Math.ceil(Math.sqrt(vs.length*1.6)),rows=[];for(let i=0;i<vs.length;i+=C)rows.push(vs.slice(i,i+C));return rows;
 }
+function miniPlan(s){
+  let ext=0,depth=MINI.D;
+  const lv=s.zones.filter(z=>z.vlans.length).map((z,li)=>{
+    const rows=miniRows(z.vlans).map(r=>{
+      const vs=r.map(v=>{const n=s.assets.filter(a=>a.vlan===v.id).length;
+        // the assets of a plate wrap into lines, a little wider than deep
+        const ac=n<=6?Math.max(1,n):Math.ceil(Math.sqrt(n*3)),ar=Math.max(1,Math.ceil(n/ac));
+        return {v,n,ac,ar,w:Math.max(3.4,ac*MINI.sp+1.4),D:Math.max(MINI.D,ar*0.95+2.2)};});
+      const tot=vs.reduce((t,x)=>t+x.w,0)+(vs.length-1)*MINI.gap;let cx=-tot/2;vs.forEach(x=>{x.x0=cx+x.w/2;cx+=x.w+MINI.gap;});
+      return {vs,tot,D:Math.max(...vs.map(x=>x.D))};});
+    const lvD=rows.reduce((t,r)=>t+r.D,0)+(rows.length-1)*MINI.gap;let cz=-lvD/2;
+    rows.forEach(r=>{const zc=cz+r.D/2;r.vs.forEach(x=>{x.z0=zc;});cz+=r.D+MINI.gap;});
+    ext=Math.max(ext,...rows.map(r=>r.tot));depth=Math.max(depth,lvD);
+    return {li,vs:rows.flatMap(r=>r.vs)};});
+  // past 5 zones, the floors come closer: the small model stays about as tall as wide
+  const lg=lv.length>5?Math.max(1.4,MINI.lg*5/lv.length):MINI.lg;
+  return {lv,ext:Math.max(ext,8),depth,lg};
+}
+// Shared geometries of the small models (one per shape and size, whatever the number of assets)
+const MINI_GEO=new Map(),miniGeo=(key,make)=>{let g=MINI_GEO.get(key);if(!g){g=cachedGeo(make());MINI_GEO.set(key,g);}return g;};
 function buildOverview(){
   const plans=SITES.map(miniPlan),ex=Math.max(14,...plans.map(p=>p.ext));
-  const n=SITES.length,cols=Math.max(1,Math.ceil(Math.sqrt(n))),rows=Math.max(1,Math.ceil(n/cols)),cellW=ex+9,cellD=18;
+  const n=SITES.length,cols=Math.max(1,Math.ceil(Math.sqrt(n))),rows=Math.max(1,Math.ceil(n/cols)),cellW=ex+9,cellD=Math.max(18,...plans.map(p=>p.depth+11));
   OV={spanX:cols*cellW,spanZ:rows*cellD,ex,sites:{}};
   const base=buildBase(OV.spanX,OV.spanZ);
   SITES.forEach((s,i)=>{
@@ -970,29 +997,32 @@ function buildOverview(){
     const p=plans[i],g=new THREE.Group();g.position.set(px,TABLE_Y,pz);
     const mats=[];const M=o=>{const m=new THREE.MeshStandardMaterial(Object.assign({roughness:0.88,transparent:true},o));mats.push(m);return m;};
     const card=M({color:base.card,flatShading:true}),dark=M({color:base.detail}),steel=M({color:0xb9bec2,metalness:0.6,roughness:0.35});
-    const plinth=new THREE.Mesh(new THREE.BoxGeometry(p.ext+2.4,0.5,MINI.D+2.6),card);plinth.position.y=0.25;g.add(plinth);
-    const edge=new THREE.Mesh(new THREE.BoxGeometry(p.ext+2.42,0.08,MINI.D+2.62),dark);edge.position.y=0.04;g.add(edge);
+    const plinth=new THREE.Mesh(new THREE.BoxGeometry(p.ext+2.4,0.5,p.depth+2.6),card);plinth.position.y=0.25;g.add(plinth);
+    const edge=new THREE.Mesh(new THREE.BoxGeometry(p.ext+2.42,0.08,p.depth+2.62),dark);edge.position.y=0.04;g.add(edge);
     p.lv.forEach(({li,vs})=>{
-      const y=1.5+li*MINI.lg;
-      vs.forEach(({v,n:cnt,w,x0})=>{
-        const slab=new THREE.Mesh(new THREE.BoxGeometry(w,MINI.slab,MINI.D),M({color:new THREE.Color(css('--c'+v.ci))}));slab.position.set(x0,y,0);g.add(slab);
-        [-1,1].forEach(sx=>[-1,1].forEach(sz=>{const len=y-MINI.slab/2-0.5;const post=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,len,6),steel);post.position.set(x0+sx*(w/2-0.3),0.5+len/2,sz*(MINI.D/2-0.3));post.visible=state.posts!=='off';if(state.posts==='thin')post.scale.set(0.5,1,0.5);g.add(post);}));
+      const y=1.5+li*p.lg;
+      vs.forEach(({v,ac,ar,w,D,x0,z0})=>{
+        const slab=new THREE.Mesh(new THREE.BoxGeometry(w,MINI.slab,D),M({color:new THREE.Color(css('--c'+v.ci))}));slab.position.set(x0,y,z0);g.add(slab);
+        [-1,1].forEach(sx=>[-1,1].forEach(sz=>{const len=y-MINI.slab/2-0.5;const post=new THREE.Mesh(miniGeo('post|'+len.toFixed(2),()=>new THREE.CylinderGeometry(0.07,0.07,len,6)),steel);post.position.set(x0+sx*(w/2-0.3),0.5+len/2,z0+sz*(D/2-0.3));post.visible=state.posts!=='off';if(state.posts==='thin')post.scale.set(0.5,1,0.5);g.add(post);}));
+        // severity colours shared by the plates of this IS
+        const sevMat={};
         s.assets.filter(a=>a.vlan===v.id).forEach((a,j)=>{
-          const h=MINI_H[a.type]||0.6,ax=x0+(j-(cnt-1)/2)*MINI.sp,ay=y+MINI.slab/2;
-          const geo=a.type==='db'?new THREE.CylinderGeometry(0.32,0.32,h,10):new THREE.BoxGeometry(a.type==='firewall'||a.type==='switch'?0.9:0.6,h,0.6);
-          const m=new THREE.Mesh(geo,card);m.position.set(ax,ay+h/2,0);g.add(m);
-          if(a.sev!=='none'){const sc=new THREE.Color(sevColor(a.sev)),sm=M({color:sc,emissive:sc,emissiveIntensity:0.15});
+          const h=MINI_H[a.type]||0.6,ax=x0+((j%ac)-(ac-1)/2)*MINI.sp,az=z0+(Math.floor(j/ac)-(ar-1)/2)*0.95,ay=y+MINI.slab/2;
+          const wide=a.type==='firewall'||a.type==='switch';
+          const geo=miniGeo(`${a.type==='db'?'db':wide?'wide':'box'}|${h}`,()=>a.type==='db'?new THREE.CylinderGeometry(0.32,0.32,h,10):new THREE.BoxGeometry(wide?0.9:0.6,h,0.6));
+          const m=new THREE.Mesh(geo,card);m.position.set(ax,ay+h/2,az);g.add(m);
+          if(a.sev!=='none'){const sm=sevMat[a.sev]||(sevMat[a.sev]=(c=>M({color:c,emissive:c,emissiveIntensity:0.15}))(new THREE.Color(sevColor(a.sev))));
             const ph=h+0.25+SEV[a.sev].rank*0.12;
-            const nd=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,ph,4),steel);nd.position.set(ax+0.3,ay+ph/2,0.15);g.add(nd);
-            const hd=new THREE.Mesh(new THREE.SphereGeometry(0.14,10,8),sm);hd.position.set(ax+0.3,ay+ph,0.15);g.add(hd);}
+            const nd=new THREE.Mesh(miniGeo('needle|'+ph.toFixed(2),()=>new THREE.CylinderGeometry(0.02,0.02,ph,4)),steel);nd.position.set(ax+0.3,ay+ph/2,az+0.15);g.add(nd);
+            const hd=new THREE.Mesh(miniGeo('head',()=>new THREE.SphereGeometry(0.14,10,8)),sm);hd.position.set(ax+0.3,ay+ph,az+0.15);g.add(hd);}
         });
       });
     });
-    const top=1.5+Math.max(0,p.lv.length-1)*MINI.lg+2.2;
+    const top=1.5+Math.max(0,p.lv.length-1)*p.lg+2.2;
     const lab=tagLabel(`${s.name.toUpperCase()} · ${s.stats.crit} CRIT.`,s.stats.crit?sevColor('crit'):null,0.95,600);lab.position.set(0,top+1.0,0);g.add(lab);
     g.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;o.userData.site=s;pickables.push(o);}});
     scene.add(g);
-    OV.sites[s.id]={group:g,mats,label:lab,top,ext:p.ext,anchor:new THREE.Vector3(px,TABLE_Y+top-0.6,pz)};
+    OV.sites[s.id]={group:g,mats,label:lab,top,ext:p.ext,depth:p.depth,anchor:new THREE.Vector3(px,TABLE_Y+top-0.6,pz)};
   });
   WAN.forEach(w=>{
     const a=OV.sites[w.a].anchor,b=OV.sites[w.b].anchor,mid=a.clone().add(b).multiplyScalar(0.5);mid.y=Math.max(a.y,b.y)+4+a.distanceTo(b)*0.18;
@@ -1005,7 +1035,7 @@ function refreshOverview(){invalidate();
   SITES.forEach(s=>{const o=OV.sites[s.id];if(!o)return;const op=sel&&sel!==s?0.22:1;o.mats.forEach(m=>{m.opacity=op;m.depthWrite=op>0.5;});o.label.material.opacity=op>0.5?1:0.45;});
   WAN.forEach(w=>{if(!w.tube)return;const vis=state.flows&&(!state.riskOnly||w.risk);let op=w.risk?0.95:0.85;if(sel)op=(w.a===sel.id||w.b===sel.id)?1:0.08;
     w.mat.opacity=op;w.mat.depthWrite=op>0.5;w.tube.visible=vis;w.parts.forEach(p=>p.visible=vis&&op>0.5);});
-  if(sel&&OV.sites[sel.id]){const o=OV.sites[sel.id];selRing.scale.set((o.ext+5)/2,1,(MINI.D+5)/2);selRing.position.set(o.group.position.x,TABLE_Y+0.02,o.group.position.z);selRing.visible=true;}
+  if(sel&&OV.sites[sel.id]){const o=OV.sites[sel.id];selRing.scale.set((o.ext+5)/2,1,(o.depth+5)/2);selRing.position.set(o.group.position.x,TABLE_Y+0.02,o.group.position.z);selRing.visible=true;}
   else selRing.visible=false;
   syncUI();
 }
