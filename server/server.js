@@ -44,8 +44,12 @@ const CONFIG = {
   backupKeep: Math.max(0, parseInt(env.BACKUP_KEEP || '14', 10)),
   backupEveryHours: Math.max(1, parseInt(env.BACKUP_EVERY_HOURS || '24', 10)),
   historyKeep: Math.max(50, parseInt(env.HISTORY_KEEP || '5000', 10)),
+  // the history also stops at this size: each change keeps the whole document before and after it, so a
+  // large IS edited often (plates moved, flows imported) would otherwise grow it by a megabyte a change
+  historyMaxBytes: Math.max(1, parseFloat(env.HISTORY_MAX_MB || '200') || 200) * 1024 * 1024,
   maxImportBytes: parseInt(env.MAX_IMPORT_MB || '20', 10) * 1024 * 1024,
-  maxDocBytes: 512 * 1024,
+  // one document: an IS holds its VLANs and all its flows (about 300 bytes a flow, 8 MB ≈ 25 000 flows)
+  maxDocBytes: Math.max(0.5, parseFloat(env.MAX_DOC_MB || '8') || 8) * 1024 * 1024,
   // Failed sign-ins: 0 turns a limit off
   loginMaxFails: Math.max(0, parseInt(env.LOGIN_MAX_FAILS ?? '10', 10) || 0),
   loginMaxFailsPerAddress: Math.max(0, parseInt(env.LOGIN_MAX_FAILS_PER_ADDRESS ?? '20', 10) || 0),
@@ -134,7 +138,10 @@ async function backup(reason) {
    One line per changed document: {rev, at, user, batch, label, kind, id, before, after}.
    kind: si | assets | wan | services | risk | all (whole map, for imports). Rolling back replays the
    "before" of later lines, and is itself recorded, so a rollback can be undone too. */
-let history = [];
+let history = [], historyBytes = 0;
+// the size of each line in the history file, kept aside (the lines go to the file and the API as they are)
+const LINE_BYTES = new WeakMap();
+const lineBytes = h => { let n = LINE_BYTES.get(h); if (n === undefined) { n = Buffer.byteLength(JSON.stringify(h)) + 1; LINE_BYTES.set(h, n); } return n; };
 function loadHistory() {
   if (!fs.existsSync(HISTORY_FILE)) return;
   history = fs.readFileSync(HISTORY_FILE, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
@@ -145,12 +152,16 @@ function loadHistory() {
   log(`History: ${history.length} changes, back to rev ${history.length ? history[0].rev : state.rev}`);
 }
 function trimHistory(rewrite) {
-  if (history.length <= CONFIG.historyKeep && !rewrite) return;
-  if (history.length > CONFIG.historyKeep) {
-    // keep whole revisions: drop the oldest ones until under the limit
-    let cut = history.length - CONFIG.historyKeep;
-    while (cut < history.length && history[cut].rev === history[cut - 1]?.rev) cut++;
-    history = history.slice(cut);
+  if (rewrite) historyBytes = history.reduce((t, h) => t + lineBytes(h), 0);
+  if (history.length <= CONFIG.historyKeep && historyBytes <= CONFIG.historyMaxBytes && !rewrite) return;
+  if (history.length > CONFIG.historyKeep || historyBytes > CONFIG.historyMaxBytes) {
+    // keep whole revisions, and always the latest one: drop the oldest until under both limits
+    let cut = Math.max(0, history.length - CONFIG.historyKeep), bytes = historyBytes;
+    for (let i = 0; i < cut; i++) bytes -= lineBytes(history[i]);
+    while (cut < history.length - 1 && bytes > CONFIG.historyMaxBytes) bytes -= lineBytes(history[cut++]);
+    while (cut > 0 && cut < history.length && history[cut].rev === history[cut - 1].rev) bytes -= lineBytes(history[cut++]);
+    if (cut >= history.length) { cut = history.length - 1; while (cut > 0 && history[cut - 1].rev === history[cut].rev) cut--; bytes = history.slice(cut).reduce((t, h) => t + lineBytes(h), 0); }
+    if (cut > 0) { log(`History: ${cut} oldest change(s) dropped (limits: ${CONFIG.historyKeep} changes, ${Math.round(CONFIG.historyMaxBytes / 1048576)} MB)`); history = history.slice(cut); historyBytes = bytes; }
   }
   writeJson(HISTORY_FILE, history.map(h => JSON.stringify(h)).join('\n') + (history.length ? '\n' : ''));
 }
@@ -163,6 +174,7 @@ async function commitChanges(changes, auth, meta = {}) {
   state.updatedAt = new Date().toISOString();
   const lines = real.map(c => ({ rev: state.rev, at: state.updatedAt, user: auth.user || '', batch: meta.batch || `r${state.rev}`, label: meta.label || '', kind: c.kind, id: c.id ?? null, before: c.before ?? null, after: c.after ?? null }));
   history.push(...lines);
+  for (const l of lines) historyBytes += lineBytes(l);
   await writeJson(DB_FILE, state);
   const text = lines.map(l => JSON.stringify(l)).join('\n') + '\n';
   writeChain = writeChain.then(() => fsp.appendFile(HISTORY_FILE, text, { mode: 0o600 })).catch(e => log('ERROR history', e.message));

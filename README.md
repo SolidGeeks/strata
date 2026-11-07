@@ -192,7 +192,7 @@ Measured on Node.js 22 (the Docker image), one server process, maps generated wi
 | Up to ~5 000 assets | 0.5 | 256 MB | 1 GB |
 | Up to ~30 000 assets | 1 to 2 | 512 MB (1 GB with connectors running) | 5 GB |
 
-The server is idle between requests: CPU is spent on writes (each one saves the map and appends to the history) and on the dashboard. Each connector or module run starts a separate Node.js process, about 50 MB for as long as it runs. Disk: the map, the history (`HISTORY_KEEP` entries) and `BACKUP_KEEP` daily copies of the map, so roughly the size of the JSON export × (`BACKUP_KEEP` + 2), plus the history.
+The server is idle between requests: CPU is spent on writes (each one saves the map and appends to the history) and on the dashboard. The history is kept in memory too, up to `HISTORY_MAX_MB` (200 MB by default): count that much more RAM for an IS of thousands of flows edited often, or lower it. Each connector or module run starts a separate Node.js process, about 50 MB for as long as it runs. Disk: the map, the history (`HISTORY_KEEP` entries) and `BACKUP_KEEP` daily copies of the map, so roughly the size of the JSON export × (`BACKUP_KEEP` + 2), plus the history.
 
 **The browser does most of the work** (the 3D model, the 2D diagram, the analysis): 8 GB of RAM and WebGL 2 are enough, an integrated GPU included. An IS of 300 assets and 600 flows takes about 150 MB of browser memory. `docker-compose.yml` has the server limits, commented out.
 
@@ -259,6 +259,8 @@ By default, the port only listens on the machine itself (`127.0.0.1:8080`). To o
 | `EDIT_PASS_FILE` / `VIEW_PASS_FILE` | — | Read the password from this file instead (Docker secrets, systemd credentials, sops-nix, agenix). The file wins over the variable; a trailing newline is ignored. If the file cannot be read, the server does not start. |
 | `ALLOW_SELF_APPROVAL` | `false` | `true` lets an approver approve their own proposals. |
 | `HISTORY_KEEP` | `5000` | Number of changes kept in the history. |
+| `HISTORY_MAX_MB` | `200` | The history also stops at this size: each change keeps the whole edited document before and after it, so editing a large IS often (moving plates, importing flows) adds about twice its size each time. The oldest changes go first. |
+| `MAX_DOC_MB` | `8` | Largest document saved at once. An IS holds its VLANs and all its flows (about 300 bytes a flow: 8 MB is some 25 000 flows). |
 | `READ_ONLY` | `false` | Freezes the map for everyone. |
 | `BACKUP_KEEP` | `14` | Number of automatic backups kept. |
 | `BACKUP_EVERY_HOURS` | `24` | How often automatic backups are made. |

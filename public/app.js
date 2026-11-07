@@ -431,7 +431,7 @@ const Store={
       local();this.applyView(this.bulk?null:0);
     }catch(e){
       if(e.status===403)toast(e.message||'You cannot change this.',true);
-      else if(e.status===413)toast('This item is too large to save.',true);
+      else if(e.status===413)toast(`This ${kind==='si'?'IS':'item'} is too large to save: the server accepts documents up to MAX_DOC_MB (8 MB unless set otherwise).`,true);
       else toast('Could not save: '+(e.message||'error')+'.',true);
       throw e;
     }

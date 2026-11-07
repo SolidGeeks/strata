@@ -49,3 +49,37 @@ test('data files are readable by the server user only, including those of older 
     rmSync(dataDir, { recursive: true, force: true, maxRetries: 5 });
   }
 });
+
+test('a large IS (3500 flows) can be saved, and the history stops at HISTORY_MAX_MB', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'strata-big-'));
+  const port = 9300 + Math.floor(Math.random() * 90) + 100, pass = 'admin-pass-123', base = `http://127.0.0.1:${port}`;
+  const proc = spawn(process.execPath, [join(root, 'server/server.js')], {
+    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, EDIT_USER: 'admin', EDIT_PASS: pass, VIEW_PASS: '', CONNECTORS: 'false', HISTORY_MAX_MB: '1' },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  let out = '';
+  try {
+    await new Promise((res, rej) => { proc.stdout.on('data', d => { out += d; if (String(d).includes('listening')) res(); }); proc.on('exit', c => rej(new Error('exit ' + c))); });
+    const h = { ...(await auth(base, 'admin', pass)), 'Content-Type': 'application/json', 'X-Requested-With': 'strata' };
+    // an IS of 150 VLANs and 3500 flows with notes, about 700 KB: above the old 512 KB limit
+    const doc = n => ({ name: 'Big', zones: [{ id: 'z1', name: 'Main' }], vlans: Array.from({ length: 150 }, (_, i) => ({ id: 'v' + i, num: i + 1, name: 'VLAN ' + i, zone: 'z1' })),
+      flows: Array.from({ length: 3500 }, (_, i) => ({ id: `f${i}`, src: `a${i}`, dst: `b${i}`, port: 'tcp/443', vol: n, risk: false, note: `Palo Alto rule “R${i}” — a note long enough to look like a real one, edit ${n}` })) });
+    assert.ok(JSON.stringify(doc(0)).length > 512 * 1024);
+    for (let n = 0; n < 4; n++) {
+      const r = await fetch(`${base}/api/si/big`, { method: 'PUT', headers: h, body: JSON.stringify(doc(n)) });
+      assert.equal(r.status, 200, `save ${n}: ${await r.text()}`);
+    }
+    // each change keeps the IS before and after it (more than 1 MB): only the latest is kept
+    const hist = await (await fetch(`${base}/api/history?limit=50`, { headers: h })).json();
+    assert.equal(hist.entries.length, 1, JSON.stringify(hist.entries.map(e => e.rev)));
+    assert.equal(hist.rev, 4);
+    assert.ok(statSync(join(dataDir, 'history.jsonl')).size < 2 * 1024 * 1024);
+    assert.match(out, /History: \d+ oldest change\(s\) dropped \(limits: 5000 changes, 1 MB\)/);
+    // and still more than MAX_DOC_MB is refused
+    const huge = { ...doc(9), notes: 'x'.repeat(9 * 1024 * 1024) };
+    assert.equal((await fetch(`${base}/api/si/big`, { method: 'PUT', headers: h, body: JSON.stringify(huge) })).status, 413);
+  } finally {
+    await new Promise(res => { if (proc.exitCode !== null) return res(); proc.once('exit', res); proc.kill(); });
+    rmSync(dataDir, { recursive: true, force: true, maxRetries: 5 });
+  }
+});

@@ -23,6 +23,10 @@ All notable changes to Strata. Versions follow [Semantic Versioning](https://sem
 - **Graphics for small laptops** (*Display › Graphics*: Auto, Quality, Economy, and *Animated flows*). Economy: screen resolution, no shadows, no moving dots, labels hidden sooner from afar. Auto, the default, is Quality until moving the view turns out slow on this computer (then Economy, remembered by the browser), and Economy when the browser draws without a graphics card.
 - **API**: `POST /auth/login` (the form, or JSON `{user, password}`); `analysis.js` exports `arrangeGrid` and `vlansFromFile`; `window.strataRenderStats()` in the page gives what the last frame cost.
 
+### Fixed
+- **A large IS could no longer be saved** (“This item is too large to save”): one document was limited to 512 KB, and an IS holds all its flows, about 300 bytes each, so an IS of some 1 800 flows or more, imported through a proposal, could no longer be edited from the interface. The limit is now `MAX_DOC_MB`, 8 MB by default.
+- **The history no longer grows without bound with a large IS**: each change keeps the edited document before and after it, about a megabyte a change for an IS of 2 000 flows, and the history is held in memory. It now also stops at `HISTORY_MAX_MB` (200 MB by default), the oldest changes first.
+
 ### Changed
 - **The 3D view is much lighter to draw**, and looks the same: 8 to 15 times fewer draw calls (1 569 → 208 for the Lyon demo) and half the triangles. It is drawn only when something changes, not 60 times a second; shadows are drawn again only when the model changes; the view is a little less sharp while it moves. Each type of equipment is one shared geometry; every flow of an IS is in one geometry with its own colour and opacity, and the moving dots are one instanced mesh; label textures are shared; labels too small to read are not drawn; flows no longer cast shadows; a rebuilt model frees what the GPU held for the previous one.
 - Changing a password, or disabling or deleting an account, ends that account's other sessions. *End all sessions* (admin) ends the sessions of local accounts too, and keeps the admin's own.

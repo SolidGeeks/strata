@@ -86,6 +86,8 @@ docker compose down               # stop (data stays in the volume)</code></pre>
         <tr><td><code>EDIT_PASS_FILE</code> / <code>VIEW_PASS_FILE</code></td><td>none</td><td>Read the password from this file instead (Docker secrets, systemd credentials, sops-nix, agenix). The file wins; a trailing newline is ignored; an unreadable file stops the server.</td></tr>
         <tr><td><code>ALLOW_SELF_APPROVAL</code></td><td><code>false</code></td><td><code>true</code> lets an approver approve their own proposals.</td></tr>
         <tr><td><code>HISTORY_KEEP</code></td><td><code>5000</code></td><td>How many document changes the history keeps.</td></tr>
+        <tr><td><code>HISTORY_MAX_MB</code></td><td><code>200</code></td><td>The history also stops at this size, the oldest changes first (each change keeps the edited document before and after it).</td></tr>
+        <tr><td><code>MAX_DOC_MB</code></td><td><code>8</code></td><td>Largest document saved at once: an IS with all its VLANs and flows (about 300 bytes a flow).</td></tr>
         <tr><td><code>READ_ONLY</code></td><td><code>false</code></td><td>Freezes the map for everyone (an audit, a migration).</td></tr>
         <tr><td><code>BACKUP_KEEP</code> / <code>BACKUP_EVERY_HOURS</code></td><td><code>14</code> / <code>24</code></td><td>Automatic backups: how many to keep, how often.</td></tr>
         <tr><td><code>MAX_IMPORT_MB</code></td><td><code>20</code></td><td>Largest JSON or firewall configuration file accepted.</td></tr>
