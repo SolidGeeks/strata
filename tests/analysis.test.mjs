@@ -233,3 +233,34 @@ test('attack paths: unlikely and long paths are left out, and a cut-short search
   // a target nothing leads to has no path
   assert.deepEqual(J(A.attackPaths(s, A.outside(s), ['bastion', 'fw']).byTarget.fw), []);
 });
+
+test('arrange: plates of a level on rows and columns, the VLANs that talk side by side', () => {
+  const plates = 'abcdefghij'.split('').map((id, i) => ({ id, w: 8 + (i % 3), D: 6 + (i % 2) }));
+  const W = { 'a|h': 9, 'h|c': 7, 'c|j': 5 };
+  const weight = (x, y) => W[`${x}|${y}`] || W[`${y}|${x}`] || 0;
+  const r = J(A.arrangeGrid(plates, weight, 4, 2));
+  assert.equal(r.cols, 4);
+  assert.equal(r.rows, 3);
+  // the busiest VLAN first, then the one it talks to most beside it, and so on; VLANs without flows last
+  assert.deepEqual(r.order.slice(0, 4), ['h', 'a', 'c', 'j']);
+  assert.deepEqual(r.order.slice(4), ['b', 'd', 'e', 'f', 'g', 'i']);
+  // no two plates overlap, and the grid is centred on 0
+  const box = id => { const p = plates.find(q => q.id === id), [x, z] = r.places[id]; return { x0: x - p.w / 2, x1: x + p.w / 2, z0: z - p.D / 2, z1: z + p.D / 2 }; };
+  const ids = Object.keys(r.places);
+  for (const i of ids) for (const j of ids) if (i < j) {
+    const a = box(i), b = box(j);
+    assert.ok(a.x1 <= b.x0 || b.x1 <= a.x0 || a.z1 <= b.z0 || b.z1 <= a.z0, `${i} and ${j} overlap`);
+  }
+  const xs = ids.flatMap(id => [box(id).x0, box(id).x1]);
+  assert.ok(Math.abs(Math.min(...xs) + Math.max(...xs)) <= 1);
+});
+
+test('arrange: automatic columns, a single plate, and none', () => {
+  const plates = Array.from({ length: 40 }, (_, i) => ({ id: 'v' + i, w: 8, D: 6 }));
+  const r = J(A.arrangeGrid(plates, () => 0, 0, 2));
+  assert.equal(r.cols, 8, 'about the square root, a little wider than deep: no more 40 plates on one row');
+  assert.equal(r.rows, 5);
+  assert.deepEqual(r.order, plates.map(p => p.id), 'with no flow, the current order is kept');
+  assert.deepEqual(J(A.arrangeGrid([{ id: 'x', w: 8, D: 6 }], () => 0, 6, 2)).places, { x: [0, 0] });
+  assert.deepEqual(J(A.arrangeGrid([], () => 0, 6, 2)).places, {});
+});

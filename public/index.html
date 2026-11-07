@@ -33,6 +33,7 @@
   </div>
 </div>
 
+<div id="busy" hidden role="progressbar" aria-label="Working" aria-valuemin="0" aria-valuemax="100"><i></i><span></span></div>
 <header id="cart" class="panel"></header>
 <div id="modebar" class="panel" hidden role="status"></div>
 <div id="focusBar" class="panel" hidden role="status"></div>
@@ -145,8 +146,15 @@
     </div>
     <div class="ctlgrp edit-only" data-only3d>
       <button class="btn small" id="arrangeBtn" aria-pressed="false"><span>Arrange plates</span><span class="mono">drag</span></button>
-      <p class="sub" id="arrangeNote">Drag a plate anywhere on its level (left, right, front, back), or use the arrows that appear in the VLAN list. “Line up” puts a level back in a row.</p>
+      <p class="sub" id="arrangeNote">Drag a plate anywhere on its level (left, right, front, back), or use the arrows that appear in the VLAN list. “Line up” puts a level back in a row. The Internet cloud can be dragged too.</p>
     </div>
+    <div class="ctlgrp edit-only">
+      <span class="fl"><label for="arrCols">VLANs per row</label></span>
+      <div class="arrRow"><select id="arrCols" class="search" title="The most VLANs on one row of a zone"><option value="0">Auto</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="8">8</option><option value="10">10</option><option value="12">12</option></select>
+      <button class="btn small" id="arrangeGridBtn" title="Put the plates of each zone on rows and columns, the VLANs that talk to each other side by side"><span>Arrange VLANs</span></button></div>
+      <p class="sub">Each zone on rows and columns: VLANs with flows between them side by side, VLANs without flows last. Saved for everyone; “Line up” undoes it for a zone.</p>
+    </div>
+    <div class="ctlgrp edit-only"><button class="btn small" id="cloudReset" hidden title="Put the Internet cloud back in its default place, in 3D and in 2D"><span>Put Internet back</span></button></div>
   </div>
   <div class="sec" data-view="site">
     <h3 class="cap">Internet services</h3>
@@ -155,6 +163,8 @@
   </div>
   <div class="sec" data-view="site">
     <h3 class="cap">Plates (VLANs)</h3>
+    <div class="vtools"><span class="fl">Show</span><button class="ibtn" data-vsel="all" title="Show every VLAN">All</button><button class="ibtn" data-vsel="none" title="Hide every VLAN">None</button></div>
+    <label class="row" for="optEmpty"><span>Hide empty VLANs</span><input type="checkbox" id="optEmpty"></label>
     <div id="vlans"></div>
   </div>
   <div class="sec">

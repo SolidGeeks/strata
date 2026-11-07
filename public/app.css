@@ -711,3 +711,15 @@ body.has-dash{overflow:hidden}
 @keyframes selhalo{0%,100%{opacity:.1}50%{opacity:.32}}
 @media (prefers-reduced-motion:reduce){#flatSvg .selhalo{animation:none}}
 .ibtn.signout{border-color:var(--line);color:var(--fg);margin-left:6px;min-height:22px;padding:2px 8px}
+.vtools{display:flex;align-items:center;gap:4px;margin:0 0 4px}.vtools .fl{margin-right:auto}
+.zone-h .zsel{float:right;display:inline-flex;gap:2px}.zone-h .zsel .ibtn{min-height:22px;padding:1px 6px}
+.vrow.off{opacity:.45}
+/* Loading bar for long operations */
+#busy{position:fixed;top:0;left:0;right:0;height:3px;z-index:1000;overflow:hidden;background:color-mix(in srgb,var(--fg) 10%,transparent);pointer-events:none}
+#busy i{position:absolute;top:0;bottom:0;left:0;width:30%;background:var(--x-net,#2f6fdf);animation:busy 1.1s ease-in-out infinite}
+#busy.det i{animation:none;transition:width .2s}
+#busy span{position:fixed;top:6px;left:50%;transform:translateX(-50%);font-size:11px;padding:2px 8px;border-radius:3px;background:var(--panel,var(--bg));color:var(--fg);border:1px solid var(--line);white-space:nowrap}
+#busy span:empty{display:none}
+@keyframes busy{0%{left:-30%}100%{left:100%}}
+@media (prefers-reduced-motion:reduce){#busy i{animation:none;width:100%;opacity:.5}}
+.arrRow{display:flex;gap:6px;align-items:stretch}.arrRow select{width:auto;flex:0 0 76px;padding:6px 8px}.arrRow .btn{flex:1}

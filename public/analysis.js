@@ -274,6 +274,36 @@ function chokePoints(site,byTarget){
   return [...pts.values()].sort((x,y)=>y.every.length-x.every.length||y.paths-x.paths||byName(x.id,y.id));
 }
 
-root.StrataAnalysis={riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph,
+/* ---- Arranging the plates of a level on rows and columns ---- */
+// plates: [{id, w, D}] in their current order; weight(a, b): how much two VLANs talk (symmetric, >= 0);
+// cols: the most plates per row (0 or less: about the square root of their number, a little wider than deep);
+// gap: space between plates. Filled row by row from the back, each cell takes the plate with the most
+// traffic to the plates already left of it and behind it, then the busiest plate, then the current order:
+// VLANs that talk sit side by side, and VLANs with no flow end up last. Returns {id: [x, z]} (plate
+// centres, the grid centred on 0) and the number of columns used.
+function arrangeGrid(plates,weight,cols,gap=2){
+  const n=plates.length;if(!n)return {places:{},cols:0,rows:0};
+  const C=Math.max(1,Math.min(n,cols>0?Math.round(cols):Math.ceil(Math.sqrt(n*1.6))));
+  const w=(a,b)=>{const v=+weight(a,b);return v>0&&isFinite(v)?v:0;};
+  const total={};plates.forEach(p=>{total[p.id]=plates.reduce((t,q)=>t+(q.id!==p.id?w(p.id,q.id):0),0);});
+  const left=plates.map((p,i)=>({p,i})),grid=[];
+  for(let k=0;k<n;k++){
+    const c=k%C,nb=[];if(c>0)nb.push(grid[k-1]);if(k>=C)nb.push(grid[k-C]);
+    let best=0,bs=null;
+    left.forEach((e,j)=>{const s=[nb.reduce((t,q)=>t+w(e.p.id,q.id),0),total[e.p.id],-e.i];
+      if(!bs||s[0]>bs[0]||(s[0]===bs[0]&&(s[1]>bs[1]||(s[1]===bs[1]&&s[2]>bs[2])))){bs=s;best=j;}});
+    grid.push(left.splice(best,1)[0].p);
+  }
+  const R=Math.ceil(n/C),colW=Array(C).fill(0),rowD=Array(R).fill(0);
+  grid.forEach((p,k)=>{colW[k%C]=Math.max(colW[k%C],p.w);rowD[Math.floor(k/C)]=Math.max(rowD[Math.floor(k/C)],p.D);});
+  const sum=a=>a.reduce((t,x)=>t+x,0),W=sum(colW)+gap*(C-1),Dt=sum(rowD)+gap*(R-1);
+  const places={};
+  grid.forEach((p,k)=>{const c=k%C,r=Math.floor(k/C);
+    const x=-W/2+sum(colW.slice(0,c))+gap*c+colW[c]/2,z=-Dt/2+sum(rowD.slice(0,r))+gap*r+rowD[r]/2;
+    places[p.id]=[Math.round(x*2)/2,Math.round(z*2)/2];});
+  return {places,cols:C,rows:R,order:grid.map(p=>p.id)};
+}
+
+root.StrataAnalysis={arrangeGrid,riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph,
   stepOdds,blastRadius,attackPaths,chokePoints,outside};
 })(typeof globalThis!=='undefined'?globalThis:this);

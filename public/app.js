@@ -382,9 +382,10 @@ const Store={
   },
   async pull(){
     try{
-      const r=await fetch('api/state',{cache:'no-store',credentials:'same-origin'});
-      if(!r.ok)throw new Error('HTTP '+r.status);
-      const s=await r.json();
+      Busy.start('Loading the map');let s;
+      try{const r=await fetch('api/state',{cache:'no-store',credentials:'same-origin'});
+        if(!r.ok)throw new Error('HTTP '+r.status);
+        s=await r.json();}finally{Busy.end();}
       liveRaw={si:s.si||{},assets:s.assets||{},wan:Array.isArray(s.wan)?s.wan:[],services:Array.isArray(s.services)?s.services:[],risk:s.risk&&typeof s.risk==='object'?s.risk:{}};this.rev=s.rev||0;
       this.loaded=true;this.applyView(this.bulk?null:0);
     }catch(e){toast('Could not read the saved data. Check that the server is running, then reload.',true);}
@@ -403,7 +404,8 @@ const Store={
   async api(method,url,body){
     const h={'content-type':'application/json','x-requested-with':'strata'};
     if(this.batch){h['x-batch']=this.batch.id;h['x-batch-label']=encodeURIComponent(this.batch.label);}
-    const r=await fetch(url,{method,credentials:'same-origin',headers:h,body:body===undefined?undefined:JSON.stringify(body)});
+    Busy.start();let r;
+    try{r=await fetch(url,{method,credentials:'same-origin',headers:h,body:body===undefined?undefined:JSON.stringify(body)});}finally{Busy.end();}
     let j=null;try{j=await r.json();}catch(e){}
     // a session that has ended (single sign-on): back to the sign-in page
     if(r.status===401&&this.me&&this.me.signOut){location.href='auth/login';}
@@ -459,11 +461,24 @@ const Store={
   putRisk(doc){return this.write('risk',null,doc);},
   async many(tasks,label){
     this.bulk=true;this.batch={id:'b'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),label};let done=0;const total=tasks.length;
-    toast(`${label}: 0 / ${total}`,false,true);
-    try{for(const t of tasks){await t();done++;if(done%5===0||done===total)toast(`${label}: ${done} / ${total}`,false,true);}toast(`${label}: done.`);}
+    toast(`${label}: 0 / ${total}`,false,true);Busy.start(label);Busy.progress(0,total,label);
+    try{for(const t of tasks){await t();done++;Busy.progress(done,total);if(done%5===0||done===total)toast(`${label}: ${done} / ${total}`,false,true);}toast(`${label}: done.`);}
     catch(e){toast(`${label} stopped after ${done} items.`,true);}
-    finally{this.bulk=false;this.batch=null;this.applyView(0);if(this.view==='draft'){clearTimeout(this._dt);this.saveDraft();}}
+    finally{Busy.end();this.bulk=false;this.batch=null;this.applyView(0);if(this.view==='draft'){clearTimeout(this._dt);this.saveDraft();}}
   }
+};
+// The loading bar at the top: any request still running after 300 ms shows it (moving stripe); a batch
+// of writes or an import shows how far it got. Busy.track(promise, label) wraps any long task.
+const Busy={n:0,timer:null,label:'',done:0,total:0,
+  el:()=>document.getElementById('busy'),
+  start(label){this.n++;if(label)this.label=label;if(this.n===1&&!this.timer)this.timer=setTimeout(()=>{this.timer=null;if(this.n)this.paint();},300);},
+  end(){this.n=Math.max(0,this.n-1);if(this.n)return;clearTimeout(this.timer);this.timer=null;this.label='';this.done=this.total=0;const e=this.el();if(e)e.hidden=true;},
+  progress(done,total,label){this.done=done;this.total=total;if(label)this.label=label;if(this.n&&!this.timer)this.paint();},
+  paint(){const e=this.el();if(!e)return;e.hidden=false;const det=this.total>0,pc=det?Math.round(100*this.done/this.total):0;
+    e.classList.toggle('det',det);e.firstElementChild.style.width=det?pc+'%':'';
+    if(det)e.setAttribute('aria-valuenow',pc);else e.removeAttribute('aria-valuenow');
+    e.lastElementChild.textContent=this.label?(det?`${this.label} · ${this.done} / ${this.total}`:`${this.label}…`):'';},
+  async track(p,label){this.start(label);try{return await (typeof p==='function'?p():p);}finally{this.end();}}
 };
 // Sign out (local account or single sign-on), from the header or the account panel
 async function signOut(){try{const j=await Store.api('POST','auth/logout',{});location.href=j.location||'auth/login?out=1';}catch(err){toast(err.message,true);}}
@@ -476,9 +491,10 @@ async function replaceAll(data,label){
   if(Store.mode==='local'){liveRaw=next;Store.saveLocal();Store.applyView(0);toast(`${label}: done.`);return;}
   toast(`${label}…`,false,true);
   Store.batch={id:'imp'+Date.now().toString(36),label};
+  Busy.start(label);
   try{await Store.api('POST','api/import',next);liveRaw=next;Store.applyView(0);toast(`${label}: done.`);}
   catch(e){toast(`${label} failed: ${e.message||'error'}.`,true);}
-  finally{Store.batch=null;}
+  finally{Store.batch=null;Busy.end();}
 }
 
 /* ================= Compiling the data ================= */
@@ -615,7 +631,11 @@ const nameOf=id=>id==='internet'?'Internet':SVC[id]?SVC[id].name:(byId[id]&&!byI
 const siteServices=()=>SITE?SITE.services.filter(x=>x.scope==='site'||SITE.usedSvc.has(x.id)):[];
 const vnum=a=>{const v=vlanById[a.vlan];return v?v.num:'?';};
 
-const state={attack:{from:'internet'},attackHl:null,hoverFlow:null,lens:'physical',biz:null,view:'overview',siteId:null,ovSelId:null,selId:null,mode:'zones',hidden:new Set(),minSev:0,minExp:0,dir:'all',color:'risk',flows:true,riskOnly:false,labels:true,ports:false,rotate:false,gap:8,path:false,panel:null,posts:'off',compact:true,arrange:false,flat:false,tool:'move'};
+const state={attack:{from:'internet'},attackHl:null,hoverFlow:null,lens:'physical',biz:null,view:'overview',siteId:null,ovSelId:null,selId:null,mode:'zones',hidden:new Set(),minSev:0,minExp:0,dir:'all',color:'risk',flows:true,riskOnly:false,labels:true,ports:false,rotate:false,gap:8,path:false,panel:null,posts:'off',compact:true,arrange:false,flat:false,tool:'move',hideEmpty:false};
+try{state.hideEmpty=localStorage.getItem('strata-hide-empty')==='1';}catch(e){}
+// VLANs left out of the model: those without an asset, when "Hide empty VLANs" is on
+const vlanEmpty=id=>!ASSETS.some(a=>a.vlan===id);
+const vlanShownInLayout=id=>!(state.hideEmpty&&vlanEmpty(id));
 const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
 // saved theme applied before the first frame, so the page does not flash
 try{const t=localStorage.getItem('strata-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}
@@ -664,12 +684,14 @@ function renderSiteList(){
 function renderVlanList(){
   // By zone: listed left to right as on the level. One VLAN per floor: listed top to bottom.
   const zm=state.mode==='zones',L=zm?['←','→','Move left','Move right']:['↑','↓','Move up','Move down'];
-  $('#vlans').innerHTML=ZONES.slice().reverse().filter(z=>z.vlans.length).map(z=>{const vs=zm?z.vlans:z.vlans.slice().reverse();return `<div class="zone-h">${esc(z.name.toUpperCase())}${zm&&z.vlans.some(v=>v.place)?` <button class="ibtn mvbox-r edit-only" data-reset-zone="${esc(z.id)}" title="Line the plates of this level up again">Line up</button>`:zm&&vs.length>1?' <span>left → right</span>':''}</div>`+vs.map((v,i)=>{
+  $('#vlans').innerHTML=ZONES.slice().reverse().filter(z=>z.vlans.length).map(z=>{const vs=zm?z.vlans:z.vlans.slice().reverse();return `<div class="zone-h">${esc(z.name.toUpperCase())}${zm&&z.vlans.some(v=>v.place)?` <button class="ibtn mvbox-r edit-only" data-reset-zone="${esc(z.id)}" title="Line the plates of this level up again">Line up</button>`:zm&&vs.length>1?' <span>left → right</span>':''}<span class="zsel"><button class="ibtn" data-vsel="all" data-zone="${esc(z.id)}" title="Show every VLAN of zone ${esc(z.name)}">All</button><button class="ibtn" data-vsel="none" data-zone="${esc(z.id)}" title="Hide every VLAN of zone ${esc(z.name)}">None</button></span></div>`+vs.map((v,i)=>{
     const first=i===0,last=i===vs.length-1,dA=zm?-1:1,dB=zm?1:-1;
-    return `<div class="vrow"><label class="vlan" for="vl-${v.id}"><input type="checkbox" id="vl-${v.id}" data-vlan="${esc(v.id)}" ${state.hidden.has(v.id)?'':'checked'}>
+    const off=!vlanShownInLayout(v.id);
+    return `<div class="vrow${off?' off':''}"${off?' title="Empty: hidden by “Hide empty VLANs”"':''}><label class="vlan" for="vl-${v.id}"><input type="checkbox" id="vl-${v.id}" data-vlan="${esc(v.id)}" ${state.hidden.has(v.id)||off?'':'checked'}${off?' disabled':''}>
     <span class="nm"><b><i class="sw" style="background:var(--c${v.ci})"></i>VLAN ${esc(v.num)} · ${esc(v.name)}</b><small>${esc(v.cidr||'—')}</small></span><span class="ct">${ASSETS.filter(a=>a.vlan===v.id).length}</span></label>
     <span class="mvbox edit-only"><button class="ibtn mvb" data-mv="${esc(v.id)}" data-d="${dA}" aria-label="${L[2]} VLAN ${esc(v.num)}" ${first?'disabled':''}>${L[0]}</button><button class="ibtn mvb" data-mv="${esc(v.id)}" data-d="${dB}" aria-label="${L[3]} VLAN ${esc(v.num)}" ${last?'disabled':''}>${L[1]}</button></span>
     <button class="ibtn edit-only" data-edit-vlan="${esc(v.id)}" aria-label="Edit VLAN ${esc(v.num)}">Edit</button></div>`;}).join('');}).join('')||'<p class="empty">No VLAN yet.</p>';
+  const cr=$('#cloudReset');if(cr)cr.hidden=!(SITE.raw&&(SITE.raw.cloud||SITE.raw.cloud2d));
   $('#assetList').innerHTML=ASSETS.map(a=>`<option value="${esc(a.name)}">${esc(a.ip||'')}</option>`).join('');
   $('#pathCount').textContent=SITE.stats.reach;
   $('#portsCount').textContent=SITE.stats.ports;
@@ -938,8 +960,8 @@ function plateLayout(id,compact){
 }
 // Levels and plates, the same for the 3D model and the 2D diagram
 function computeLayout(){
-  const zm=state.mode==='zones',compact=state.compact,zonesUsed=ZONES.filter(z=>z.vlans.length);
-  const levels=zm?zonesUsed.map(z=>({name:z.name,zoneId:z.id,ids:z.vlans.map(v=>v.id)})):VLANS.map(v=>({name:`VLAN ${v.num} · ${v.zone}`,zoneId:v.zoneId,ids:[v.id]}));
+  const zm=state.mode==='zones',compact=state.compact,inL=v=>vlanShownInLayout(v.id),zonesUsed=ZONES.filter(z=>z.vlans.some(inL));
+  const levels=zm?zonesUsed.map(z=>({name:z.name,zoneId:z.id,ids:z.vlans.filter(inL).map(v=>v.id)})):VLANS.filter(inL).map(v=>({name:`VLAN ${v.num} · ${v.zone}`,zoneId:v.zoneId,ids:[v.id]}));
   let ext=0,maxD=0;const plan=[];
   levels.forEach((lv,li)=>{
     const infos=lv.ids.map(id=>Object.assign(plateLayout(id,compact),{level:li})),g=compact?2:3;
@@ -1012,7 +1034,7 @@ function buildScene(){
   levelTags.forEach(t=>{t.sprite=tagLabel(`LEVEL ${t.li} · ${t.name.toUpperCase()}`,null,0.87);t.sprite.center.set(1,0.5);scene.add(t.sprite);});
   const cg=new THREE.Group(),cm=new THREE.MeshStandardMaterial({color:base.card,roughness:0.8,flatShading:true});
   [[0,0,0,1.6],[1.5,-0.3,0.2,1.15],[-1.5,-0.35,0,1.2],[0.6,0.7,-0.2,1.1],[-0.7,0.5,0.4,1.0],[2.6,-0.6,0,0.75],[-2.6,-0.6,0.1,0.8]]
-    .forEach(([x,y,z,r])=>{const s=new THREE.Mesh(new THREE.IcosahedronGeometry(r,0),cm);s.position.set(x,y,z);s.castShadow=true;cg.add(s);});
+    .forEach(([x,y,z,r])=>{const s=new THREE.Mesh(new THREE.IcosahedronGeometry(r,0),cm);s.position.set(x,y,z);s.castShadow=true;s.userData.cloud=true;cg.add(s);pickables.push(s);});
   const rod=new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.08,1,8),steel);rod.castShadow=true;scene.add(rod);
   const il=tagLabel('INTERNET',null);il.position.y=2.6;cg.add(il);
   scene.add(cg);cloud=cg;cloud.rod=rod;
@@ -1065,11 +1087,23 @@ function layout(){
     fl.posts.forEach(p=>{p.visible=pv!=='off';const len=postLen(fl.level,fl.x0+p.position.x,y,fl.z0+p.position.z);p.scale.set(thick,len,thick);p.position.y=-SLAB/2-len/2;p.castShadow=pv==='full';});});
   levelTags.forEach(t=>t.sprite.position.set(-extent/2-1.2,t.li*state.gap+0.2,0));
   const top=Object.values(floors).filter(f=>f.level===nLevels-1)[0];
-  const topY=top?top.level*state.gap+SLAB/2:TABLE_Y,cy=topY+5.2,cx=top?top.x0-top.w/2+5:0,cz=top?top.z0-top.D/2+3:0;
-  cloud.position.set(cx,cy,cz);
-  (cloud.svcs||[]).forEach((g,i)=>g.position.set(cx+4.6+(i%6)*3.6,cy-0.6-Math.floor(i/6)*2.6,cz+0.5));cloud.rod.visible=state.posts!=='off';cloud.rod.scale.y=cy-topY-1;cloud.rod.position.set(cx,topY+(cy-topY-1)/2,cz);
+  const cp=cloudPos3d(),topY=top?top.level*state.gap+SLAB/2:TABLE_Y,cy=topY+5.2,cx=cp?cp[0]:top?top.x0-top.w/2+5:0,cz=cp?cp[1]:top?top.z0-top.D/2+3:0;
+  placeCloud(cx,cy,cz,topY);
   sun.target.position.copy(center());
   buildFlows();placeSelRing();
+}
+// Where the Internet cloud was put by hand in the 3D model ([x, z]), if it was: saved on the IS (si.cloud)
+function cloudPos3d(){const c=SITE&&SITE.raw&&SITE.raw.cloud;return Array.isArray(c)&&isFinite(c[0])&&isFinite(c[1])?[+c[0],+c[1]]:null;}
+function cloudPos2d(){const c=SITE&&SITE.raw&&SITE.raw.cloud2d;return Array.isArray(c)&&isFinite(c[0])&&isFinite(c[1])?[+c[0],+c[1]]:null;}
+// The cloud, the named Internet services next to it and the rod down to the top level
+function placeCloud(cx,cy,cz,topY){
+  cloud.position.set(cx,cy,cz);
+  (cloud.svcs||[]).forEach((g,i)=>g.position.set(cx+4.6+(i%6)*3.6,cy-0.6-Math.floor(i/6)*2.6,cz+0.5));cloud.rod.visible=state.posts!=='off';cloud.rod.scale.y=cy-topY-1;cloud.rod.position.set(cx,topY+(cy-topY-1)/2,cz);
+  cloud.topY=topY;
+}
+async function saveCloud(key,pos){
+  const d=clone(SITE.raw);if(pos)d[key]=pos.map(v=>Math.round(v*4)/4);else delete d[key];
+  await Store.putSite(SITE.id,d);
 }
 function center(){return state.view==='overview'?new THREE.Vector3(0,TABLE_Y+3,0):new THREE.Vector3(0,Math.max(0,nLevels-1)*state.gap/2,0);}
 // Moving the view stops when the point it looks at reaches the edge of the model, so the model cannot be
@@ -2400,10 +2434,11 @@ function flatGeometry(){
   });
   const ps=Object.values(G.plates);
   G.minX=Math.min(0,...ps.map(p=>p.x));G.maxX=Math.max(8,...ps.map(p=>p.x+p.w));G.H=y-1.5;
-  G.internet={x:G.minX+2.6,y:1.9,w:4.4,h:1.8};
+  const c2=flatDrag&&flatDrag.kind==='net'&&flatDrag.moved?[flatDrag.wx,flatDrag.wy]:cloudPos2d();
+  G.internet=c2?{x:c2[0],y:c2[1],w:4.4,h:1.8,manual:true}:{x:G.minX+2.6,y:1.9,w:4.4,h:1.8};
   G.svc={};let sx=G.internet.x+G.internet.w/2+1.2;
-  siteServices().forEach(x=>{const w=Math.max(3.6,Math.min(6,x.name.length*0.24+1.4));G.svc[x.id]={x:sx+w/2,y:1.9,w,h:1.8,s:x};sx+=w+0.8;});
-  G.maxX=Math.max(G.maxX,sx);
+  siteServices().forEach(x=>{const w=Math.max(3.6,Math.min(6,x.name.length*0.24+1.4));G.svc[x.id]={x:sx+w/2,y:G.internet.y,w,h:1.8,s:x};sx+=w+0.8;});
+  G.maxX=Math.max(G.maxX,sx);G.minX=Math.min(G.minX,G.internet.x-G.internet.w/2-1);G.H=Math.max(G.H,G.internet.y+2);
   return G;
 }
 // Small top-view glyphs, drawn in a 1 x 1 box
@@ -2589,6 +2624,7 @@ flatSvg.addEventListener('pointerdown',e=>{
   if(state.tool==='asset'&&edit){const P=(Pl||Hd)?FL.plates[(Pl||Hd).dataset.plate||Hd.dataset.plateHandle]:plateAt(wx,wy);
     if(!P){toast('Click on a VLAN plate to place the new asset.',true);return;}
     assetForm(null,P.id,{pos:[snap((wx-P.cx)/FSX),snap(wy-P.cz)]});return;}
+  if(N&&N.dataset.internet==='internet'&&edit&&state.tool==='move'){flatDrag={kind:'net',sx:e.clientX,sy:e.clientY,ox:wx-FL.internet.x,oy:wy-FL.internet.y,wx:FL.internet.x,wy:FL.internet.y,moved:false};flatSvg.setPointerCapture(e.pointerId);return;}
   if(N&&N.dataset.svc){flatDrag={kind:'svc',id:N.dataset.svc,sx:e.clientX,sy:e.clientY,moved:false};return;}
   if(A){const g=FL.assets[A.dataset.asset];flatDrag={kind:'asset',id:g.a.id,sx:e.clientX,sy:e.clientY,ox:wx-g.x,oy:wy-g.y,wx:g.x,wy:g.y,moved:false,edit};flatSvg.setPointerCapture(e.pointerId);return;}
   if(Hd&&edit){flatDrag={kind:'plate',id:Hd.dataset.plateHandle,sx:e.clientX,sy:e.clientY,startX:wx,startY:wy,dx:0,dy:0,moved:false};flatSvg.setPointerCapture(e.pointerId);return;}
@@ -2602,6 +2638,7 @@ flatSvg.addEventListener('pointermove',e=>{
   if(d.kind==='link'){d.wx=wx;d.wy=wy;scheduleFlat();return;}
   if(d.kind==='asset'){if(!d.edit)return;if(far)d.moved=true;if(d.moved){d.wx=wx-d.ox;d.wy=wy-d.oy;scheduleFlat();}return;}
   if(d.kind==='plate'){if(far)d.moved=true;if(d.moved){d.dx=wx-d.startX;d.dy=wy-d.startY;scheduleFlat();}return;}
+  if(d.kind==='net'){if(far)d.moved=true;if(d.moved){d.wx=wx-d.ox;d.wy=wy-d.oy;scheduleFlat();}return;}
   if((d.kind==='flow'||d.kind==='svc')&&far)d.moved=true;
 });
 flatSvg.addEventListener('pointerup',e=>{
@@ -2610,6 +2647,7 @@ flatSvg.addEventListener('pointerup',e=>{
   if(d.kind==='pan'){if(!d.moved&&state.panel!=='form'){if(d.plate)focusVlan(d.plate);else if(state.focus){if(state.selId)select(null);unfocusVlan();}else if(state.selId)select(null);else if(state.panel==='flow')closeDet();}return;}
   if(d.kind==='asset'){if(!d.moved){if(state.panel!=='form')select(byId[d.id],true);return;}dropAsset(d.id,d.wx,d.wy);return;}
   if(d.kind==='plate'){if(!d.moved){if(state.panel!=='form')focusVlan(d.id);else renderFlat();return;}dropPlate(d.id,wx,wy,d);return;}
+  if(d.kind==='net'){if(d.moved)saveCloud('cloud2d',[d.wx,d.wy]).then(()=>toast('Internet moved.'),()=>renderFlat());return;}
   if(d.kind==='svc'){if(!d.moved&&state.panel!=='form'&&SVC[d.id])showService(SVC[d.id]);return;}
   if(d.kind==='flow'){if(!d.moved&&state.panel!=='form'){const f=FLOWS.find(x=>x.id===d.id);if(f)showFlow(f);}return;}
   if(d.kind==='link'){renderFlat();const el=document.elementFromPoint(e.clientX,e.clientY),T=el&&el.closest&&(el.closest('[data-asset]')||el.closest('[data-internet]'));
@@ -2806,7 +2844,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('#svcListOv [data
 /* ================= Proposals, history, accounts (self-hosted server) ================= */
 let DIFF=null;
 const FIELD_LABEL={name:'name',type:'type',vlan:'VLAN',ip:'IP address',os:'system',role:'role',crit:'criticality',vulns:'vulnerabilities',contacts:'contacts',apps:'applications',notes:'notes',
-  src:'source',dst:'destination',port:'port',vol:'volume',risk:'risk',note:'note',via:'path',num:'number',cidr:'range',zone:'zone',pos:'order',layout:'positions on the plate',zones:'zones',kind:'site type',order:'order',category:'category',hosts:'hosts',ports:'ports',ext:'link to the source tool'};
+  src:'source',dst:'destination',port:'port',vol:'volume',risk:'risk',note:'note',via:'path',num:'number',cidr:'range',zone:'zone',pos:'order',layout:'positions on the plate',cloud:'position of Internet (3D)',cloud2d:'position of Internet (2D)',place:'position on the level',zones:'zones',kind:'site type',order:'order',category:'category',hosts:'hosts',ports:'ports',ext:'link to the source tool'};
 function changedFields(a,b,skip=[]){return [...new Set([...Object.keys(a||{}),...Object.keys(b||{})])].filter(k=>!skip.includes(k)&&k!=='id'&&JSON.stringify((a||{})[k]??null)!==JSON.stringify((b||{})[k]??null)).map(k=>FIELD_LABEL[k]||k);}
 function nameRaw(id){
   if(id==='internet')return 'Internet';
@@ -4256,8 +4294,14 @@ renderer.domElement.addEventListener('pointerdown',e=>{
   down=e.button===0?{x:e.clientX,y:e.clientY}:null;stopRotate();
   if(e.button!==0)return;
   // Arrange mode: grab a plate (or an asset on it) and slide it along its level
-  if(state.view!=='site'||!state.arrange||state.mode!=='zones'||!Store.canWrite||state.panel==='form')return;
-  const u=pick(e),id=u&&(u.plate||(u.asset&&u.asset.vlan));if(!id||!floors[id])return;
+  if(state.view!=='site'||!state.arrange||!Store.canWrite||state.panel==='form')return;
+  const u=pick(e);
+  if(u&&u.cloud){const plane=new THREE.Plane(new THREE.Vector3(0,1,0),-cloud.position.y),hit=new THREE.Vector3();
+    if(!ray.ray.intersectPlane(plane,hit))return;
+    drag={cloud:true,plane,startX:hit.x,startZ:hit.z,x0:cloud.position.x,z0:cloud.position.z,moved:false};
+    controls.enabled=false;renderer.domElement.setPointerCapture(e.pointerId);renderer.domElement.style.cursor='grabbing';return;}
+  if(state.mode!=='zones')return;
+  const id=u&&(u.plate||(u.asset&&u.asset.vlan));if(!id||!floors[id])return;
   const fl=floors[id],plane=new THREE.Plane(new THREE.Vector3(0,1,0),-(fl.group.position.y+SLAB/2)),hit=new THREE.Vector3();
   if(!ray.ray.intersectPlane(plane,hit))return;
   drag={id,fl,plane,startX:hit.x,startZ:hit.z,x0:fl.group.position.x,z0:fl.group.position.z,moved:false};
@@ -4279,7 +4323,8 @@ renderer.domElement.addEventListener('pointermove',e=>{
   if(drag){
     const r=renderer.domElement.getBoundingClientRect(),hit=new THREE.Vector3();
     ndc.set(((e.clientX-r.left)/r.width)*2-1,-((e.clientY-r.top)/r.height)*2+1);ray.setFromCamera(ndc,camera);
-    if(ray.ray.intersectPlane(drag.plane,hit)){drag.fl.group.position.x=drag.x0+(hit.x-drag.startX);drag.fl.group.position.z=drag.z0+(hit.z-drag.startZ);if(!drag.moved){drag.moved=true;FLOWS.forEach(f=>{if(f.tube){f.tube.visible=false;f.parts.forEach(p=>p.visible=false);f.cones.forEach(c=>c.visible=false);}});selRing.visible=false;}}
+    if(drag.cloud&&ray.ray.intersectPlane(drag.plane,hit)){placeCloud(drag.x0+(hit.x-drag.startX),cloud.position.y,drag.z0+(hit.z-drag.startZ),cloud.topY);if(!drag.moved){drag.moved=true;FLOWS.forEach(f=>{if(f.tube){f.tube.visible=false;f.parts.forEach(p=>p.visible=false);f.cones.forEach(c=>c.visible=false);}});}return;}
+    if(!drag.cloud&&ray.ray.intersectPlane(drag.plane,hit)){drag.fl.group.position.x=drag.x0+(hit.x-drag.startX);drag.fl.group.position.z=drag.z0+(hit.z-drag.startZ);if(!drag.moved){drag.moved=true;FLOWS.forEach(f=>{if(f.tube){f.tube.visible=false;f.parts.forEach(p=>p.visible=false);f.cones.forEach(c=>c.visible=false);}});selRing.visible=false;}}
     return;
   }
   if(e.pointerType!=='mouse'||e.buttons){tip.hidden=true;return;}
@@ -4289,8 +4334,9 @@ renderer.domElement.addEventListener('pointermove',e=>{
   else if(u&&u.svc){const x=u.svc;html=`<b>${esc(x.name)}</b> · ${esc(x.hosts.join(', '))} · ${esc(x.ports.join(' '))}`;}
   else if(u&&u.flow){const f=u.flow;html=`<b>${flowPath(f)}</b> · ${esc(f.port)} · ${f.vol} MB/h · <span style="color:var(${EXP[f.level].css})">${EXP[f.level].label}</span>${f.risk?' · <span style="color:var(--crit)">risky</span>':''}`;}
   else if(u&&u.plate&&state.arrange){const v=vlanById[u.plate];html=`<b>VLAN ${esc(v.num)} · ${esc(v.name)}</b> · drag to move`;}
+  else if(u&&u.cloud)html=state.arrange&&Store.canWrite?'<b>Internet</b> · drag to move':'<b>Internet</b>';
   else if(u&&u.plate){const v=vlanById[u.plate];html=`<b>VLAN ${esc(v.num)} · ${esc(v.name)}</b> · ${state.focus&&state.focus.vlan===v.id?'click to show every VLAN again':'click to show it alone'}`;}
-  if(state.arrange&&u&&(u.plate||u.asset)&&state.mode==='zones')cur='ew-resize';else if(html)cur='pointer';
+  if(state.arrange&&u&&u.cloud&&Store.canWrite)cur='move';else if(state.arrange&&u&&(u.plate||u.asset)&&state.mode==='zones')cur='ew-resize';else if(html)cur='pointer';
   renderer.domElement.style.cursor=cur;
   if(html){tip.innerHTML=html;tip.hidden=false;tip.style.left=Math.min(e.clientX+14,innerWidth-tip.offsetWidth-8)+'px';tip.style.top=(e.clientY+14)+'px';}else tip.hidden=true;
 });
@@ -4317,6 +4363,7 @@ async function resetPlaces(zoneId){
 }
 async function finishDrag(d){
   if(!d.moved){layout();refresh();return;}
+  if(d.cloud){try{await saveCloud('cloud',[cloud.position.x,cloud.position.z]);toast('Internet moved.');}catch(err){layout();refresh();}return;}
   const lvl=Object.entries(floors).filter(([,f])=>f.level===d.fl.level),places={},others=[];
   lvl.forEach(([id,f])=>{if(id!==d.id){places[id]=[Math.round(f.x0*2)/2,Math.round(f.z0*2)/2];others.push({x:f.x0,z:f.z0,w:f.w,D:f.D});}});
   places[d.id]=clearSpot([d.fl.group.position.x,d.fl.group.position.z],d.fl.w,d.fl.D,others);
@@ -4356,6 +4403,43 @@ $('#siteList').addEventListener('click',e=>{const b=e.target.closest('[data-site
 $('#vlans').addEventListener('change',e=>{const id=e.target.dataset.vlan;if(!id)return;if(state.focus){state.focus=null;renderFocusBar();}e.target.checked?state.hidden.delete(id):state.hidden.add(id);
   const a=selAsset();if(a&&state.hidden.has(a.vlan))select(null);else refresh();});
 $('#vlans').addEventListener('click',e=>{const rz=e.target.closest('[data-reset-zone]');if(rz){resetPlaces(rz.dataset.resetZone);return;}const m=e.target.closest('[data-mv]');if(m){moveVlan(m.dataset.mv,+m.dataset.d);return;}const b=e.target.closest('[data-edit-vlan]');if(b)vlanForm(vlanById[b.dataset.editVlan]);});
+// Show or hide every VLAN, of one zone or of the IS
+document.addEventListener('click',e=>{const b=e.target.closest('[data-vsel]');if(!b||state.view!=='site'||!SITE)return;
+  const z=b.dataset.zone,ids=(z?(ZONES.find(x=>x.id===z)||{vlans:[]}).vlans:VLANS).map(v=>v.id);
+  if(state.focus){state.focus=null;renderFocusBar();}
+  ids.forEach(id=>b.dataset.vsel==='all'?state.hidden.delete(id):state.hidden.add(id));
+  renderVlanList();const a=selAsset();if(a&&state.hidden.has(a.vlan))select(null);else refresh();});
+// "Arrange VLANs": the plates of every zone on a grid, the VLANs that talk side by side (SA.arrangeGrid)
+try{const c=localStorage.getItem('strata-arrange-cols');if(c!==null&&$('#arrCols').querySelector(`option[value="${CSS.escape(c)}"]`))$('#arrCols').value=c;}catch(e){}
+$('#arrCols').addEventListener('change',e=>{try{localStorage.setItem('strata-arrange-cols',e.target.value);}catch(err){}});
+// How much two VLANs talk: every hop of a flow between them (devices crossed included), more for a busy flow
+function vlanTraffic(){
+  const W={},add=(a,b,k)=>{if(!a||!b||a===b)return;const key=a<b?a+'|'+b:b+'|'+a;W[key]=(W[key]||0)+k;};
+  FLOWS.forEach(f=>{const k=1+Math.log10(1+(+f.vol||0))*0.5,vl=id=>byId[id]&&!byId[id].isInternet?byId[id].vlan:null;
+    for(let i=0;i+1<f.hops.length;i++)add(vl(f.hops[i]),vl(f.hops[i+1]),k);
+    if(f.hops.length>2)add(vl(f.src),vl(f.dst),k*0.5);});
+  return (a,b)=>W[a<b?a+'|'+b:b+'|'+a]||0;
+}
+async function arrangeVlans(){
+  if(!SITE||!Store.canWrite)return;
+  const cols=+$('#arrCols').value||0,weight=vlanTraffic(),compact=state.compact,gap=compact?2:3,places={};
+  let zones=0;
+  ZONES.forEach(z=>{if(!z.vlans.length)return;zones++;
+    const plates=z.vlans.map(v=>{const p=plateLayout(v.id,compact);return {id:v.id,w:p.w,D:p.D};});
+    Object.assign(places,SA.arrangeGrid(plates,weight,cols,gap).places);});
+  if(!zones)return;
+  if(state.mode!=='zones'){state.mode='zones';segPress('#modeSeg',$('#modeSeg [data-mode="zones"]'));}
+  try{await Busy.track(()=>savePlaces(places),'Arranging the VLANs');flatFitFor=null;toast(`VLANs arranged: ${plural(zones,'zone')}${cols?`, ${cols} per row at most`:''}.`);resetView();}
+  catch(e){}
+}
+$('#arrangeGridBtn').addEventListener('click',()=>{const b=$('#arrangeGridBtn');
+  // plates already placed by hand: a second click confirms
+  if(SITE&&SITE.vlans.some(v=>v.place)&&!b.classList.contains('armed')){b.classList.add('armed');b.firstElementChild.textContent='Confirm: replace the plate positions';setTimeout(()=>{b.classList.remove('armed');b.firstElementChild.textContent='Arrange VLANs';},4000);return;}
+  b.classList.remove('armed');b.firstElementChild.textContent='Arrange VLANs';arrangeVlans();});
+$('#cloudReset').addEventListener('click',async()=>{if(!SITE)return;const d=clone(SITE.raw);delete d.cloud;delete d.cloud2d;try{await Store.putSite(SITE.id,d);toast('Internet is back in its default place.');}catch(e){}});
+$('#optEmpty').checked=state.hideEmpty;
+$('#optEmpty').addEventListener('change',e=>{state.hideEmpty=e.target.checked;try{localStorage.setItem('strata-hide-empty',state.hideEmpty?'1':'0');}catch(err){}
+  if(state.view!=='site'||!SITE)return;flatFitFor=null;renderVlanList();buildScene();layout();refresh();});
 $('#spaceSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const c=b.dataset.space==='compact';if(c===state.compact)return;state.compact=c;segPress('#spaceSeg',b);buildScene();layout();refresh();resetView();});
 $('#postSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.dataset.posts===state.posts)return;state.posts=b.dataset.posts;segPress('#postSeg',b);
   if(state.view==='site'){layout();refresh();}else{buildOverview();refreshOverview();}});
