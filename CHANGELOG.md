@@ -16,9 +16,11 @@ All notable changes to Strata. Versions follow [Semantic Versioning](https://sem
 - **Hide empty VLANs** (*Plates*): the plates without an asset leave the 3D model and the 2D diagram. Remembered by the browser.
 - **A loading bar** at the top of the screen for any request still running after 300 ms, with the progress of batches of writes and imports.
 - **Memory and CPU needs**, measured from an empty map to 30 000 assets (README, section 1), and resource limits, commented out, in `docker-compose.yml`.
-- **API**: `POST /auth/login` (the form, or JSON `{user, password}`); `analysis.js` exports `arrangeGrid` and `vlansFromFile`.
+- **Graphics for small laptops** (*Display › Graphics*: Auto, Quality, Economy, and *Animated flows*). Economy: screen resolution, no shadows, no moving dots, labels hidden sooner from afar. Auto, the default, is Quality until moving the view turns out slow on this computer (then Economy, remembered by the browser), and Economy when the browser draws without a graphics card.
+- **API**: `POST /auth/login` (the form, or JSON `{user, password}`); `analysis.js` exports `arrangeGrid` and `vlansFromFile`; `window.strataRenderStats()` in the page gives what the last frame cost.
 
 ### Changed
+- **The 3D view is much lighter to draw**, and looks the same: 8 to 15 times fewer draw calls (1 569 → 208 for the Lyon demo) and half the triangles. It is drawn only when something changes, not 60 times a second; shadows are drawn again only when the model changes; the view is a little less sharp while it moves. Each type of equipment is one shared geometry; every flow of an IS is in one geometry with its own colour and opacity, and the moving dots are one instanced mesh; label textures are shared; labels too small to read are not drawn; flows no longer cast shadows; a rebuilt model frees what the GPU held for the previous one.
 - Changing a password, or disabling or deleting an account, ends that account's other sessions. *End all sessions* (admin) ends the sessions of local accounts too, and keeps the admin's own.
 - The Content-Security-Policy allows forms to post to Strata itself (`form-action 'self'`), for the sign-in form.
 - `tests/e2e.mjs` takes `CHROMIUM_PATH`, a Chromium already installed.

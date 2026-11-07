@@ -631,7 +631,8 @@ const nameOf=id=>id==='internet'?'Internet':SVC[id]?SVC[id].name:(byId[id]&&!byI
 const siteServices=()=>SITE?SITE.services.filter(x=>x.scope==='site'||SITE.usedSvc.has(x.id)):[];
 const vnum=a=>{const v=vlanById[a.vlan];return v?v.num:'?';};
 
-const state={attack:{from:'internet'},attackHl:null,hoverFlow:null,lens:'physical',biz:null,view:'overview',siteId:null,ovSelId:null,selId:null,mode:'zones',hidden:new Set(),minSev:0,minExp:0,dir:'all',color:'risk',flows:true,riskOnly:false,labels:true,ports:false,rotate:false,gap:8,path:false,panel:null,posts:'off',compact:true,arrange:false,flat:false,tool:'move',hideEmpty:false};
+const state={attack:{from:'internet'},attackHl:null,hoverFlow:null,lens:'physical',biz:null,view:'overview',siteId:null,ovSelId:null,selId:null,mode:'zones',hidden:new Set(),minSev:0,minExp:0,dir:'all',color:'risk',flows:true,riskOnly:false,labels:true,ports:false,rotate:false,gap:8,path:false,panel:null,posts:'off',compact:true,arrange:false,flat:false,tool:'move',hideEmpty:false,anim:null};
+try{const v=localStorage.getItem('strata-anim');if(v==='1'||v==='0')state.anim=v==='1';}catch(e){}
 try{state.hideEmpty=localStorage.getItem('strata-hide-empty')==='1';}catch(e){}
 // VLANs left out of the model: those without an asset, when "Hide empty VLANs" is on
 const vlanEmpty=id=>!ASSETS.some(a=>a.vlan===id);
@@ -747,15 +748,31 @@ function renderEmpty(){
 $('#sevSeg').innerHTML=SEV_KEYS.map((k,i)=>`<button data-sev="${i}" aria-pressed="${i===0}" title="${i===0?'Show everything':'From '+SEV[k].label+' upwards'}">${['All','Low','Med','High','Crit'][i]}</button>`).join('');
 
 /* ================= Three.js ================= */
-const renderer=new THREE.WebGLRenderer({antialias:true});
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;
+// Graphics: Quality, Economy, or Auto (Economy on a software renderer, or once moving the view turns out
+// slow on this computer). Remembered in this browser. Economy: screen resolution, no shadows, no moving
+// dots on the flows, labels hidden sooner from afar, and no edge smoothing after a reload.
+const GFX_KEY='strata-gfx',GFX_SLOW_KEY='strata-gfx-slow',GFX={pref:'auto',slow:false,soft:false,gpu:''};
+try{const p=localStorage.getItem(GFX_KEY);if(p==='quality'||p==='eco')GFX.pref=p;GFX.slow=localStorage.getItem(GFX_SLOW_KEY)==='1';}catch(e){}
+const eco=()=>GFX.pref==='eco'||(GFX.pref==='auto'&&(GFX.slow||GFX.soft));
+const renderer=new THREE.WebGLRenderer({antialias:!eco()});
+try{const gl=renderer.getContext(),x=gl.getExtension('WEBGL_debug_renderer_info');GFX.gpu=String(x?gl.getParameter(x.UNMASKED_RENDERER_WEBGL):'');GFX.soft=/swiftshader|llvmpipe|softpipe|software|basic render/i.test(GFX.gpu);}catch(e){}
+// Resolution at rest, and while the view moves (a little lower, sharp again as soon as it stops)
+const basePR=()=>eco()?1:Math.min(devicePixelRatio,2),movePR=()=>eco()?0.75:Math.min(devicePixelRatio,1.25);
+let curPR=basePR();renderer.setPixelRatio(curPR);
+// Shadows are drawn again only when something in the model changes, not when the view moves
+renderer.shadowMap.enabled=!eco();renderer.shadowMap.type=THREE.PCFShadowMap;renderer.shadowMap.autoUpdate=false;
+// The model is drawn only when something changed: the view, the data, a filter, an animation
+let needRender=true,shadowDirty=true,renderUntil=0,lastRender=0,lastMove=0,dragging=false,slowLog=[];
+function invalidate(ms,cameraOnly){needRender=true;if(!cameraOnly)shadowDirty=true;if(ms)renderUntil=Math.max(renderUntil,performance.now()+ms);}
 // Colours as three.js 0.128 rendered them: the palette's values go to the screen unconverted
 THREE.ColorManagement.enabled=false;renderer.outputColorSpace=THREE.LinearSRGBColorSpace;
 $('#scene').appendChild(renderer.domElement);
 const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(42,1,0.1,700);
 const controls=new OrbitControls(camera,renderer.domElement);
+controls.addEventListener('change',()=>{invalidate(0,true);lastMove=performance.now();const m=movePR();if(curPR!==m&&dragging){curPR=m;renderer.setPixelRatio(m);}});
+controls.addEventListener('start',()=>{dragging=true;slowLog=[];});
+controls.addEventListener('end',()=>{dragging=false;});
 controls.enableDamping=true;controls.dampingFactor=0.08;controls.maxPolarAngle=Math.PI*0.47;controls.minDistance=8;controls.maxDistance=260;controls.autoRotateSpeed=0.45;
 // Left button orbits; the middle button (or the right one) moves the view across the screen, left, right,
 // up and down, so the model need not stay centred on one point. The wheel zooms; on a touch screen,
@@ -770,10 +787,41 @@ const W=34,D=21,SLAB=0.3,TABLE_Y=-2;
 // the colour the selected asset glows in
 const HL_COLOR=new THREE.Color();
 let floors={},pickables=[],cloud=null,selRing=null,sun=null,levelTags=[],extent=W,nLevels=0,ANIM=[],OV={spanX:60,spanZ:40,ex:14,sites:{}};
-const pGeo=new THREE.SphereGeometry(0.12,10,8);
+const pGeo=new THREE.SphereGeometry(0.12,10,8);pGeo.userData.cached=true;
+// Geometries and textures made once and shared (models, labels): never disposed with the scene
+const cachedGeo=g=>{g.userData.cached=true;return g;};
+// Several geometries, each with its own transform, in one: one draw call instead of one per part
+function mergeGeos(list){
+  if(!list.length)return null;
+  let nv=0,ni=0;list.forEach(([g])=>{nv+=g.attributes.position.count;ni+=g.index?g.index.count:g.attributes.position.count;});
+  const pos=new Float32Array(nv*3),nor=new Float32Array(nv*3),idx=new Uint32Array(ni),v=new THREE.Vector3(),nm=new THREE.Matrix3();
+  let vo=0,io=0;
+  list.forEach(([g,m])=>{const P=g.attributes.position,N=g.attributes.normal;nm.getNormalMatrix(m);
+    for(let i=0;i<P.count;i++){v.fromBufferAttribute(P,i).applyMatrix4(m);pos[(vo+i)*3]=v.x;pos[(vo+i)*3+1]=v.y;pos[(vo+i)*3+2]=v.z;
+      if(N){v.fromBufferAttribute(N,i).applyMatrix3(nm).normalize();nor[(vo+i)*3]=v.x;nor[(vo+i)*3+1]=v.y;nor[(vo+i)*3+2]=v.z;}}
+    if(g.index){for(let i=0;i<g.index.count;i++)idx[io+i]=g.index.getX(i)+vo;io+=g.index.count;}else{for(let i=0;i<P.count;i++)idx[io+i]=vo+i;io+=P.count;}
+    vo+=P.count;});
+  const out=new THREE.BufferGeometry();out.setAttribute('position',new THREE.BufferAttribute(pos,3));out.setAttribute('normal',new THREE.BufferAttribute(nor,3));out.setIndex(new THREE.BufferAttribute(idx,1));
+  out.computeBoundingSphere();return out;
+}
+// Frees what the GPU holds for a removed part of the scene (shared geometries and textures stay)
+function disposeTree(o){o.traverse(x=>{if(x.geometry&&!x.geometry.userData.cached)x.geometry.dispose();
+  (x.material?[].concat(x.material):[]).forEach(m=>{if(m.map&&!m.map.userData.cached)m.map.dispose();m.dispose();});});}
 
 function roundRect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+// Label textures are drawn once per text and colours, and shared by every label that shows the same
+const LABEL_TEX=new Map();
 function tagLabel(text,dot,size=0.58,weight=500,border){
+  const key=[text,dot,weight,border,css('--panel'),css('--fg'),css('--line')].join('\u0001');
+  let hit=LABEL_TEX.get(key);
+  if(!hit){
+    if(LABEL_TEX.size>4000){LABEL_TEX.forEach(x=>x.tex.dispose());LABEL_TEX.clear();}
+    hit=drawLabel(text,dot,weight,border);LABEL_TEX.set(key,hit);
+  }
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:hit.tex,transparent:true,depthTest:false,depthWrite:false}));
+  s.scale.set(size*hit.w/hit.h,size,1);s.renderOrder=20;return s;
+}
+function drawLabel(text,dot,weight,border){
   const px=40,pd=14,dotW=dot?28:0,c=document.createElement('canvas'),ctx=c.getContext('2d'),font=`${weight} ${px}px "IBM Plex Mono", ui-monospace, monospace`;
   ctx.font=font;const w=Math.ceil(ctx.measureText(text).width)+pd*2+dotW,h=Math.round(px*1.5);
   c.width=w;c.height=h;ctx.font=font;
@@ -781,10 +829,10 @@ function tagLabel(text,dot,size=0.58,weight=500,border){
   ctx.strokeStyle=border||css('--line');ctx.lineWidth=border?5:3;roundRect(ctx,2,2,w-4,h-4,5);ctx.stroke();
   if(dot){ctx.fillStyle=dot;ctx.beginPath();ctx.arc(pd+9,h/2,9,0,Math.PI*2);ctx.fill();}
   ctx.fillStyle=css('--fg');ctx.textBaseline='middle';ctx.fillText(text,pd+dotW,h/2+2);
-  const tex=new THREE.CanvasTexture(c);tex.minFilter=THREE.LinearFilter;
-  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false,depthWrite:false}));
-  s.scale.set(size*w/h,size,1);s.renderOrder=20;return s;
+  const tex=new THREE.CanvasTexture(c);tex.minFilter=THREE.LinearFilter;tex.userData.cached=true;
+  return {tex,w,h};
 }
+const PLACARD_BOX=cachedGeo(new THREE.BoxGeometry(8,2,0.1)),PLACARD_FACE=cachedGeo(new THREE.PlaneGeometry(8,2));
 function placard(v,col){
   const c=document.createElement('canvas');c.width=1024;c.height=256;const ctx=c.getContext('2d');
   ctx.fillStyle=css('--card');ctx.fillRect(0,0,1024,256);ctx.fillStyle=col;ctx.fillRect(0,0,22,256);
@@ -797,7 +845,8 @@ function placard(v,col){
   const tex=new THREE.CanvasTexture(c);tex.anisotropy=4;
   const side=new THREE.MeshStandardMaterial({color:new THREE.Color(css('--card')),roughness:0.9});
   const face=new THREE.MeshStandardMaterial({map:tex,roughness:0.9});
-  const m=new THREE.Mesh(new THREE.BoxGeometry(8,2,0.1),[side,side,side,side,face,side]);m.castShadow=true;return m;
+  // the box in one material and its printed face on top: two draw calls instead of six
+  const m=new THREE.Mesh(PLACARD_BOX,side),f=new THREE.Mesh(PLACARD_FACE,face);f.position.z=0.0505;m.add(f);m.castShadow=true;return m;
 }
 
 /* ---- Low-poly models ---- */
@@ -824,16 +873,39 @@ const MODELS={
   ap:(g,c,k)=>{C(g,0.05,0.05,0.9,6,k,0,0.45,0);C(g,0.55,0.62,0.16,14,c,0,0.98,0);C(g,0.06,0.06,0.02,8,k,0,1.07,0.3);return 1.06;},
   phone:(g,c,k)=>{B(g,0.95,0.1,0.75,c,0,0.05,0);const b=B(g,0.95,0.32,0.6,c,0,0.26,0.02);b.rotation.x=-0.35;const s=B(g,0.5,0.02,0.24,k,0.12,0.43,0.05);s.rotation.x=-0.35;B(g,0.2,0.14,0.72,c,-0.33,0.5,0);return 0.6;}
 };
+// Each type of equipment is a stack of small boxes and cylinders: merged once per type into two
+// geometries (body, details), shared by every asset of that type
+const MODEL_GEO=new Map(),SEV_GEO=new Map();
+function modelGeo(type){
+  let m=MODEL_GEO.get(type);if(m)return m;
+  const c=new THREE.MeshBasicMaterial(),k=new THREE.MeshBasicMaterial(),g=new THREE.Group();
+  const h=(MODELS[type]||MODELS.server)(g,c,k);g.updateMatrixWorld(true);
+  const box=new THREE.Box3().setFromObject(g),lc=[],lk=[];
+  g.traverse(o=>{if(o.isMesh)(o.material===c?lc:lk).push([o.geometry,o.matrixWorld]);});
+  m={c:mergeGeos(lc),k:mergeGeos(lk),h,box,size:box.getSize(new THREE.Vector3())};
+  g.traverse(o=>{if(o.isMesh)o.geometry.dispose();});c.dispose();k.dispose();
+  if(m.c)cachedGeo(m.c);if(m.k)cachedGeo(m.k);MODEL_GEO.set(type,m);return m;
+}
+// The vulnerability marks of a model: tape, pin head and flag (one geometry), and the needle
+function sevGeo(type,sev){
+  const key=type+'|'+sev;let m=SEV_GEO.get(key);if(m)return m;
+  const G=modelGeo(type),sz=G.size,ph=G.h+0.55+SEV[sev].rank*0.28,px=G.box.max.x+0.35,pz=-0.2,T=(x,y,z)=>new THREE.Matrix4().makeTranslation(x,y,z);
+  const parts=[[new THREE.BoxGeometry(sz.x+0.5,0.04,sz.z+0.5),T(0,0.02,0)],[new THREE.SphereGeometry(0.21,14,10),T(px,ph,pz)]];
+  if(sev==='crit')parts.push([new THREE.BoxGeometry(0.6,0.36,0.025),T(px+0.32,ph-0.42,pz)]);
+  const needle=new THREE.CylinderGeometry(0.03,0.03,ph,6);needle.translate(px,ph/2,pz);
+  m={marks:cachedGeo(mergeGeos(parts)),needle:cachedGeo(needle),top:ph};parts.forEach(([g])=>g.dispose());
+  SEV_GEO.set(key,m);return m;
+}
 const MINI_H={dc:1.2,server:0.95,hypervisor:0.8,db:0.8,firewall:0.6,gateway:0.55,switch:0.3,workstation:0.55,printer:0.45,plc:0.6,camera:0.6,iot:0.7,ap:0.55,phone:0.3};
 
 function buildBase(spanX,spanZ){
-  while(scene.children.length)scene.remove(scene.children[0]);
-  pickables=[];ANIM=[];
+  while(scene.children.length){const o=scene.children[0];scene.remove(o);disposeTree(o);}
+  pickables=[];ANIM=[];FLOWMESH=null;invalidate();
   const BG=css('--bg');scene.background=new THREE.Color(BG);scene.fog=new THREE.Fog(BG,Math.max(90,spanX*1.3),Math.max(200,spanX*3));
   // three.js now uses physical light units: ×π gives the brightness the theme values were tuned for
   scene.add(new THREE.HemisphereLight(0xffffff,0x8a8f8c,(parseFloat(css('--sky'))||0.6)*Math.PI));
   sun=new THREE.DirectionalLight(0xffffff,(parseFloat(css('--sun'))||1)*Math.PI);
-  sun.position.set(-26,80,34);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
+  sun.position.set(-26,80,34);sun.castShadow=!eco();sun.shadow.mapSize.set(2048,2048);
   const sb=Math.max(42,Math.max(spanX,spanZ)/2+12);
   Object.assign(sun.shadow.camera,{left:-sb,right:sb,top:sb,bottom:-sb,near:1,far:280});sun.shadow.bias=-0.0006;sun.shadow.normalBias=0.02;
   scene.add(sun);scene.add(sun.target);
@@ -855,7 +927,7 @@ function buildBase(spanX,spanZ){
 function thread(curve,vol,colorVar,nseg=1){
   const col=new THREE.Color(css(colorVar));
   const mat=new THREE.MeshStandardMaterial({color:col,roughness:0.8,transparent:true});
-  const tube=new THREE.Mesh(new THREE.TubeGeometry(curve,48*nseg,0.022+Math.log10(1+vol)*0.022,5,false),mat);tube.castShadow=true;scene.add(tube);
+  const tube=new THREE.Mesh(new THREE.TubeGeometry(curve,(eco()?16:32)*nseg,0.022+Math.log10(1+vol)*0.022,5,false),mat);scene.add(tube);
   const pm=new THREE.MeshStandardMaterial({color:col,roughness:0.4}),n=Math.min(4,1+Math.round(Math.log10(1+vol)))*nseg,parts=[];
   for(let i=0;i<n;i++){const p=new THREE.Mesh(pGeo,pm);p.userData.t=i/n;p.position.copy(curve.getPoint(i/n));scene.add(p);parts.push(p);}
   const o={curve,tube,mat,parts,speed:(0.06+Math.log10(1+vol)*0.04)/Math.sqrt(nseg)};ANIM.push(o);return o;
@@ -911,7 +983,7 @@ function buildOverview(){
   });
   sun.target.position.set(0,TABLE_Y,0);
 }
-function refreshOverview(){
+function refreshOverview(){invalidate();
   const sel=ovSel();
   SITES.forEach(s=>{const o=OV.sites[s.id];if(!o)return;const op=sel&&sel!==s?0.22:1;o.mats.forEach(m=>{m.opacity=op;m.depthWrite=op>0.5;});o.label.material.opacity=op>0.5?1:0.45;});
   WAN.forEach(w=>{if(!w.tube)return;const vis=state.flows&&(!state.riskOnly||w.risk);let op=w.risk?0.95:0.85;if(sel)op=(w.a===sel.id||w.b===sel.id)?1:0.08;
@@ -984,6 +1056,7 @@ function computeLayout(){
   });
   return {zm,compact,levels,plan,extent:ext,maxD};
 }
+const POST_GEO=cachedGeo(new THREE.CylinderGeometry(0.22,0.22,1,10));
 function buildScene(){
   const L=computeLayout(),zm=L.zm,compact=L.compact,plan=L.plan;
   nLevels=L.levels.length;extent=L.extent;floors={};
@@ -998,25 +1071,20 @@ function buildScene(){
     slab.castShadow=slab.receiveShadow=true;slab.userData.plate=v.id;g.add(slab);pickables.push(slab);
     const pl=placard(v,vc),pk0=compact?0.72:1;pl.scale.setScalar(pk0);pl.position.set(-Wv/2+0.6+4*pk0,SLAB/2+pk0,Dv/2-0.9);g.add(pl);
     const posts=[];
-    [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx,sz])=>{const p=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,1,10),postMat);p.position.set(sx*(Wv/2-0.9),0,sz*(Dv/2-0.9));p.castShadow=true;g.add(p);posts.push(p);});
+    [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx,sz])=>{const p=new THREE.Mesh(POST_GEO,postMat);p.position.set(sx*(Wv/2-0.9),0,sz*(Dv/2-0.9));p.castShadow=true;g.add(p);posts.push(p);});
     scene.add(g);floors[v.id]={group:g,posts,postMat,slab,level:inf.level,x0:inf.x0,z0:inf.z0||0,w:Wv,D:Dv};
     inf.list.forEach(a=>{
       const sp=inf.spots[a.id],x=sp.x,z=sp.z;
       const ag=new THREE.Group();ag.position.set(x,SLAB/2,z);
       const c=new THREE.MeshStandardMaterial({color:base.card,roughness:0.85,flatShading:true,transparent:true});
       const k=new THREE.MeshStandardMaterial({color:base.detail,roughness:0.6,flatShading:true,transparent:true});
-      const model=new THREE.Group();const h=(MODELS[a.type]||MODELS.server)(model,c,k);ag.add(model);
-      const box=new THREE.Box3().setFromObject(model),sz=box.getSize(new THREE.Vector3());
+      const G=modelGeo(a.type),h=G.h;ag.add(new THREE.Mesh(G.c,c));if(G.k)ag.add(new THREE.Mesh(G.k,k));
       const mats=[c,k];let pinTop=h;
       if(a.sev!=='none'){
-        const sc=new THREE.Color(sevColor(a.sev));
+        const sc=new THREE.Color(sevColor(a.sev)),S=sevGeo(a.type,a.sev);
         const sm=new THREE.MeshStandardMaterial({color:sc,roughness:0.5,transparent:true,emissive:sc,emissiveIntensity:0.12});mats.push(sm);
-        const tape=new THREE.Mesh(new THREE.BoxGeometry(sz.x+0.5,0.04,sz.z+0.5),sm);tape.position.y=0.02;ag.add(tape);
-        const ph=h+0.55+SEV[a.sev].rank*0.28,px=box.max.x+0.35,pz=-0.2;
-        const needle=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,ph,6),steel);needle.position.set(px,ph/2,pz);ag.add(needle);
-        const head=new THREE.Mesh(new THREE.SphereGeometry(0.21,14,10),sm);head.position.set(px,ph,pz);ag.add(head);
-        if(a.sev==='crit'){const fl=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.36,0.025),sm);fl.position.set(px+0.32,ph-0.42,pz);ag.add(fl);}
-        pinTop=ph;
+        ag.add(new THREE.Mesh(S.marks,sm));ag.add(new THREE.Mesh(S.needle,steel));
+        pinTop=S.top;
       }
       ag.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;o.userData.asset=a;pickables.push(o);}});
       if(DIFF&&DIFF.A[a.id]){const r=new THREE.Mesh(new THREE.RingGeometry(1.2,1.42,40).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:new THREE.Color(css(DIFF_COL[DIFF.A[a.id]])),depthWrite:false}));r.position.y=0.05;ag.add(r);}
@@ -1062,20 +1130,68 @@ function flowCurve(f){
   }
   return {path,segs};
 }
+// Every flow of the IS in one geometry (tubes and arrowheads), coloured per vertex with its own opacity,
+// drawn as two meshes over the same vertices: the flows clearly shown (they hide what is behind them) and
+// the faded ones (they do not). A few draw calls instead of six or more per flow. The moving dots are one
+// instanced mesh; the wide invisible tubes that make a flow easy to click are on a layer never drawn.
+let FLOWMESH=null;
+const PICK_LAYER=1;
+function disposeFlows(){
+  const F=FLOWMESH;if(!F)return;FLOWMESH=null;
+  [F.strong,F.faint,F.dots].forEach(m=>{if(m){scene.remove(m);if(m.geometry!==pGeo)m.geometry.dispose();}});
+  F.mat.dispose();if(F.dots)F.dots.material.dispose();
+  F.picks.forEach(x=>{scene.remove(x);x.geometry.dispose();});
+  const gone=new Set(F.picks);pickables=pickables.filter(o=>!gone.has(o));
+}
 function buildFlows(){
   scene.updateMatrixWorld(true);
-  ANIM=ANIM.filter(o=>!o.owner);
+  disposeFlows();
+  const seg=eco()?16:32,tmp=new THREE.Object3D(),I=new THREE.Matrix4(),items=[],picks=[];
+  let nv=0,ni=0,nd=0;
   FLOWS.forEach(f=>{
-    if(f.tube){scene.remove(f.tube);f.tube.geometry.dispose();f.parts.forEach(p=>scene.remove(p));(f.extras||[]).forEach(x=>{scene.remove(x);if(x.geometry!==coneGeo)x.geometry.dispose();});pickables=pickables.filter(o=>o!==f.pick);}
-    const {path,segs}=flowCurve(f);
-    const o=thread(path,f.vol,flowColorVar(f),segs.length);o.owner=f;
-    const extras=segs.map(c=>{const m=new THREE.Mesh(coneGeo,o.mat);const t=Math.max(0.5,1-1.1/Math.max(1,c.getLength()));m.position.copy(c.getPoint(t));m.lookAt(c.getPoint(t).add(c.getTangent(t)));
-      const k=0.75+Math.log10(1+f.vol)*0.18;m.scale.set(k,k,k);m.castShadow=true;scene.add(m);return m;});
-    const pick=new THREE.Mesh(new THREE.TubeGeometry(path,24*segs.length,0.32,4,false),pickMat);pick.userData.flow=f;scene.add(pick);pickables.push(pick);
-    extras.push(pick);
-    Object.assign(f,{tube:o.tube,mat:o.mat,parts:o.parts,extras,cones:extras.slice(0,-1),pick});
+    const {path,segs}=flowCurve(f),col=new THREE.Color(css(flowColorVar(f)));
+    const parts=[[new THREE.TubeGeometry(path,seg*segs.length,0.022+Math.log10(1+f.vol)*0.022,5,false),I]];
+    const k=0.75+Math.log10(1+f.vol)*0.18;
+    segs.forEach(c=>{const t=Math.max(0.5,1-1.1/Math.max(1,c.getLength())),pt=c.getPoint(t);tmp.position.copy(pt);tmp.lookAt(pt.clone().add(c.getTangent(t)));tmp.scale.set(k,k,k);tmp.updateMatrix();parts.push([coneGeo,tmp.matrix.clone()]);});
+    const g=mergeGeos(parts);parts[0][0].dispose();
+    const pick=new THREE.Mesh(new THREE.TubeGeometry(path,12*segs.length,0.32,4,false),pickMat);pick.layers.set(PICK_LAYER);pick.userData.flow=f;scene.add(pick);pickables.push(pick);picks.push(pick);
+    const n=Math.min(4,1+Math.round(Math.log10(1+f.vol)))*segs.length;
+    f.fx={v0:nv,v1:nv+g.attributes.position.count,i0:ni,i1:ni+g.index.count,d0:nd,dn:n,curve:path,speed:(0.06+Math.log10(1+f.vol)*0.04)/Math.sqrt(segs.length),t:Array.from({length:n},(_,i)=>i/n),col,op:-1,on:false};
+    f.pick=pick;
+    items.push([f,g]);nv+=g.attributes.position.count;ni+=g.index.count;nd+=n;
   });
+  const pos=new Float32Array(nv*3),nor=new Float32Array(nv*3),colA=new Float32Array(nv*4),all=new Uint32Array(ni);
+  items.forEach(([f,g])=>{const x=f.fx;pos.set(g.attributes.position.array,x.v0*3);nor.set(g.attributes.normal.array,x.v0*3);
+    const ix=g.index.array;for(let i=0;i<ix.length;i++)all[x.i0+i]=ix[i]+x.v0;
+    for(let v=x.v0;v<x.v1;v++){colA[v*4]=x.col.r;colA[v*4+1]=x.col.g;colA[v*4+2]=x.col.b;colA[v*4+3]=0.8;}
+    g.dispose();});
+  const P=new THREE.BufferAttribute(pos,3),N=new THREE.BufferAttribute(nor,3),C=new THREE.BufferAttribute(colA,4);C.setUsage(THREE.DynamicDrawUsage);
+  const mat=new THREE.MeshStandardMaterial({vertexColors:true,transparent:true,roughness:0.8});
+  const mk=depth=>{const g=new THREE.BufferGeometry();g.setAttribute('position',P);g.setAttribute('normal',N);g.setAttribute('color',C);
+    const ix=new THREE.BufferAttribute(new Uint32Array(Math.max(1,ni)),1);ix.setUsage(THREE.DynamicDrawUsage);g.setIndex(ix);g.setDrawRange(0,0);
+    const m=new THREE.Mesh(g,depth?mat:mat.clone());if(!depth)m.material.depthWrite=false;m.renderOrder=depth?0:1;scene.add(m);return m;};
+  const strong=mk(true),faint=mk(false);
+  if(nv){strong.geometry.computeBoundingSphere();faint.geometry.boundingSphere=strong.geometry.boundingSphere.clone();}
+  let dots=null;
+  if(nd){dots=new THREE.InstancedMesh(pGeo,new THREE.MeshStandardMaterial({roughness:0.4}),nd);dots.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const z=new THREE.Matrix4().makeScale(0,0,0);items.forEach(([f])=>{for(let i=0;i<f.fx.dn;i++){dots.setColorAt(f.fx.d0+i,f.fx.col);dots.setMatrixAt(f.fx.d0+i,z);}});dots.frustumCulled=false;scene.add(dots);}
+  FLOWMESH={strong,faint,dots,mat,all,picks,colors:C,zero:new THREE.Matrix4().makeScale(0,0,0),m4:new THREE.Matrix4()};
+  invalidate();
 }
+// Where the dots of each flow are now; hidden flows get none
+function placeDots(dt){
+  const F=FLOWMESH;if(!F||!F.dots)return;
+  const on=flowAnim()&&state.flows;F.dots.visible=on;if(!on)return;
+  const p=new THREE.Vector3();
+  FLOWS.forEach(f=>{const x=f.fx;if(!x)return;
+    for(let i=0;i<x.dn;i++){
+      if(!x.on){F.dots.setMatrixAt(x.d0+i,F.zero);continue;}
+      if(dt&&!reduceMotion)x.t[i]=(x.t[i]+dt*x.speed)%1;
+      x.curve.getPoint(x.t[i],p);F.m4.makeTranslation(p.x,p.y,p.z);F.dots.setMatrixAt(x.d0+i,F.m4);}});
+  F.dots.instanceMatrix.needsUpdate=true;
+}
+// Hides the threads while a plate or the Internet cloud is dragged (they are drawn again on release)
+function hideFlows(){const F=FLOWMESH;if(!F)return;[F.strong,F.faint,F.dots].forEach(m=>{if(m)m.visible=false;});invalidate();}
 function postLen(level,wx,y,wz=0){
   for(let l=level-1;l>=0;l--){if(Object.values(floors).some(f=>f.level===l&&Math.abs(wx-f.x0)<=f.w/2-0.3&&Math.abs(wz-f.z0)<=f.D/2-0.3))return (level-l)*state.gap-SLAB;}
   return y-SLAB/2-TABLE_Y;
@@ -1096,7 +1212,7 @@ function layout(){
 function cloudPos3d(){const c=SITE&&SITE.raw&&SITE.raw.cloud;return Array.isArray(c)&&isFinite(c[0])&&isFinite(c[1])?[+c[0],+c[1]]:null;}
 function cloudPos2d(){const c=SITE&&SITE.raw&&SITE.raw.cloud2d;return Array.isArray(c)&&isFinite(c[0])&&isFinite(c[1])?[+c[0],+c[1]]:null;}
 // The cloud, the named Internet services next to it and the rod down to the top level
-function placeCloud(cx,cy,cz,topY){
+function placeCloud(cx,cy,cz,topY){invalidate();
   cloud.position.set(cx,cy,cz);
   (cloud.svcs||[]).forEach((g,i)=>g.position.set(cx+4.6+(i%6)*3.6,cy-0.6-Math.floor(i/6)*2.6,cz+0.5));cloud.rod.visible=state.posts!=='off';cloud.rod.scale.y=cy-topY-1;cloud.rod.position.set(cx,topY+(cy-topY-1)/2,cz);
   cloud.topY=topY;
@@ -1114,7 +1230,20 @@ function keepInView(){
   const rx=ov?OV.spanX/2:extent/2,rz=ov?OV.spanZ/2:extent/2,ry=ov?6:Math.max(1,nLevels)*state.gap/2+4;
   const t=controls.target,clamp=(v,o,r)=>Math.max(o-r,Math.min(o+r,v));
   const dx=clamp(t.x,c.x,rx)-t.x,dy=clamp(t.y,c.y,ry)-t.y,dz=clamp(t.z,c.z,rz)-t.z;
-  if(dx||dy||dz){t.x+=dx;t.y+=dy;t.z+=dz;camera.position.x+=dx;camera.position.y+=dy;camera.position.z+=dz;}
+  if(dx||dy||dz){t.x+=dx;t.y+=dy;t.z+=dz;camera.position.x+=dx;camera.position.y+=dy;camera.position.z+=dz;return true;}
+  return false;
+}
+// Labels too small to read from where the camera is are not drawn (the selected asset keeps its own)
+const LOD_PX=()=>eco()?9:6,lodAt=new THREE.Vector3(Infinity,0,0),lodP=new THREE.Vector3();
+function labelLod(force){
+  if(state.view!=='site'||!SITE)return;
+  if(!force&&camera.position.distanceToSquared(lodAt)<0.04)return;
+  lodAt.copy(camera.position);
+  const k=innerHeight/(2*Math.tan(camera.fov*Math.PI/360)),min=LOD_PX(),sel=selAsset();
+  const near=s=>{s.getWorldPosition(lodP);return s.scale.y*k/Math.max(0.01,camera.position.distanceTo(lodP))>=min;};
+  ASSETS.forEach(a=>{if(!a.label)return;
+    a.label.visible=!!a.labelWant&&(sel===a||near(a.label));
+    if(a.portLabel)a.portLabel.visible=!!a.portWant&&(sel===a||near(a.portLabel));});
 }
 // Opacity of every asset and flow under the current filters and selection (3D model and 2D diagram)
 function computeVis(){
@@ -1160,20 +1289,26 @@ function refresh(){
       // the selected asset glows (its own glow, if any, comes back after)
       if(!m.userData.e0)m.userData.e0={c:m.emissive.getHex(),i:m.emissiveIntensity};
       if(sel===a){m.emissive.copy(HL_COLOR);m.emissiveIntensity=0.45;}else{m.emissive.setHex(m.userData.e0.c);m.emissiveIntensity=m.userData.e0.i;}});
-    a.label.visible=(state.labels&&op>0.5)||sel===a;
-    if(a.portLabel)a.portLabel.visible=(state.ports&&op>0.5)||(sel===a&&state.ports);
+    a.labelWant=(state.labels&&op>0.5)||sel===a;
+    a.portWant=!!a.portLabel&&((state.ports&&op>0.5)||(sel===a&&state.ports));
   });
-  FLOWS.forEach(f=>{
-    if(!f.tube)return;
-    const {vis,op}=V.fv[f.id];
-    f.mat.opacity=op;f.mat.depthWrite=op>0.5;f.tube.visible=vis;f.tube.castShadow=op>0.5;
-    f.parts.forEach(p=>p.visible=vis&&op>0.5);f.cones.forEach(c=>c.visible=vis);f.pick.visible=vis&&op>0.5;
-  });
-  placeSelRing();renderDirNote();
+  const F=FLOWMESH;
+  if(F){
+    const sIx=F.strong.geometry.index,fIx=F.faint.geometry.index,C=F.colors.array;let ns=0,nf=0,recol=false;
+    FLOWS.forEach(f=>{const x=f.fx;if(!x)return;
+      const {vis,op}=V.fv[f.id];
+      if(x.op!==op){x.op=op;recol=true;for(let v=x.v0;v<x.v1;v++)C[v*4+3]=op;}
+      if(vis){const r=F.all.subarray(x.i0,x.i1);if(op>0.5){sIx.array.set(r,ns);ns+=r.length;}else{fIx.array.set(r,nf);nf+=r.length;}}
+      x.on=vis&&op>0.5;f.pick.visible=x.on;});
+    F.strong.geometry.setDrawRange(0,ns);F.faint.geometry.setDrawRange(0,nf);sIx.needsUpdate=true;fIx.needsUpdate=true;
+    F.strong.visible=ns>0;F.faint.visible=nf>0;if(recol)F.colors.needsUpdate=true;
+    placeDots(0);
+  }
+  labelLod(true);placeSelRing();renderDirNote();invalidate();
   if(state.flat)renderFlat();
   if(state.lens!=='physical')renderLens();
 }
-function placeSelRing(){
+function placeSelRing(){invalidate();
   const a=state.view==='site'?selAsset():null;
   if(!a||!a.group||!a.group.parent.visible){if(state.view==='site')selRing.visible=false;return;}
   const p=new THREE.Vector3();a.group.getWorldPosition(p);selRing.scale.set(1.75,1,1.75);selRing.position.copy(p);selRing.position.y+=0.06;selRing.visible=true;
@@ -4288,7 +4423,7 @@ function closeCtlMobile(cond){if(cond&&innerWidth<=760){document.body.classList.
 
 /* ================= Data arrival ================= */
 let dataT=null,pendingAfterData=null,firstView=true,lastCount=0;
-function scheduleData(delay){clearTimeout(dataT);dataT=setTimeout(onData,delay==null?(Store.bulk?400:60):delay);}
+function scheduleData(delay){invalidate(delay==null?800:delay+400);clearTimeout(dataT);dataT=setTimeout(onData,delay==null?(Store.bulk?400:60):delay);}
 function onData(){
   compile();renderSiteList();
   if(state.view==='site'){
@@ -4374,7 +4509,7 @@ $('#focusBar').addEventListener('click',e=>{if(e.target.closest('[data-unfocus]'
 addEventListener('keydown',e=>{if(e.key==='Escape'&&state.focus&&!state.panel&&!e.target.closest('input,textarea,select'))unfocusVlan();});
 
 /* ================= Pointer ================= */
-const ray=new THREE.Raycaster(),ndc=new THREE.Vector2(),tip=$('#tip');
+const ray=new THREE.Raycaster(),ndc=new THREE.Vector2(),tip=$('#tip');ray.layers.enable(PICK_LAYER);
 function isShown(o){while(o){if(!o.visible)return false;o=o.parent;}return true;}
 function pick(ev){
   const r=renderer.domElement.getBoundingClientRect();
@@ -4418,8 +4553,9 @@ renderer.domElement.addEventListener('pointermove',e=>{
   if(drag){
     const r=renderer.domElement.getBoundingClientRect(),hit=new THREE.Vector3();
     ndc.set(((e.clientX-r.left)/r.width)*2-1,-((e.clientY-r.top)/r.height)*2+1);ray.setFromCamera(ndc,camera);
-    if(drag.cloud&&ray.ray.intersectPlane(drag.plane,hit)){placeCloud(drag.x0+(hit.x-drag.startX),cloud.position.y,drag.z0+(hit.z-drag.startZ),cloud.topY);if(!drag.moved){drag.moved=true;FLOWS.forEach(f=>{if(f.tube){f.tube.visible=false;f.parts.forEach(p=>p.visible=false);f.cones.forEach(c=>c.visible=false);}});}return;}
-    if(!drag.cloud&&ray.ray.intersectPlane(drag.plane,hit)){drag.fl.group.position.x=drag.x0+(hit.x-drag.startX);drag.fl.group.position.z=drag.z0+(hit.z-drag.startZ);if(!drag.moved){drag.moved=true;FLOWS.forEach(f=>{if(f.tube){f.tube.visible=false;f.parts.forEach(p=>p.visible=false);f.cones.forEach(c=>c.visible=false);}});selRing.visible=false;}}
+    if(drag.cloud&&ray.ray.intersectPlane(drag.plane,hit)){placeCloud(drag.x0+(hit.x-drag.startX),cloud.position.y,drag.z0+(hit.z-drag.startZ),cloud.topY);if(!drag.moved){drag.moved=true;hideFlows();}return;}
+    invalidate();
+    if(!drag.cloud&&ray.ray.intersectPlane(drag.plane,hit)){drag.fl.group.position.x=drag.x0+(hit.x-drag.startX);drag.fl.group.position.z=drag.z0+(hit.z-drag.startZ);if(!drag.moved){drag.moved=true;hideFlows();selRing.visible=false;}}
     return;
   }
   if(e.pointerType!=='mouse'||e.buttons){tip.hidden=true;return;}
@@ -4504,6 +4640,17 @@ document.addEventListener('click',e=>{const b=e.target.closest('[data-vsel]');if
   if(state.focus){state.focus=null;renderFocusBar();}
   ids.forEach(id=>b.dataset.vsel==='all'?state.hidden.delete(id):state.hidden.add(id));
   renderVlanList();const a=selAsset();if(a&&state.hidden.has(a.vlan))select(null);else refresh();});
+// Display › Graphics and Animated flows
+function applyGfxUI(){
+  document.querySelectorAll('#gfxSeg [data-gfx]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.gfx===GFX.pref)));
+  const n=$('#gfxNote');if(n)n.textContent=GFX.pref==='auto'?(eco()?`Economy now: ${GFX.soft?'this browser draws without a graphics card':'the view was slow on this computer'}.`:'Quality now; Economy if the view turns out slow here.'):GFX.pref==='eco'?'Lower resolution, no shadows, no moving dots, fewer labels from afar.':'';
+  $('#optAnim').checked=flowAnim();
+}
+$('#gfxSeg').addEventListener('click',e=>{const b=e.target.closest('[data-gfx]');if(!b||b.dataset.gfx===GFX.pref)return;const was=eco();
+  GFX.pref=b.dataset.gfx;if(GFX.pref!=='auto'){GFX.slow=false;try{localStorage.removeItem(GFX_SLOW_KEY);}catch(err){}}
+  try{if(GFX.pref==='auto')localStorage.removeItem(GFX_KEY);else localStorage.setItem(GFX_KEY,GFX.pref);}catch(err){}
+  applyGfx();if(was&&!eco())toast('Quality graphics. Edges are smoothed again after a reload of the page.');});
+$('#optAnim').addEventListener('change',e=>{state.anim=e.target.checked;try{localStorage.setItem('strata-anim',state.anim?'1':'0');}catch(err){}if(state.view==='site')refresh();else refreshOverview();invalidate();});
 // "Arrange VLANs": the plates of every zone on a grid, the VLANs that talk side by side (SA.arrangeGrid)
 try{const c=localStorage.getItem('strata-arrange-cols');if(c!==null&&$('#arrCols').querySelector(`option[value="${CSS.escape(c)}"]`))$('#arrCols').value=c;}catch(e){}
 $('#arrCols').addEventListener('change',e=>{try{localStorage.setItem('strata-arrange-cols',e.target.value);}catch(err){}});
@@ -4616,21 +4763,55 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change',rebuildThem
 new MutationObserver(rebuildTheme).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 
 /* ================= Loop ================= */
-function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();}
+function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();invalidate();}
 addEventListener('resize',resize);
 const timer=new THREE.Timer();
+// Moving dots on the flows: on unless turned off, or in Economy (Display › Animated flows)
+function flowAnim(){return state.anim===null?!eco():state.anim;}
 function tick(t){
-  timer.update(t);const dt=Math.min(timer.getDelta(),0.05);
-  if(fly){const k=Math.min(1,(performance.now()-fly.t0)/fly.dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
-    controls.target.lerpVectors(fly.fromT,fly.toT,e);camera.position.lerpVectors(fly.fromC,fly.toC,e);if(k>=1)fly=null;}
-  // the ring under the selected asset breathes
-  if(selRing&&selRing.visible&&!reduceMotion){const k=(Math.sin(performance.now()/260)+1)/2;selRing.material.opacity=0.55+0.45*k;const s=1.75+0.25*k;selRing.scale.set(s,1,s);}
-  if(!reduceMotion)ANIM.forEach(o=>{if(!o.tube.visible)return;o.parts.forEach(p=>{if(!p.visible)return;p.userData.t=(p.userData.t+dt*o.speed)%1;p.position.copy(o.curve.getPoint(p.userData.t));});});
+  requestAnimationFrame(tick);
+  timer.update(t);const dt=Math.min(timer.getDelta(),0.05),now=performance.now();
+  if(fly){const k=Math.min(1,(now-fly.t0)/fly.dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+    controls.target.lerpVectors(fly.fromT,fly.toT,e);camera.position.lerpVectors(fly.fromC,fly.toC,e);if(k>=1)fly=null;needRender=true;}
   // nothing to draw while the 2D diagram or a lens (Application, Business, Risks) covers the model
-  if(!(state.view==='site'&&(state.flat||state.lens!=='physical'))){controls.update();if(!fly)keepInView();renderer.render(scene,camera);}requestAnimationFrame(tick);
+  if(state.view==='site'&&(state.flat||state.lens!=='physical'))return;
+  if(controls.update())needRender=true;
+  if(!fly&&keepInView())needRender=true;
+  let anim=false;
+  // the ring under the selected asset breathes (not in Economy)
+  if(selRing&&selRing.visible&&!reduceMotion&&!eco()){const k=(Math.sin(now/260)+1)/2;selRing.material.opacity=0.55+0.45*k;const s=1.75+0.25*k;selRing.scale.set(s,1,s);anim=true;}
+  const dots=flowAnim()&&state.flows&&!reduceMotion;
+  if(dots&&(state.view==='site'?FLOWMESH&&FLOWMESH.dots:ANIM.length))anim=true;
+  // animations alone run at 30 frames a second; anything else is drawn at once; an idle model every 2 s at most
+  if(!needRender&&now>renderUntil&&!(anim&&now-lastRender>=32)&&now-lastRender<2000)return;
+  const step=Math.min(0.1,(now-lastRender)/1000);
+  if(dots){if(state.view==='site')placeDots(step);
+    else ANIM.forEach(o=>{if(!o.tube.visible)return;o.parts.forEach(p=>{if(!p.visible)return;p.userData.t=(p.userData.t+step*o.speed)%1;p.position.copy(o.curve.getPoint(p.userData.t));});});}
+  else if(state.view!=='site')ANIM.forEach(o=>o.parts.forEach(p=>p.visible=false));
+  // sharp again once the view has stopped moving
+  if(!dragging&&curPR!==basePR()&&now-lastMove>250){curPR=basePR();renderer.setPixelRatio(curPR);}
+  labelLod(false);
+  if(shadowDirty&&renderer.shadowMap.enabled)renderer.shadowMap.needsUpdate=true;
+  renderer.render(scene,camera);
+  // Auto: a view that keeps moving slowly on this computer switches to Economy (once, remembered here)
+  if(dragging&&GFX.pref==='auto'&&!eco()&&lastRender){slowLog.push(now-lastRender);
+    if(slowLog.length>=40){const m=slowLog.slice().sort((a,b)=>a-b)[20];slowLog=[];if(m>55)setGfxSlow();}}
+  needRender=false;shadowDirty=false;lastRender=now;RSTAT.frames++;
 }
+// What the last frame cost: read by the tests and handy when a computer struggles
+const RSTAT={frames:0};
+window.strataRenderStats=()=>({calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures,frames:RSTAT.frames,mode:eco()?'eco':'quality',pref:GFX.pref,gpu:GFX.gpu,pixelRatio:curPR});
+function setGfxSlow(){GFX.slow=true;try{localStorage.setItem(GFX_SLOW_KEY,'1');}catch(e){}applyGfx();toast('The 3D view is slow on this computer: Economy graphics turned on (Display › Graphics).');}
+// Applies the graphics mode: resolution, shadows (the model is rebuilt for them), dots, labels
+function applyGfx(){
+  curPR=basePR();renderer.setPixelRatio(curPR);renderer.shadowMap.enabled=!eco();
+  applyGfxUI();rebuildTheme();
+}
+// any click, key or wheel may change what the model shows, now or once the server answers
+['pointerdown','pointerup','click','keydown','wheel','change','input'].forEach(t=>document.addEventListener(t,()=>invalidate(600),true));
+document.addEventListener('visibilitychange',()=>invalidate());
 function start(){
-  resize();buildOverview();renderCart();syncUI();renderEmpty();setViewNow();tick();
+  resize();applyGfxUI();buildOverview();renderCart();syncUI();renderEmpty();setViewNow();tick();
   Store.init().then(()=>{renderCollab();if(Store.features.proposals)loadProposals();return Inc.load();}).then(()=>musterLoad()).then(()=>{incRedraw(true);musterSync();});
 }
 const ready=document.fonts&&document.fonts.ready?Promise.race([document.fonts.ready,new Promise(r=>setTimeout(r,1500))]):Promise.resolve();

@@ -378,6 +378,28 @@ test('plates: all or none, empty VLANs hidden, VLANs imported into chosen zones,
   await admin.click('#cloudReset');
   await admin.waitForFunction(async () => !(await (await fetch('api/state')).json()).si.lyon.cloud2d);
 
+  // the 3D view is cheap to draw: a few hundred draw calls, nothing drawn while idle, nothing leaked on a rebuild
+  await admin.click('#viewSeg [data-v="3d"]');
+  await admin.click('.vtools [data-vsel="all"]');
+  await admin.waitForTimeout(1500);
+  const rs = () => admin.evaluate(() => window.strataRenderStats());
+  const r0 = await rs();
+  assert.ok(r0.calls > 20 && r0.calls < 400, `${r0.calls} draw calls for the Lyon model`);
+  await admin.click('#gfxSeg [data-gfx="eco"]');
+  await admin.waitForTimeout(800);
+  assert.equal((await rs()).mode, 'eco');
+  const idle0 = (await rs()).frames;
+  await admin.waitForTimeout(1500);
+  assert.ok((await rs()).frames - idle0 <= 1, 'the model is drawn again while nothing changes');
+  const geo0 = (await rs()).geometries;
+  for (const sp of ['wide', 'compact', 'wide', 'compact']) { await admin.click(`#spaceSeg [data-space="${sp}"]`); await admin.waitForTimeout(400); }
+  await admin.waitForTimeout(800);
+  assert.ok((await rs()).geometries <= geo0 + 5, `GPU geometries grow on each rebuild (${geo0} → ${(await rs()).geometries})`);
+  await admin.click('#gfxSeg [data-gfx="quality"]');
+  await admin.waitForTimeout(800);
+  assert.equal((await rs()).mode, 'quality');
+  await admin.click('#gfxSeg [data-gfx="auto"]');
+
   // sign out: back to the sign-in page, and the session no longer opens the API
   await admin.click('#cart [data-signout]');
   await admin.waitForURL(/\/auth\/login/);

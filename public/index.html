@@ -178,6 +178,12 @@
     <label class="row" for="optRisk"><span>Risky flows only</span><input type="checkbox" id="optRisk"></label>
     <label class="row" for="optLabels" data-view="site" data-only3d><span>Asset labels</span><input type="checkbox" id="optLabels" checked></label>
     <label class="row" for="optPorts" data-view="site"><span>Exposed port tags</span><input type="checkbox" id="optPorts"></label>
+    <div class="ctlgrp" data-only3d>
+      <span class="fl">Graphics</span>
+      <div class="seg three" id="gfxSeg" role="group" aria-label="Graphics"><button data-gfx="auto" aria-pressed="true" title="Quality, or Economy when this computer draws the view slowly">Auto</button><button data-gfx="quality" aria-pressed="false" title="Shadows, sharp edges, moving dots on the flows">Quality</button><button data-gfx="eco" aria-pressed="false" title="For small laptops: lower resolution, no shadows, no moving dots">Economy</button></div>
+      <p class="sub" id="gfxNote"></p>
+    </div>
+    <label class="row" for="optAnim" data-only3d><span>Animated flows</span><input type="checkbox" id="optAnim"></label>
     <label class="row" for="optRotate" data-only3d><span>Auto-rotate</span><input type="checkbox" id="optRotate"></label>
     <label class="row" for="optGap" data-view="site" data-only3d><span>Level height</span><input type="range" id="optGap" min="5" max="15" step="0.5" value="8"></label>
   </div>

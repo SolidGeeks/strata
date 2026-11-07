@@ -194,7 +194,20 @@ Measured on Node.js 22 (the Docker image), one server process, maps generated wi
 
 The server is idle between requests: CPU is spent on writes (each one saves the map and appends to the history) and on the dashboard. Each connector or module run starts a separate Node.js process, about 50 MB for as long as it runs. Disk: the map, the history (`HISTORY_KEEP` entries) and `BACKUP_KEEP` daily copies of the map, so roughly the size of the JSON export × (`BACKUP_KEEP` + 2), plus the history.
 
-**The browser does most of the work** (the 3D model, the 2D diagram, the analysis): a machine with 8 GB of RAM, 4 cores and hardware-accelerated WebGL 2 (any integrated GPU of the last ten years). An IS of 300 assets and 600 flows takes about 150 MB of browser memory. Without a GPU (a virtual desktop, a remote session, a VM with software rendering) the 3D view takes seconds per change from a few hundred assets on: use the 2D diagram, show fewer VLANs (*Plates › None*, then the VLANs you need; *Hide empty VLANs*), or a machine with a GPU. `docker-compose.yml` has the matching limits, commented out.
+**The browser does most of the work** (the 3D model, the 2D diagram, the analysis): 8 GB of RAM and WebGL 2 are enough, an integrated GPU included. An IS of 300 assets and 600 flows takes about 150 MB of browser memory. `docker-compose.yml` has the server limits, commented out.
+
+**Small laptops.** The 3D view is drawn only when something changes (the view, the data, a filter), sharper once the view stops moving, and *Display › Graphics* has three modes: *Quality*, *Economy* (screen resolution, no shadows, no moving dots on the flows, labels hidden sooner from afar) and *Auto*, the default, which is Quality until the view turns out slow on this computer, or when the browser draws without a graphics card. *Animated flows* turns the moving dots on or off in any mode. Measured on the same machine, without a GPU:
+
+| | Draw calls per frame | Triangles | Frames per second while turning the view | Frames drawn in 3 s, idle |
+|---|---|---|---|---|
+| Demo Lyon (34 assets), before 0.11 | 1 569 | 187 000 | 5 | 15 |
+| … 0.11, Quality | 208 | 85 000 | 8 | only those of the moving dots (30 a second) |
+| … 0.11, Economy | 173 | 30 000 | 35 | 2 |
+| 120 assets, 260 flows, before 0.11 | 5 731 | 929 000 | 1.7 | 6 |
+| … 0.11, Quality | 397 | 400 000 | 2.8 | only those of the moving dots |
+| … 0.11, Economy | 365 | 134 000 | 21 | 2 |
+
+Without a GPU (a virtual desktop, a remote session), Auto chooses Economy; for very large IS, the 2D diagram and *Plates › None*, then the VLANs you need, stay the lightest.
 
 ---
 
