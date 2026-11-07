@@ -11,6 +11,7 @@ import zlib from 'node:zlib';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth } from './session.mjs';
 import { readTgz, writeTgz, sha256 } from '../server/connectors/store.js';
 import { checkManifest, compareVersions } from '../server/connectors/modules.js';
 
@@ -109,7 +110,7 @@ after(async () => {
 async function api(user, method, path, body) {
   const r = await fetch(base + path, {
     method,
-    headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${PASS[user]}`).toString('base64'), ...(body !== undefined ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
+    headers: { ...(await auth(base, user, PASS[user])), ...(body !== undefined ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   return { status: r.status, data: await r.json().catch(() => null) };

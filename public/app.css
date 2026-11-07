@@ -710,3 +710,4 @@ body.has-dash{overflow:hidden}
 #flatSvg .selhalo{animation:selhalo 1.6s ease-in-out infinite}
 @keyframes selhalo{0%,100%{opacity:.1}50%{opacity:.32}}
 @media (prefers-reduced-motion:reduce){#flatSvg .selhalo{animation:none}}
+.ibtn.signout{border-color:var(--line);color:var(--fg);margin-left:6px;min-height:22px;padding:2px 8px}

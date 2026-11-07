@@ -8,6 +8,7 @@ import { mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth } from './session.mjs';
 import { parseXml } from '../server/connectors/sdk.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,7 +36,7 @@ test('data files are readable by the server user only, including those of older 
     await new Promise((res, rej) => { proc.stdout.on('data', d => { if (String(d).includes('listening')) res(); }); proc.on('exit', c => rej(new Error('exit ' + c))); });
     const r = await fetch(`http://127.0.0.1:${port}/api/si/s1`, {
       method: 'PUT', body: JSON.stringify({ name: 'IS one' }),
-      headers: { Authorization: 'Basic ' + Buffer.from(`admin:${pass}`).toString('base64'), 'Content-Type': 'application/json', 'X-Requested-With': 'strata' },
+      headers: { ...(await auth(`http://127.0.0.1:${port}`, 'admin', pass)), 'Content-Type': 'application/json', 'X-Requested-With': 'strata' },
     });
     assert.equal(r.status, 200);
     await new Promise(res => setTimeout(res, 200));

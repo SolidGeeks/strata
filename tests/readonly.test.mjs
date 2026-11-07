@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth } from './session.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -21,7 +22,7 @@ test('READ_ONLY=true: an admin can read, and every write is refused with 403', a
   const call = async (method, path, body) => {
     const r = await fetch(`http://127.0.0.1:${port}${path}`, {
       method,
-      headers: { Authorization: 'Basic ' + Buffer.from(`admin:${pass}`).toString('base64'), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
+      headers: { ...(await auth(`http://127.0.0.1:${port}`, 'admin', pass)), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: r.status, data: await r.json().catch(() => null) };

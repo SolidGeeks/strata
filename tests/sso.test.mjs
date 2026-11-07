@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth } from './session.mjs';
 import { verifyJwt } from '../server/sso.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -98,7 +99,8 @@ async function signIn() {
   return { status: r.status, location: r.headers.get('location'), cookie: cookies(), text: r.status === 302 ? '' : await r.text() };
 }
 const api = (path, cookie, init = {}) => fetch(base + path, { ...init, headers: { ...(cookie ? { Cookie: cookie } : {}), ...(init.body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}), ...init.headers } });
-const basic = (u, p) => ({ Authorization: 'Basic ' + Buffer.from(`${u}:${p}`).toString('base64') });
+// a local account, signed in with the sign-in form: its session cookie
+const basic = (u, p) => auth(base, u, p);
 
 test('a page without a session goes to the sign-in page; the API answers 401 without a password prompt', async () => {
   const r = await fetch(`${base}/`, { redirect: 'manual' });
@@ -106,16 +108,26 @@ test('a page without a session goes to the sign-in page; the API answers 401 wit
   assert.equal(r.headers.get('location'), `${base}/auth/login`);
   const login = await (await fetch(`${base}/auth/login`)).text();
   assert.match(login, /Sign in with Test IdP/);
-  assert.match(login, /Sign in with a local account/);
+  assert.match(login, /or with a local account/);
   const a = await fetch(`${base}/api/me`);
   assert.equal(a.status, 401);
   assert.equal(a.headers.get('www-authenticate'), null);
-  // "Sign in with a local account": the password prompt is asked at the root, so the browser then sends it everywhere
-  assert.ok(login.includes(`href="${base}/?local"`) && login.includes(`href="${base}/auth/oidc/start"`));
-  const l = await fetch(`${base}/?local`, { redirect: 'manual' });
-  assert.equal(l.status, 401);
-  assert.match(l.headers.get('www-authenticate'), /^Basic/);
-  assert.equal((await fetch(`${base}/?local`, { headers: basic('admin', 'admin-pass-123') })).status, 200);
+  // local accounts sign in with the form of the same page, which gives a session cookie
+  assert.ok(login.includes(`action="${base}/auth/login"`) && login.includes(`href="${base}/auth/oidc/start"`));
+  const form = await fetch(`${base}/auth/login`, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'user=admin&password=admin-pass-123' });
+  assert.equal(form.status, 303);
+  assert.equal(form.headers.get('location'), `${base}/`);
+  const cookie = form.headers.get('set-cookie').split(';')[0];
+  assert.equal((await fetch(`${base}/`, { headers: { Cookie: cookie } })).status, 200);
+  const bad = await fetch(`${base}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'user=admin&password=nope' });
+  assert.equal(bad.status, 401);
+  assert.match(await bad.text(), /Wrong user name or password/);
+  // another site cannot sign a visitor in
+  assert.equal((await fetch(`${base}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://evil.example' }, body: 'user=admin&password=admin-pass-123' })).status, 403);
+  // a local session signs out too
+  const out = await (await api('/auth/logout', cookie, { method: 'POST', body: '{}' })).json();
+  assert.equal(out.location, `${base}/auth/login?out=1`);
+  assert.equal((await api('/api/me', cookie)).status, 401);
 });
 
 test('OpenID Connect: groups give the role, the session cookie signs in, sign-out ends it', async () => {
@@ -170,11 +182,11 @@ test('verifyJwt refuses "none" and unknown algorithms', () => {
 });
 
 test('LOCAL_LOGIN=admins: the local admin keeps a way in, other local accounts do not', async () => {
-  assert.equal((await api('/api/users/bob', null, { method: 'PUT', headers: basic('admin', 'admin-pass-123'), body: JSON.stringify({ role: 'approver', password: 'bob-pass-12345' }) })).status, 200);
-  assert.equal((await api('/api/me', null, { headers: basic('admin', 'admin-pass-123') })).status, 200);
+  assert.equal((await api('/api/users/bob', null, { method: 'PUT', headers: await basic('admin', 'admin-pass-123'), body: JSON.stringify({ role: 'approver', password: 'bob-pass-12345' }) })).status, 200);
+  assert.equal((await api('/api/me', null, { headers: await basic('admin', 'admin-pass-123') })).status, 200);
   // refused like a wrong password: the answer says nothing of bob's password
-  assert.equal((await api('/api/me', null, { headers: basic('bob', 'bob-pass-12345') })).status, 401);
-  assert.equal((await api('/api/me', null, { headers: basic('bob', 'wrong-password') })).status, 401);
+  assert.equal((await api('/api/me', null, { headers: await basic('bob', 'bob-pass-12345') })).status, 401);
+  assert.equal((await api('/api/me', null, { headers: await basic('bob', 'wrong-password') })).status, 401);
 });
 
 test('a provider name that is also a local account, or an unverified e-mail, is refused', async () => {
@@ -200,7 +212,7 @@ test('a sign-in finishes once; an admin can end every session', async () => {
   assert.equal(again.status, 400);
   const s = await signIn();
   assert.equal((await api('/api/me', s.cookie)).status, 200);
-  const end = await (await api('/api/sessions', null, { method: 'DELETE', headers: basic('admin', 'admin-pass-123'), body: '{}' })).json();
+  const end = await (await api('/api/sessions', null, { method: 'DELETE', headers: await basic('admin', 'admin-pass-123'), body: '{}' })).json();
   assert.ok(end.ended >= 1);
   assert.equal((await api('/api/me', s.cookie)).status, 401);
 });
@@ -214,7 +226,7 @@ test('headers need SSO_HEADER_TRUST with exact addresses', async () => {
 });
 
 test('API tokens: created by an admin, shown once, used as Bearer, revoked', async () => {
-  const admin = basic('admin', 'admin-pass-123');
+  const admin = await basic('admin', 'admin-pass-123');
   const c = await (await api('/api/tokens', null, { method: 'POST', headers: admin, body: JSON.stringify({ name: 'ci', role: 'contributor', days: 7 }) })).json();
   assert.match(c.token, /^stk_[0-9a-f]{16}_/);
   const bearer = { Authorization: `Bearer ${c.token}` };

@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth, login } from './session.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ADMIN = 'admin-pass-123';
@@ -28,18 +29,19 @@ function start(extra) {
     proc.on('exit', code => rej(new Error(`exit ${code}`)));
   });
 }
-// GET /api/state as user:pass, from a client address given by X-Forwarded-For (only believed behind a trusted proxy)
+// Signs in with the form as user:pass, from a client address given by X-Forwarded-For (only believed
+// behind a trusted proxy), then reads /api/state with the session: 200, 401 (wrong) or 429 (locked)
 async function get(port, user, pass, from) {
-  const headers = { Authorization: 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64') };
-  if (from) headers['X-Forwarded-For'] = from;
-  const r = await fetch(`http://127.0.0.1:${port}/api/state`, { headers });
-  await r.arrayBuffer();
-  return { status: r.status, retryAfter: r.headers.get('retry-after') };
+  const r = await login(`http://127.0.0.1:${port}`, user, pass, from ? { 'X-Forwarded-For': from } : {});
+  if (!r.cookie) return { status: r.status, retryAfter: r.retryAfter };
+  const s = await fetch(`http://127.0.0.1:${port}/api/state`, { headers: { Cookie: r.cookie } });
+  await s.arrayBuffer();
+  return { status: s.status };
 }
 async function addUser(port, name, password) {
   const r = await fetch(`http://127.0.0.1:${port}/api/users/${name}`, {
     method: 'PUT',
-    headers: { Authorization: 'Basic ' + Buffer.from(`admin:${ADMIN}`).toString('base64'), 'Content-Type': 'application/json', 'X-Requested-With': 'strata' },
+    headers: { ...(await auth(`http://127.0.0.1:${port}`, 'admin', ADMIN)), 'Content-Type': 'application/json', 'X-Requested-With': 'strata' },
     body: JSON.stringify({ role: 'viewer', password }),
   });
   assert.equal(r.status, 200);
@@ -91,14 +93,15 @@ test('a client address is locked after LOGIN_MAX_FAILS_PER_ADDRESS, read from X-
   } finally { await t.stop(); }
 });
 
-test('a browser already signed in keeps working from its address while the account is locked', async () => {
+test('a browser already signed in keeps its session while the account is locked', async () => {
   const s = await start({ LOGIN_MAX_FAILS: '3', LOGIN_MAX_FAILS_PER_ADDRESS: '100', TRUST_PROXY: '127.0.0.1' });
   try {
-    assert.equal((await get(s.port, 'admin', ADMIN, '192.0.2.10')).status, 200);
+    const signed = await login(`http://127.0.0.1:${s.port}`, 'admin', ADMIN, { 'X-Forwarded-For': '192.0.2.10' });
+    assert.equal(signed.status, 200);
     // someone else guesses the admin password from elsewhere
     for (const p of ['guess-1', 'guess-2', 'guess-3']) assert.equal((await get(s.port, 'admin', p, '192.0.2.66')).status, 401);
-    // the signed-in browser goes on; the right password from any other address waits
-    assert.equal((await get(s.port, 'admin', ADMIN, '192.0.2.10')).status, 200);
+    // the signed-in browser goes on with its session; a new sign-in, from any address, waits
+    assert.equal((await fetch(`http://127.0.0.1:${s.port}/api/state`, { headers: { Cookie: signed.cookie, 'X-Forwarded-For': '192.0.2.10' } })).status, 200);
     assert.equal((await get(s.port, 'admin', ADMIN, '192.0.2.66')).status, 429);
     assert.equal((await get(s.port, 'admin', ADMIN, '192.0.2.11')).status, 429);
   } finally { await s.stop(); }

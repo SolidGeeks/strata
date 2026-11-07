@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth } from './session.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -27,7 +28,7 @@ function start(extra) {
     proc.on('exit', code => { rmSync(dataDir, { recursive: true, force: true, maxRetries: 5 }); rej(Object.assign(new Error(`exit ${code}`), { code, err })); });
   });
 }
-const status = (port, user, pass) => fetch(`http://127.0.0.1:${port}/api/state`, { headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64') } }).then(r => r.status);
+const status = async (port, user, pass) => (await fetch(`http://127.0.0.1:${port}/api/state`, { headers: await auth(`http://127.0.0.1:${port}`, user, pass) })).status;
 
 test('EDIT_PASS_FILE and VIEW_PASS_FILE: the passwords come from the files, which win over the variables', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'strata-cred-'));

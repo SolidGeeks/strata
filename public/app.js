@@ -406,7 +406,7 @@ const Store={
     const r=await fetch(url,{method,credentials:'same-origin',headers:h,body:body===undefined?undefined:JSON.stringify(body)});
     let j=null;try{j=await r.json();}catch(e){}
     // a session that has ended (single sign-on): back to the sign-in page
-    if(r.status===401&&this.me&&this.me.via==='sso'){location.href='auth/login';}
+    if(r.status===401&&this.me&&this.me.signOut){location.href='auth/login';}
     if(!r.ok){const err=new Error((j&&j.error)||('HTTP '+r.status));err.status=r.status;err.body=j;throw err;}
     if(j&&j.rev)this.rev=j.rev;
     return j;
@@ -465,6 +465,9 @@ const Store={
     finally{this.bulk=false;this.batch=null;this.applyView(0);if(this.view==='draft'){clearTimeout(this._dt);this.saveDraft();}}
   }
 };
+// Sign out (local account or single sign-on), from the header or the account panel
+async function signOut(){try{const j=await Store.api('POST','auth/logout',{});location.href=j.location||'auth/login?out=1';}catch(err){toast(err.message,true);}}
+document.addEventListener('click',e=>{if(e.target.closest('[data-signout]')){e.preventDefault();signOut();}});
 // Replace the whole map (demo, import, delete everything) in one request
 async function replaceAll(data,label){
   const next={si:clone(data.si||{}),assets:clone(data.assets||{}),wan:clone(data.wan||[]),services:clone(data.services||[]),risk:clone(data.risk||{})};
@@ -632,7 +635,7 @@ function toast(msg,err,sticky){const t=$('#toast');t.textContent=msg;t.className
 
 /* ================= Title block and lists ================= */
 const nums=arr=>`<div class="nums">${arr.map(([n,l,c])=>`<div class="${c||''}"><b>${n}</b><span class="cap">${l}</span></div>`).join('')}</div>`;
-function storeBadge(){return Store.mode==='api'?`<span class="store"><i></i><b>Server${Store.user?' · '+esc(Store.user)+' ('+esc(Store.role)+')':''}</b></span>`:`<span class="store local"><i></i><b>This browser only</b></span>`;}
+function storeBadge(){return Store.mode==='api'?`<span class="store"><i></i><b>Server${Store.user?' · '+esc(Store.user)+' ('+esc(Store.role)+')':''}</b></span>${Store.me&&Store.me.signOut?' <button class="ibtn signout" data-signout title="End this session and go back to the sign-in page">Sign out</button>':''}`:`<span class="store local"><i></i><b>This browser only</b></span>`;}
 function renderCart(){
   const c=$('#cart');
   if(state.view==='overview'){
@@ -3040,7 +3043,6 @@ det.addEventListener('change',async e=>{const s=e.target.closest('[data-urole]')
 det.addEventListener('click',async e=>{
   const t=e.target,q=s=>t.closest(s);
   if(q('[data-new-prop]'))return proposalForm();
-  if(q('[data-signout]')){try{const j=await Store.api('POST','auth/logout',{});location.href=j.location||'auth/login';}catch(err){toast(err.message,true);}return;}
   if(q('[data-endsessions]')){const b=q('[data-endsessions]');if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='Confirm: sign everyone out';return;}
     try{const j=await Store.api('DELETE','api/sessions',{});toast(`${j.ended} session(s) ended.`);showAccount();}catch(err){toast(err.message,true);}return;}
   if(q('[data-tdel]')){const b=q('[data-tdel]');if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='Confirm';return;}

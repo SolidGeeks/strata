@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth } from './session.mjs';
 import { chromium } from 'playwright';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,7 +32,7 @@ before(async () => {
     assert.equal(r.status, 200);
   }
   // WebGL without a GPU: SwiftShader
-  browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  browser = await chromium.launch({ ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}), args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 });
 after(async () => {
   if (browser) await browser.close();
@@ -39,16 +40,23 @@ after(async () => {
   rmSync(dataDir, { recursive: true, force: true, maxRetries: 5 });
 });
 
-function api(user, method, path, body) {
+async function api(user, method, path, body) {
   return fetch(base + path, {
     method,
-    headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${PASS[user]}`).toString('base64'), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
+    headers: { ...(await auth(base, user, PASS[user])), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   }).then(async r => ({ status: r.status, data: await r.json().catch(() => null) }));
 }
 // A signed-in page; every page error and console error is recorded and fails the test
 async function signIn(user) {
-  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, httpCredentials: { username: user, password: PASS[user] } });
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  // the sign-in form, as a person would fill it
+  const login = await ctx.newPage();
+  await login.goto(base);
+  await login.fill('#u', user);
+  await login.fill('#p', PASS[user]);
+  await Promise.all([login.waitForURL(u => !String(u).includes('/auth/')), login.click('button[type=submit]')]);
+  await login.close();
   const page = await ctx.newPage();
   page.on('pageerror', e => errors.push(`${user}: ${e.message}`));
   page.on('console', m => { if (m.type() === 'error') errors.push(`${user} console: ${m.text()}`); });

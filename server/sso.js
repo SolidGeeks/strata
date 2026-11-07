@@ -107,7 +107,19 @@ export function createSso({ config, dataDir, log, writeJson, peerAddress, localU
     const id = readCookie(req, SESSION);
     const s = id && sessions.get(id);
     if (!s || s.exp < Date.now()) { if (s) sessions.delete(id); return null; }
-    return { user: s.user, role: s.role, via: 'sso', sessionId: id };
+    return { user: s.user, role: s.role, via: s.via || 'sso', sessionId: id, since: s.since };
+  }
+  // A session for a local account signed in with the form (server.js checks the password)
+  function createSession({ user, role, via }) {
+    const sid = rand(32);
+    sessions.set(sid, { user, role, via, since: Date.now(), exp: Date.now() + C.sessionMs });
+    return { sessionId: sid, setCookie: cookie(SESSION, sid, Math.round(C.sessionMs / 1000)) };
+  }
+  // Ends the sessions of one person (password changed, account disabled or deleted), but the one given
+  function endUserSessions(user, exceptId) {
+    let n = 0;
+    for (const [k, s] of sessions) if (s.user === user && k !== exceptId) { sessions.delete(k); n++; }
+    return n;
   }
 
   /* ---- trusted proxy headers ---- */
@@ -208,7 +220,7 @@ export function createSso({ config, dataDir, log, writeJson, peerAddress, localU
     const role = roleOf(groups);
     if (!role) throw Object.assign(new Error(`${user} is in no group that gives access to Strata. Ask an administrator.`), { denied: true });
     const sid = rand(32);
-    sessions.set(sid, { user, role, exp: Date.now() + C.sessionMs, idToken: tok.id_token });
+    sessions.set(sid, { user, role, via: 'sso', since: Date.now(), exp: Date.now() + C.sessionMs, idToken: tok.id_token });
     log(`SSO sign-in: ${JSON.stringify(user)} as ${role}`);
     return { user, role, setCookie: [cookie(SESSION, sid, Math.round(C.sessionMs / 1000)), cookie(STATE, '', 0)] };
   }
@@ -216,7 +228,7 @@ export function createSso({ config, dataDir, log, writeJson, peerAddress, localU
     const s = sessions.get(sessionId);
     sessions.delete(sessionId);
     let location = `${C.publicUrl}/auth/login?out=1`;
-    if (s && oidc) {
+    if (s && s.via === 'sso' && oidc) {
       try {
         const d = await discovery();
         if (d.end_session_endpoint) { const u = new URL(d.end_session_endpoint); u.searchParams.set('id_token_hint', s.idToken); u.searchParams.set('post_logout_redirect_uri', location); location = u.href; }
@@ -224,8 +236,8 @@ export function createSso({ config, dataDir, log, writeJson, peerAddress, localU
     }
     return { location, setCookie: cookie(SESSION, '', 0) };
   }
-  // An administrator ends every single sign-on session (after a group change, or someone leaving)
-  function endSessions(by) { const n = sessions.size; sessions.clear(); log(`${n} single sign-on session(s) ended by ${JSON.stringify(by)}`); return n; }
+  // An administrator ends every session (after a group change, or someone leaving), but their own
+  function endSessions(by, exceptId) { let n = 0; for (const k of [...sessions.keys()]) if (k !== exceptId) { sessions.delete(k); n++; } log(`${n} session(s) ended by ${JSON.stringify(by)}`); return n; }
 
   /* ---- API tokens (DATA_DIR/tokens.json, mode 600) ---- */
   const FILE = path.join(dataDir, 'tokens.json');
@@ -271,7 +283,7 @@ export function createSso({ config, dataDir, log, writeJson, peerAddress, localU
     oidc, header, name: C.name, localLogin: C.localLogin, publicUrl: C.publicUrl,
     // anyone could sign in some way other than a local account
     enabled: () => oidc || header || Object.keys(tokens).length > 0,
-    fromSession, fromHeaders, fromToken, start, callback, logout, endSessions, sessionCount: () => sessions.size,
+    fromSession, fromHeaders, fromToken, start, callback, logout, endSessions, endUserSessions, createSession, sessionCount: () => sessions.size,
     listTokens: () => Object.entries(tokens).map(([id, t]) => publicToken(id, t)).sort((a, b) => a.name.localeCompare(b.name)),
     createToken, deleteToken,
   };
@@ -280,19 +292,23 @@ export function createSso({ config, dataDir, log, writeJson, peerAddress, localU
 /* ---------------- Sign-in page ---------------- */
 const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 // base: PUBLIC_URL, or '' (links from the root)
-export function loginPage({ ssoName, oidc, local, message, out, base = '' }) {
+export function loginPage({ ssoName, oidc, local, message, out, base = '', user = '' }) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Strata</title>
 <style>:root{color-scheme:light dark;--bg:#f4f3ef;--fg:#1c1d1f;--muted:#55595f;--line:#d8d6cf;--accent:#1c1d1f;--accent-fg:#f4f3ef;--bad:#b42318}
 @media (prefers-color-scheme:dark){:root{--bg:#16181b;--fg:#ecebe6;--muted:#a9adb3;--line:#33363b;--accent:#ecebe6;--accent-fg:#16181b;--bad:#ff8a7a}}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
 main{width:min(380px,calc(100vw - 32px));border:1px solid var(--line);border-radius:4px;padding:28px 24px}
 h1{margin:0 0 4px;font-size:22px;letter-spacing:.02em}p{margin:0 0 16px;color:var(--muted)}
-a.btn{display:block;text-align:center;padding:11px 14px;border-radius:3px;text-decoration:none;font-weight:600;margin-top:10px}
-a.primary{background:var(--accent);color:var(--accent-fg)}a.second{border:1px solid var(--line);color:var(--fg)}
-.msg{color:var(--bad);border-left:3px solid var(--bad);padding:6px 10px;margin:0 0 16px}.ok{color:var(--muted)}</style></head>
+a.btn,button.btn{display:block;width:100%;box-sizing:border-box;font:inherit;cursor:pointer;border:0;text-align:center;padding:11px 14px;border-radius:3px;text-decoration:none;font-weight:600;margin-top:10px}
+a.primary,button.primary{background:var(--accent);color:var(--accent-fg)}a.second,button.second{background:transparent;border:1px solid var(--line);color:var(--fg)}
+label{display:block;font-size:13px;font-weight:600;margin:12px 0 4px}input{display:block;width:100%;box-sizing:border-box;padding:9px 10px;font:inherit;color:var(--fg);background:transparent;border:1px solid var(--line);border-radius:3px}
+.or{text-align:center;margin:16px 0 0;font-size:13px}.msg{color:var(--bad);border-left:3px solid var(--bad);padding:6px 10px;margin:0 0 16px}.ok{color:var(--muted)}</style></head>
 <body><main><h1>Strata</h1><p>Map of the information systems</p>
 ${message ? `<p class="msg" role="alert">${escHtml(message)}</p>` : out ? '<p class="ok">You are signed out.</p>' : ''}
 ${oidc ? `<a class="btn primary" href="${escHtml(base)}/auth/oidc/start">Sign in with ${escHtml(ssoName)}</a>` : ''}
-${local ? `<a class="btn ${oidc ? 'second' : 'primary'}" href="${escHtml(base)}/?local">Sign in with a local account</a>` : ''}
+${local ? `${oidc ? '<p class="or">or with a local account</p>' : ''}<form method="post" action="${escHtml(base)}/auth/login">
+<label for="u">User name</label><input id="u" name="user" autocomplete="username" required autofocus value="${escHtml(user || '')}">
+<label for="p">Password</label><input id="p" name="password" type="password" autocomplete="current-password" required>
+<button class="btn ${oidc ? 'second' : 'primary'}" type="submit">Sign in</button></form>` : ''}
 </main></body></html>`;
 }
