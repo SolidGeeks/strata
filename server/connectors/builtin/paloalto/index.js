@@ -5,7 +5,7 @@
 // Each "allow" security rule becomes flows: source address objects → assets of the IS (by IP) or the
 // Internet / an Internet service (public addresses, FQDN), destination likewise, services → ports, and the
 // firewall as the device the flows cross.
-import { request, expectOk, ConnectorError, stripTags, parseXml, kids, kid, path, txt, members, parseRange, isPrivateRange, inRange, isIp, slug, hash, norm } from '../../sdk.js';
+import { request, expectOk, ConnectorError, stripTags, parseXml, kids, kid, path, txt, members, parseRange, isPrivateRange, inRange, isIp, slug, hash, norm, intToIp, vlanForIp, holdingVlan } from '../../sdk.js';
 
 // Ports of the most common App-IDs, for rules set to "application-default"
 const APP_PORTS = {
@@ -51,12 +51,13 @@ function findConfig(root) {
 }
 function objectsOf(el) {
   // keys are object names from the configuration file: no prototype, so "__proto__" or "constructor" are just names
-  const o = { address: Object.create(null), group: Object.create(null), service: Object.create(null), svcGroup: Object.create(null) };
+  const o = { address: Object.create(null), group: Object.create(null), service: Object.create(null), svcGroup: Object.create(null), description: Object.create(null) };
   if (!el) return o;
   for (const e of path(el, 'address', 'entry')) {
     const name = e.attrs.name; if (!name) continue;
     const v = kid(e, 'ip-netmask') || kid(e, 'ip-range') || kid(e, 'fqdn') || kid(e, 'ip-wildcard');
     o.address[name] = v ? { kind: v.name === 'fqdn' ? 'fqdn' : v.name === 'ip-wildcard' ? 'wildcard' : 'ip', value: txt(v) } : { kind: 'unknown', value: '' };
+    const d = txt(kid(e, 'description')); if (d) o.description[name] = d.slice(0, 120);
   }
   for (const e of path(el, 'address-group', 'entry')) {
     const name = e.attrs.name; if (!name) continue;
@@ -105,7 +106,149 @@ export function parseConfig(xml) {
   // Panorama order: shared pre, device-group pre, device-group post, shared post (the evaluation order of PAN-OS)
   const rank = r => r.where === 'pre-rulebase' ? (r.scope === 'shared' ? 0 : 1) : r.where === 'post-rulebase' ? (r.scope === 'shared' ? 3 : 2) : 1;
   rules.sort((a, b) => rank(a) - rank(b));
-  return { kind: dgs.length ? 'panorama' : 'firewall', objects, rules };
+  return { kind: dgs.length ? 'panorama' : 'firewall', objects, rules, network: networkOf(config) };
+}
+// The network side of the configuration, for building an IS: the layer-3 interfaces and sub-interfaces with
+// their address and VLAN tag, the zone of each, and the firewall's host name. On Panorama, from its templates.
+function networkOf(config) {
+  const roots = [config, ...path(config, 'devices', 'entry', 'template', 'entry', 'config')];
+  const interfaces = [], zoneOf = Object.create(null);
+  let hostname = '';
+  for (const root of roots) for (const dev of path(root, 'devices', 'entry')) {
+    hostname = hostname || txt(path(dev, 'deviceconfig', 'system', 'hostname')[0]);
+    const itf = kid(kid(dev, 'network'), 'interface');
+    const add = (e, tag) => {
+      const ips = path(e, 'ip', 'entry').map(x => x.attrs.name).filter(Boolean);
+      if (e.attrs.name) interfaces.push({ name: e.attrs.name, tag, ips, comment: txt(kid(e, 'comment')) });
+    };
+    for (const kind of ['ethernet', 'aggregate-ethernet']) for (const e of path(itf, kind, 'entry')) {
+      const l3 = kid(e, 'layer3');
+      if (l3) add(l3 && { ...l3, attrs: e.attrs, children: [...l3.children, ...kids(e, 'comment')] }, null);
+      for (const u of path(l3, 'units', 'entry')) add(u, parseInt(txt(kid(u, 'tag')), 10) || null);
+    }
+    const vl = kid(itf, 'vlan');
+    if (vl) for (const u of path(vl, 'units', 'entry')) add(u, parseInt(txt(kid(u, 'tag')), 10) || parseInt(String(u.attrs.name).split('.')[1], 10) || null);
+    for (const v of [...path(dev, 'vsys', 'entry')]) for (const z of path(v, 'zone', 'entry')) {
+      const net = kid(z, 'network');
+      for (const k of ['layer3', 'layer2', 'virtual-wire', 'tap']) for (const m of members(kid(net, k))) zoneOf[m] = z.attrs.name;
+    }
+  }
+  return { interfaces, zoneOf, hostname };
+}
+
+/* ---------------- building the IS ---------------- */
+// What the ports opened to an address say about it (the first that matches); a server otherwise
+const TYPE_BY_PORT = [
+  [['tcp/502', 'tcp/102', 'tcp/44818', 'udp/47808', 'tcp/20000', 'tcp/2404'], 'plc'],
+  [['tcp/1433', 'tcp/1521', 'tcp/3306', 'tcp/5432', 'tcp/27017', 'tcp/5022'], 'db'],
+  [['tcp/88', 'udp/88', 'tcp/636', 'tcp/3268'], 'dc'],
+  [['tcp/554'], 'camera'], [['tcp/9100', 'tcp/631', 'tcp/515'], 'printer'],
+  [['tcp/902', 'tcp/3260', 'tcp/8000'], 'hypervisor'],
+];
+// What the name or description of an address object says (naming conventions: PC-…, TEL-…, CAM-…, SQL-…)
+const TYPE_BY_WORD = [
+  [['pc', 'ws', 'wks', 'poste', 'postes', 'laptop', 'desktop', 'workstation', 'portable', 'vdi'], 'workstation'],
+  [['tel', 'phone', 'voip', 'ipphone', 'telephone', 'sip'], 'phone'],
+  [['cam', 'camera', 'cctv', 'video', 'videosurveillance'], 'camera'],
+  [['imp', 'prn', 'print', 'printer', 'imprimante', 'mfp'], 'printer'],
+  [['ap', 'wifi', 'borne', 'wap'], 'ap'],
+  [['plc', 'automate', 'automates', 'rtu'], 'plc'],
+  [['cap', 'sensor', 'capteur', 'iot', 'badge', 'badgeuse', 'compteur', 'meter'], 'iot'],
+  [['sql', 'db', 'database', 'ora', 'oracle', 'pg', 'postgres', 'mysql', 'mongo'], 'db'],
+  [['dc', 'ad', 'adds', 'domain'], 'dc'],
+  [['esx', 'esxi', 'hv', 'hyperv', 'hypervisor', 'nutanix', 'san', 'nas', 'storage', 'stockage'], 'hypervisor'],
+  [['fw', 'firewall', 'pare'], 'firewall'],
+  [['rtr', 'router', 'routeur'], 'router'],
+  [['sw', 'switch', 'commutateur', 'net', 'netdev'], 'switch'],
+  [['vpn', 'gateway', 'gw'], 'gateway'],
+];
+// Adds to the IS what the configuration describes and the map lacks: a zone per security zone, a VLAN per
+// layer-3 sub-interface (tag and subnet; untagged interfaces get a number from 4001 on, to change), an asset
+// per host address object of a private range (in the VLAN whose range holds it), and the firewall. What is
+// already there (same zone name, same VLAN number or range, an asset with the same IP) is kept as it is.
+function buildIs(parsed, cfg, state, si, assets, netZones) {
+  const siteId = cfg.site, N = parsed.network || { interfaces: [], zoneOf: {}, hostname: '' }, stats = { zonesAdded: 0, vlansAdded: 0, assetsAdded: 0, firewallAdded: 0 };
+  si.zones = si.zones && si.zones.length ? si.zones : [];
+  si.vlans = si.vlans || [];
+  const zoneId = name => {
+    let z = si.zones.find(x => norm(x.name) === norm(name));
+    if (!z) { let id = 'z-pa-' + slug(name); for (let i = 2; si.zones.some(x => x.id === id); i++) id = `z-pa-${slug(name)}-${i}`; z = { id, name: String(name).slice(0, 40) }; si.zones.push(z); stats.zonesAdded++; }
+    return z.id;
+  };
+  const addrOf = name => { for (const o of Object.values(parsed.objects)) { const a = o.address[name]; if (a && a.kind === 'ip') return a.value; } return name; };
+  // VLANs from the interfaces of the zones that are not the Internet
+  const fwIps = [];
+  let untagged = 4001;
+  for (const itf of N.interfaces) {
+    const zone = N.zoneOf[itf.name];
+    for (const raw of itf.ips) {
+      const v4 = addrOf(raw), m = /^(\d+\.\d+\.\d+\.\d+)\/(\d{1,2})$/.exec(v4);
+      if (!m || !isIp(m[1])) continue;
+      if (!zone || netZones.includes(norm(zone))) { fwIps.push({ ip: m[1], net: true }); continue; }
+      fwIps.push({ ip: m[1], net: false });
+      const r = parseRange(`${m[1]}/${m[2]}`), cidr = `${intToIp(r.lo)}/${m[2]}`;
+      if (+m[2] >= 31) continue;
+      const num = itf.tag && itf.tag >= 1 && itf.tag <= 4094 ? itf.tag : null;
+      const same = si.vlans.find(v => v.cidr === cidr) || (num && si.vlans.find(v => +v.num === num));
+      if (same) { if (!same.cidr) same.cidr = cidr; continue; }
+      let n = num;
+      if (!n) { while (si.vlans.some(v => +v.num === untagged)) untagged++; n = untagged++; }
+      si.vlans.push({ id: `v-pa-${slug(siteId)}-${n}`, num: n, name: (itf.comment || `${zone} ${itf.name}${num ? '' : ' (untagged)'}`).slice(0, 50), cidr, zone: zoneId(zone) });
+      stats.vlansAdded++;
+    }
+  }
+  if (!si.zones.length) si.zones.push({ id: 'z-def', name: 'Main zone' });
+  // the ports opened to each address, from the allow rules, to guess its type
+  const portsTo = Object.create(null);
+  for (const r of parsed.rules) {
+    if (r.action !== 'allow' || r.disabled) continue;
+    const ports = r.service.flatMap(sv => { const o = Object.values(parsed.objects).map(x => x.service[sv]).find(Boolean); const mm = /^(tcp|udp)[-_/ ]?(\d+)$/i.exec(sv); return o || (mm ? [`${mm[1].toLowerCase()}/${mm[2]}`] : []); });
+    for (const d of r.destination) (portsTo[d] = portsTo[d] || new Set()) && ports.forEach(p => portsTo[d].add(p));
+  }
+  const sources = new Set(parsed.rules.filter(r => r.action === 'allow' && !r.disabled).flatMap(r => r.source));
+  // the type: its name or description first, then the ports opened to it, then an address that only opens
+  // connections is a workstation, and anything else a server
+  const typeOf = (name, desc) => {
+    const words = new Set(norm(`${name} ${desc || ''}`).split(' '));
+    for (const [list, t] of TYPE_BY_WORD) if (list.some(w => words.has(w))) return t;
+    const p = portsTo[name];
+    if (p) for (const [list, t] of TYPE_BY_PORT) if (list.some(x => p.has(x))) return t;
+    if (!p && sources.has(name)) return 'workstation';
+    return 'server';
+  };
+  // assets from host objects of private ranges that no asset of the IS has yet
+  const byIp = new Map(assets.map(([id, a]) => [a.ip, id])), out = {};
+  for (const [scope, o] of Object.entries(parsed.objects)) {
+    if (cfg.scope && scope !== cfg.scope && scope !== 'shared') continue;
+    for (const [name, a] of Object.entries(o.address)) {
+      if (a.kind !== 'ip') continue;
+      const ip = /^(\d+\.\d+\.\d+\.\d+)(?:\/32)?$/.exec(a.value);
+      if (!ip || !isIp(ip[1]) || !isPrivateRange(parseRange(ip[1])) || byIp.has(ip[1]) || fwIps.some(f => f.ip === ip[1])) continue;
+      if (Object.keys(out).length >= 5000) break;
+      const vlan = vlanForIp(si, ip[1]) || holdingVlan(si, siteId, 'To sort (Palo Alto)');
+      let id = `pa-${slug(siteId)}-${slug(name)}`;
+      for (let i = 2; state.assets[id] || out[id]; i++) id = `pa-${slug(siteId)}-${slug(name)}-${i}`;
+      out[id] = { site: siteId, name: name.slice(0, 80), type: typeOf(name, o.description && o.description[name]), vlan: vlan.id, ip: ip[1], os: '', role: (o.description && o.description[name]) || '', crit: 2, vulns: [], contacts: [], apps: [], notes: 'Created from a Palo Alto address object.', ext: { paloalto: name } };
+      byIp.set(ip[1], id); stats.assetsAdded++;
+    }
+  }
+  // the firewall itself: an existing firewall asset at one of its addresses, or a new one
+  let firewall = null;
+  const inside = fwIps.find(f => !f.net);
+  const existing = assets.find(([, a]) => a.type === 'firewall' && fwIps.some(f => f.ip === a.ip)) || (!inside && assets.find(([, a]) => a.type === 'firewall'));
+  if (existing) firewall = existing[0];
+  else if (inside) {
+    const name = N.hostname || 'Palo Alto firewall', id = `pa-${slug(siteId)}-fw-${slug(name)}`;
+    if (!state.assets[id]) {
+      const vlan = vlanForIp(si, inside.ip) || holdingVlan(si, siteId, 'To sort (Palo Alto)');
+      out[id] = { site: siteId, name, type: 'firewall', vlan: vlan.id, ip: inside.ip, os: 'PAN-OS', role: 'Firewall', crit: 3, vulns: [], contacts: [], apps: [], notes: 'Created from the Palo Alto configuration.', ext: { paloalto: 'firewall' } };
+      stats.firewallAdded = 1;
+    }
+    firewall = id;
+  }
+  // the new assets take part in the rules like the others
+  for (const [id, a] of Object.entries(out)) assets.push([id, a]);
+  return { assets: out, firewall, stats };
 }
 
 /* ---------------- turning rules into flows ---------------- */
@@ -116,8 +259,11 @@ export function rulesToChanges(parsed, cfg, state) {
   const si = JSON.parse(JSON.stringify(si0));
   si.flows = si.flows || []; si.services = si.services || [];
   const assets = Object.entries(state.assets).filter(([, a]) => a.site === siteId);
-  const fw = cfg.firewall && state.assets[cfg.firewall] && state.assets[cfg.firewall].site === siteId ? cfg.firewall : null;
   const netZones = String(cfg.internetZones || 'untrust, internet, outside, wan').split(/[\s,;]+/).map(norm).filter(Boolean);
+  // "Build the IS": zones, VLANs, assets and the firewall from the configuration, before the flows
+  const built = cfg.build ? buildIs(parsed, cfg, state, si, assets, netZones) : null;
+  const newAssets = built ? built.assets : {};
+  const fw = cfg.firewall && state.assets[cfg.firewall] && state.assets[cfg.firewall].site === siteId ? cfg.firewall : built && built.firewall ? built.firewall : null;
   const maxExpand = Math.max(1, parseInt(cfg.maxExpand, 10) || 12);
   const scopeFilter = String(cfg.scope || '').trim();
   const warn = [], skipped = [];
@@ -194,6 +340,8 @@ export function rulesToChanges(parsed, cfg, state) {
     return [...out];
   };
 
+  const vlanOfId = id => (newAssets[id] || state.assets[id] || {}).vlan;
+  const sameVlan = (a, b) => !a.startsWith('svc:') && a !== 'internet' && !b.startsWith('svc:') && b !== 'internet' && vlanOfId(a) && vlanOfId(a) === vlanOfId(b);
   const imported = new Map(); // key src>dst>port → flow
   let used = 0, ignored = 0;
   for (const r of parsed.rules) {
@@ -217,7 +365,7 @@ export function rulesToChanges(parsed, cfg, state) {
         imported.set(key, {
           id: 'f-pa-' + hash(key), src: s, dst: d, port: p, vol: 1, risk,
           note: `Palo Alto rule “${r.name}”${r.description ? ` — ${r.description.slice(0, 120)}` : ''}${r.application.length && !r.application.includes('any') ? ` · App-ID: ${r.application.join(', ')}` : ''}${risk ? ' · administration or database port open from the Internet' : ''}`,
-          ...(fw && s !== fw && d !== fw ? { via: [fw] } : {}),
+          ...(fw && s !== fw && d !== fw && !(built && sameVlan(s, d)) ? { via: [fw] } : {}),
           pan: { rules: [r.name], scope: r.scope },
         });
       }
@@ -241,10 +389,11 @@ export function rulesToChanges(parsed, cfg, state) {
     si.flows = si.flows.filter(f => !f.pan || imported.has(keyOf(f)));
     removed = before - si.flows.length;
   }
-  const changed = JSON.stringify(si) !== JSON.stringify(si0);
+  // the empty lists added above are no change: compare the IS as it was, with them
+  const changed = JSON.stringify(si) !== JSON.stringify({ ...si0, flows: si0.flows || [], services: si0.services || [] }) || Object.keys(newAssets).length > 0;
   return {
-    changes: changed ? { si: { [siteId]: si }, assets: {} } : null,
-    stats: { rules: parsed.rules.length, used, ignored, flows: imported.size, added, tagged, removed, services: si.services.length - (si0.services || []).length },
+    changes: changed ? { si: { [siteId]: si }, assets: newAssets } : null,
+    stats: { rules: parsed.rules.length, used, ignored, flows: imported.size, added, tagged, removed, services: si.services.length - (si0.services || []).length, ...(built ? built.stats : {}) },
     warnings: [...new Set(warn)].slice(0, 40), skipped: [...new Set(skipped)].slice(0, 60),
   };
 }
@@ -255,7 +404,7 @@ export async function run(cfg, ctx) {
   const res = rulesToChanges(parsed, cfg, ctx.state);
   const siName = ctx.state.si[cfg.site]?.name || cfg.site;
   const st = res.stats;
-  const summary = `${st.rules} rule(s) read (${parsed.kind}), ${st.used} allow rule(s) drawn, ${st.ignored} deny or disabled ignored; ${st.added} new flow(s), ${st.removed} removed, ${st.services} new Internet service(s).`;
+  const summary = `${cfg.build ? `IS built: ${st.zonesAdded} new zone(s), ${st.vlansAdded} new VLAN(s), ${st.assetsAdded} new asset(s)${st.firewallAdded ? ' and the firewall' : ''}; ` : ''}${st.rules} rule(s) read (${parsed.kind}), ${st.used} allow rule(s) drawn, ${st.ignored} deny or disabled ignored; ${st.added} new flow(s), ${st.removed} removed, ${st.services} new Internet service(s).`;
   return {
     proposals: res.changes ? [{
       siteId: cfg.site,

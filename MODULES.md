@@ -28,7 +28,7 @@ has; administrators also see a *Module store* tab.
 | Cyberwatch | Built-in | Servers and their CVEs (API v3) | Approvers |
 | GLPI | Built-in | Computers, network devices, printers, phones, software, people in charge | Approvers |
 | phpIPAM | Built-in | Sections, subnets, VLANs, addresses | Approvers |
-| Palo Alto | Built-in | Allow rules, as flows: from the XML API, or a configuration file | Approvers; any contributor for a file |
+| Palo Alto | Built-in | Allow rules, as flows: from the XML API, or a configuration file. *Build the IS*: also the zones, the VLANs (layer-3 sub-interfaces), the assets (host address objects) and the firewall | Approvers; any contributor for a file |
 | CSV inventory | Store | Assets of an IS from a spreadsheet saved as CSV | Any contributor (file import) |
 | CSV VLANs | Store | VLANs of an IS (number, name, range): you choose the VLANs and the zone of each | Any contributor (file import) |
 | Nmap scan | Store | Hosts, systems and open ports from `nmap -oX` | Any contributor (file import) |

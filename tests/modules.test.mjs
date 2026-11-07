@@ -122,7 +122,7 @@ test('the built-in modules, the server-provided ones, and the folders that are n
   const by = Object.fromEntries(r.data.connectors.map(c => [c.id, c]));
   for (const id of ['cyberwatch', 'glpi', 'phpipam', 'paloalto']) assert.equal(by[id].origin, 'builtin', id);
   assert.equal(by.paloalto.badge, 'FW');
-  assert.deepEqual(by.paloalto.file.fields, ['site', 'firewall', 'scope']);
+  assert.deepEqual(by.paloalto.file.fields, ['site', 'firewall', 'scope', 'build']);
   assert.equal(by.spy.origin, 'provided');
   assert.equal(by.glpi.name, 'GLPI', 'a provided module cannot take a built-in id');
   const problems = r.data.problems.map(p => p.folder + ': ' + p.error).join('\n');
@@ -131,7 +131,7 @@ test('the built-in modules, the server-provided ones, and the folders that are n
   // a contributor only sees the file imports open to them, with their own settings
   const a = await api('alice', 'GET', '/api/connectors');
   assert.deepEqual(a.data.connectors.map(c => c.id), ['paloalto']);
-  assert.deepEqual(Object.keys(a.data.connectors[0].settings).sort(), ['firewall', 'scope', 'site']);
+  assert.deepEqual(Object.keys(a.data.connectors[0].settings).sort(), ['build', 'firewall', 'scope', 'site']);
   assert.equal(a.data.problems, undefined);
 });
 

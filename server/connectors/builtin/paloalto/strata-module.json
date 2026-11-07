@@ -23,9 +23,10 @@
     "fields": [
       "site",
       "firewall",
-      "scope"
+      "scope",
+      "build"
     ],
-    "help": "On the firewall: Device › Setup › Operations › Export named configuration snapshot (running-config.xml). On Panorama: Panorama › Setup › Operations, same export; then give the device group below. Allow rules become flows: address objects are matched to the assets of the IS by IP, public addresses and FQDNs to Internet services."
+    "help": "On the firewall: Device › Setup › Operations › Export named configuration snapshot (running-config.xml). On Panorama: Panorama › Setup › Operations, same export; then give the device group below. Allow rules become flows: address objects are matched to the assets of the IS by IP, public addresses and FQDNs to Internet services. Tick “Build the IS” on an empty or incomplete IS: the configuration also gives the zones, the VLANs (layer-3 sub-interfaces), the assets (host address objects) and the firewall."
   },
   "fields": [
     {
@@ -56,6 +57,12 @@
       "label": "IS the rules apply to",
       "type": "site",
       "required": true
+    },
+    {
+      "k": "build",
+      "label": "Build the IS: zones, VLANs (interfaces), assets (address objects) and the firewall, when the map lacks them",
+      "type": "bool",
+      "default": false
     },
     {
       "k": "firewall",
