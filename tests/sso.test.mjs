@@ -124,6 +124,7 @@ test('a page without a session goes to the sign-in page; the API answers 401 wit
   assert.match(await bad.text(), /Wrong user name or password/);
   // another site cannot sign a visitor in
   assert.equal((await fetch(`${base}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://evil.example' }, body: 'user=admin&password=admin-pass-123' })).status, 403);
+  assert.equal((await fetch(`${base}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'not a url' }, body: '{}' })).status, 403);
   // a local session signs out too
   const out = await (await api('/auth/logout', cookie, { method: 'POST', body: '{}' })).json();
   assert.equal(out.location, `${base}/auth/login?out=1`);

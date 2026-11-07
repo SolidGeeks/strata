@@ -2,6 +2,27 @@
 
 All notable changes to Strata. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+### Upgrading
+- **HTTP Basic is gone.** Local accounts sign in with the form of the sign-in page and get a session cookie (`SESSION_HOURS`, 8 by default). Scripts that sent `curl -u name:password` get `401` with a message: give them an API token (*Account › API tokens*) and send `Authorization: Bearer stk_…`. `GET /?local` is gone too.
+- Sessions are kept in memory: restarting Strata signs everyone out.
+
+### Added
+- **Sign out** for every account, in the title block (it was in *Account*, for single sign-on only).
+- **Import VLANs** (*Edit › Import VLANs*, in an IS): a CSV (header in English or French, `,` `;` or tab), a JSON list (`[{num, name, cidr, zone}]`, `{"vlans": […]}`, NetBox's `{"results": […]}`) or a Strata export. Tick the VLANs you want, filter, and choose the zone of each, or of all the ticked ones at once (an existing zone, a zone named in the file, or a new one). A VLAN whose number is already in the IS is updated when ticked. From a Strata export, the assets of the chosen VLANs and the flows between them come too.
+- **Arrange VLANs** (*Layout*): each zone on rows and columns instead of one long row, the VLANs that talk to each other side by side (the most traffic to the plates left of and behind each one), VLANs without flows last. *VLANs per row*: automatic (about the square root of their number) or 3 to 12. Saved for everyone; *Line up* undoes it for a zone.
+- **The Internet cloud can be moved**: dragged in *Arrange plates* (3D) and with *Move* in the 2D diagram. Its place is saved on the IS (`si.cloud`, `si.cloud2d`); the named Internet services and the flows follow; *Put Internet back* returns it to its default place.
+- **Show all or no VLANs** of the IS, or of one zone (*All* / *None* next to each zone of the plate list).
+- **Hide empty VLANs** (*Plates*): the plates without an asset leave the 3D model and the 2D diagram. Remembered by the browser.
+- **A loading bar** at the top of the screen for any request still running after 300 ms, with the progress of batches of writes and imports.
+- **Memory and CPU needs**, measured from an empty map to 30 000 assets (README, section 1), and resource limits, commented out, in `docker-compose.yml`.
+- **API**: `POST /auth/login` (the form, or JSON `{user, password}`); `analysis.js` exports `arrangeGrid` and `vlansFromFile`.
+
+### Changed
+- Changing a password, or disabling or deleting an account, ends that account's other sessions. *End all sessions* (admin) ends the sessions of local accounts too, and keeps the admin's own.
+- The Content-Security-Policy allows forms to post to Strata itself (`form-action 'self'`), for the sign-in form.
+- `tests/e2e.mjs` takes `CHROMIUM_PATH`, a Chromium already installed.
+
 ## [0.10.0] - 2026-10-28
 ### Added
 - **Incident mode, with Muster** (*Incident* in the controls of an IS). Mark assets compromised, suspected or contained, from their sheet or from a playbook decision. The incident sheet then shows:

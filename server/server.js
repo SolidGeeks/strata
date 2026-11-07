@@ -828,7 +828,9 @@ async function authRoute(req, res, url) {
     const json = (req.headers['content-type'] || '').startsWith('application/json');
     // a page of another site must not sign a visitor in to an account of its choosing
     const origin = req.headers.origin;
-    if (origin && origin !== 'null' && new URL(origin).host !== req.headers.host && (!sso.publicUrl || origin !== new URL(sso.publicUrl).origin)) return fail(res, 403, 'Sign-in from another site refused');
+    let fromHere = true;
+    if (origin && origin !== 'null') { try { fromHere = new URL(origin).host === req.headers.host || (!!sso.publicUrl && origin === new URL(sso.publicUrl).origin); } catch { fromHere = false; } }
+    if (!fromHere) return fail(res, 403, 'Sign-in from another site refused');
     if (!localSignIn()) return json ? fail(res, 404, 'Local sign-in is off') : page(404, 'Local sign-in is off on this server.');
     let b;
     try { b = json ? await readBody(req, 4096) : Object.fromEntries(new URLSearchParams(await readRaw(req, 4096))); }

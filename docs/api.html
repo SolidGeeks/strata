@@ -71,7 +71,7 @@
     <div class="tablewrap"><table>
       <thead><tr><th scope="col">Method</th><th scope="col">How</th><th scope="col"><code>via</code></th></tr></thead>
       <tbody>
-        <tr><td>Local account</td><td>HTTP Basic: <code>Authorization: Basic base64(name:password)</code>, as <code>curl -u name:password</code>. Refused when <code>LOCAL_LOGIN=off</code>, and for non-admins when <code>LOCAL_LOGIN=admins</code>.</td><td><code>local</code></td></tr>
+        <tr><td>Local account</td><td>The session cookie set by <code>POST /auth/login</code> (the sign-in form, or JSON <code>{"user", "password"}</code>). Meant for browsers; scripts use an API token. HTTP Basic is refused since 0.11. No local sign-in when <code>LOCAL_LOGIN=off</code>, nor for non-admins when <code>LOCAL_LOGIN=admins</code>.</td><td><code>local</code></td></tr>
         <tr><td>API token</td><td><code>Authorization: Bearer stk_…</code>. Created by an admin (<a href="#admin">below</a>) with its own role and expiry. Not available on a server with no accounts.</td><td><code>token</code></td></tr>
         <tr><td>Single sign-on session</td><td>The <code>strata_session</code> cookie (<code>__Host-strata_session</code> over HTTPS) set by <code>/auth/oidc/callback</code>. Meant for browsers.</td><td><code>sso</code></td></tr>
         <tr><td>Trusted proxy header</td><td><code>SSO_HEADER_USER</code> (and <code>SSO_HEADER_GROUPS</code>), believed only from the addresses in <code>SSO_HEADER_TRUST</code>.</td><td><code>header</code></td></tr>
@@ -226,11 +226,11 @@ curl -H "Authorization: Bearer $STRATA_TOKEN" \
     <div class="tablewrap"><table>
       <thead><tr><th scope="col">Route</th><th scope="col">Does</th></tr></thead>
       <tbody>
-        <tr><td><code>GET /auth/login</code></td><td>The sign-in page (with single sign-on)</td></tr>
+        <tr><td><code>GET /auth/login</code></td><td>The sign-in page: the form for local accounts, and single sign-on</td></tr>
+        <tr><td><code>POST /auth/login</code></td><td>Signs a local account in: form fields or JSON <code>{user, password}</code> → session cookie (<code>303</code> to the app, or <code>{ok, user, role}</code>); <code>401</code> wrong, <code>429</code> locked, <code>403</code> from another site</td></tr>
         <tr><td><code>GET /auth/oidc/start</code></td><td>Starts an OpenID Connect sign-in</td></tr>
         <tr><td><code>GET /auth/oidc/callback</code></td><td>Where the provider sends the browser back; sets the session cookie</td></tr>
         <tr><td><code>POST /auth/logout</code></td><td>Ends the session → <code>{ok, location}</code>: where to go next (the provider’s sign-out)</td></tr>
-        <tr><td><code>GET /?local</code></td><td>Asks for a local account’s password when single sign-on is on</td></tr>
       </tbody>
     </table></div>
 
@@ -317,7 +317,7 @@ curl -H "Authorization: Bearer $STRATA_TOKEN" \
     <h3>What stays stable in 1.x</h3>
     <ul>
       <li><strong>The routes on this page</strong> under <code>/api/</code>, their methods, the roles they need, the request fields they accept and the answer fields they return.</li>
-      <li><strong>Authentication</strong>: Basic for local accounts, <code>Bearer stk_…</code> tokens, the write headers <code>Content-Type: application/json</code> and <code>X-Requested-With: strata</code>, <code>X-Batch</code> and <code>X-Batch-Label</code>.</li>
+      <li><strong>Authentication</strong>: session cookies for browsers, <code>Bearer stk_…</code> tokens for scripts, the write headers <code>Content-Type: application/json</code> and <code>X-Requested-With: strata</code>, <code>X-Batch</code> and <code>X-Batch-Label</code>.</li>
       <li><strong>Status codes</strong> and the <code>error</code> key of refusals (not its wording).</li>
       <li><strong>The data format</strong>: the fields listed in <a href="#format">Data format</a> keep their meaning. Every export file written by an earlier version (<code>version</code> 3 and below) keeps importing; a 1.x version may write a higher <code>version</code> number, and still reads the lower ones.</li>
       <li><strong>The module API</strong>: a module written for <code>"strataModule": 1</code> keeps running, with the same <code>ctx</code> and SDK helpers; a store index with <code>"strataRegistry": 1</code> keeps being read.</li>

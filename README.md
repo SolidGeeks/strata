@@ -176,6 +176,26 @@ The machine needs access to the npm registry **once**, during the build, to down
 
 Users need a browser with WebGL 2 and JavaScript modules: Chrome or Edge 80 and later, Firefox 114 and later, Safari 15 and later (three.js has needed WebGL 2 since 2024).
 
+### Memory and CPU
+
+Measured on Node.js 22 (the Docker image), one server process, maps generated with 2 flows per asset and a vulnerability on one asset in four. *Peak* is during an import of the whole map, ten browsers opening it at once, 50 edits and the dashboard.
+
+| Map | Server RAM, at rest → peak | Opening the map (10 browsers at once) | One edit | Dashboard (12 months) |
+|---|---|---|---|---|
+| Empty | 57 → 73 MB | — | — | — |
+| Demo size: 5 IS, ~150 assets | 83 MB | 13 ms | 2 ms | 4 ms |
+| 10 IS, 200 VLANs, 5 000 assets (2 MB of JSON) | 125 MB | 0.14 s | 17 ms | 70 ms |
+| 20 IS, 1 000 VLANs, 30 000 assets (11.5 MB of JSON) | 290 → 340 MB | 0.9 s | 90 ms | 0.35 s |
+
+| Size of the map | Server: vCPU | Server: RAM | Disk (`/data`) |
+|---|---|---|---|
+| Up to ~5 000 assets | 0.5 | 256 MB | 1 GB |
+| Up to ~30 000 assets | 1 to 2 | 512 MB (1 GB with connectors running) | 5 GB |
+
+The server is idle between requests: CPU is spent on writes (each one saves the map and appends to the history) and on the dashboard. Each connector or module run starts a separate Node.js process, about 50 MB for as long as it runs. Disk: the map, the history (`HISTORY_KEEP` entries) and `BACKUP_KEEP` daily copies of the map, so roughly the size of the JSON export × (`BACKUP_KEEP` + 2), plus the history.
+
+**The browser does most of the work** (the 3D model, the 2D diagram, the analysis): a machine with 8 GB of RAM, 4 cores and hardware-accelerated WebGL 2 (any integrated GPU of the last ten years). An IS of 300 assets and 600 flows takes about 150 MB of browser memory. Without a GPU (a virtual desktop, a remote session, a VM with software rendering) the 3D view takes seconds per change from a few hundred assets on: use the 2D diagram, show fewer VLANs (*Plates › None*, then the VLANs you need; *Hide empty VLANs*), or a machine with a GPU. `docker-compose.yml` has the matching limits, commented out.
+
 ---
 
 ## 2. Quick start with Docker
@@ -268,7 +288,7 @@ SSO_ROLE_CONTRIBUTOR=it-ops
 SSO_DEFAULT_ROLE=viewer                      # everyone else; empty: no access
 ```
 
-Opening Strata then shows a sign-in page: *Sign in with Microsoft Entra ID*, and *Sign in with a local account* if local accounts are allowed. The groups come from the `groups` claim (`SSO_GROUPS_CLAIM`; for Entra ID, add the groups claim to the token, or use app roles with `SSO_GROUPS_CLAIM=roles`), the user name from `preferred_username` (`SSO_USER_CLAIM`). Strata checks the ID token's signature against the provider's keys, its issuer, audience, expiry and nonce, and uses PKCE. *Account › Sign out* ends the session at the provider too.
+Opening Strata then shows a sign-in page: *Sign in with Microsoft Entra ID*, and the form for a local account under it if local accounts are allowed. The groups come from the `groups` claim (`SSO_GROUPS_CLAIM`; for Entra ID, add the groups claim to the token, or use app roles with `SSO_GROUPS_CLAIM=roles`), the user name from `preferred_username` (`SSO_USER_CLAIM`). Strata checks the ID token's signature against the provider's keys, its issuer, audience, expiry and nonce, and uses PKCE. *Sign out* (in the title block, or *Account*) ends the session at the provider too.
 
 **A sign-in proxy you already run** (Authelia, oauth2-proxy, Pomerium, Authentik outpost): `SSO_HEADER_USER=Remote-User`, `SSO_HEADER_GROUPS=Remote-Groups` and `SSO_HEADER_TRUST`, the address the proxy connects to Strata from (`127.0.0.1` when it runs on the same machine; several addresses comma-separated, no range: anything in a range could claim to be anyone). The same `SSO_ROLE_*` apply. The proxy must set the headers itself and drop any coming from the browser. `TRUST_PROXY` stays what it was, for the client address.
 
@@ -276,13 +296,13 @@ Opening Strata then shows a sign-in page: *Sign in with Microsoft Entra ID*, and
 
 **Names.** The history and the proposals name people by the name the provider gives. A name that is also a local account is refused (rename one of them), and an e-mail address is used only once the provider has verified it. Prefer a name people cannot change themselves at the provider (`SSO_USER_CLAIM=oid` on Entra ID, or `sub`), or make sure they cannot.
 
-**Sessions** last `SESSION_HOURS` (8 by default) with the role given at sign-in. *Account › End all single sign-on sessions* (admin) signs everyone out, after a group change or when someone leaves.
+**Sessions** last `SESSION_HOURS` (8 by default), for single sign-on and for local accounts alike: a local account signs in once with the form of the sign-in page and gets a session cookie. *Sign out*, in the title block, ends it. Changing a password, or disabling or deleting an account, ends that account's other sessions. *Account › End all sessions* (admin) signs everyone else out, after a group change or when someone leaves. Sessions are kept in memory: restarting Strata signs everyone out.
 
-**API tokens** for scripts and integrations: *Account › API tokens* (admin), with a name, a role and a validity of 1 to 730 days. The token (`stk_…`) is shown once and stored hashed; send it as `Authorization: Bearer stk_…`. Basic Auth with a local account keeps working for scripts.
+**API tokens** for scripts and integrations: *Account › API tokens* (admin), with a name, a role and a validity of 1 to 730 days. The token (`stk_…`) is shown once and stored hashed; send it as `Authorization: Bearer stk_…`. Since 0.11, scripts can no longer send a local account's password with HTTP Basic: the API answers 401 and says to use a token.
 
 ## 5. Network access and HTTPS
 
-Passwords travel with Basic Auth: **never expose the app over plain HTTP outside the machine**.
+Passwords travel in the sign-in form and sessions in a cookie: **never expose the app over plain HTTP outside the machine**. Set `PUBLIC_URL=https://…` behind HTTPS, so the session cookie is `Secure` and `__Host-` prefixed.
 
 ### Option A — the bundled HTTPS proxy (Caddy)
 
@@ -458,7 +478,7 @@ The data lives in the Docker volume and is not touched by the rebuild. Before up
 
 The full reference, with every route's role, request and answer, the data format, the module API and the compatibility policy, is the [API reference](https://solidgeeks.github.io/strata/api.html) ([`docs/api.html`](docs/api.html)).
 
-Every route needs the same credentials as the interface (a local account with Basic Auth, an API token as `Authorization: Bearer stk_…`, or the session of a signed-in browser), with the rights of the account's role (direct writes need `approver`). Writes require the headers `Content-Type: application/json` and `X-Requested-With: strata`. A script can group several writes into a single history entry with the headers `X-Batch: <id>` and `X-Batch-Label: <URL-encoded label>`. To have a tool propose instead of write, give it a `contributor` account and use `POST /api/proposals` with `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (a document set to `null` = deletion).
+Every route needs the same credentials as the interface (an API token as `Authorization: Bearer stk_…`, or the session of a signed-in browser; HTTP Basic is no longer accepted since 0.11), with the rights of the account's role (direct writes need `approver`). Writes require the headers `Content-Type: application/json` and `X-Requested-With: strata`. A script can group several writes into a single history entry with the headers `X-Batch: <id>` and `X-Batch-Label: <URL-encoded label>`. To have a tool propose instead of write, give it a `contributor` account and use `POST /api/proposals` with `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (a document set to `null` = deletion).
 
 | Method and route | What it does |
 |---|---|
@@ -484,7 +504,7 @@ Every route needs the same credentials as the interface (a local account with Ba
 | `GET/POST /api/proposals`, `GET/PUT/DELETE /api/proposals/{id}` | Proposals; `POST …/{id}/submit`, `/withdraw`, `/comment`, `/approve` (`{"force": true}` on a conflict), `/reject` |
 | `GET /api/users`, `PUT/DELETE /api/users/{name}` | Accounts (admin); `PUT /api/me/password`: `{"current","next"}` (local accounts) |
 | `GET/POST /api/tokens`, `DELETE /api/tokens/{id}` | API tokens (admin): `POST` `{"name", "role", "days"}` answers the token once |
-| `GET /auth/login`, `/auth/oidc/start`, `POST /auth/logout` | Sign-in page, single sign-on, sign-out (`{"location"}` to go to) |
+| `GET /auth/login`, `POST /auth/login`, `/auth/oidc/start`, `POST /auth/logout` | Sign-in page; a local account's sign-in (the form, or JSON `{"user", "password"}`: sets the session cookie; 401 wrong, 429 locked); single sign-on; sign-out (`{"location"}` to go to) |
 | `GET /api/connectors` | Connectors, settings (secrets masked) and latest syncs |
 | `PUT /api/connectors/{id}` | A connector's settings (admin); `id`: `cyberwatch`, `glpi`, `phpipam`, `paloalto`, or a module's id |
 | `POST /api/connectors/{id}/test` | Tests access (approver) |
@@ -499,7 +519,7 @@ Every route needs the same credentials as the interface (a local account with Ba
 Example: adding an asset from a script (inventory, NetBox, scanner export…):
 
 ```bash
-curl -u admin:PASSWORD -H 'Content-Type: application/json' -H 'X-Requested-With: strata' \
+curl -H "Authorization: Bearer $STRATA_TOKEN" -H 'Content-Type: application/json' -H 'X-Requested-With: strata' \
   -X PUT https://strata.example.lan/api/assets/srv-erp-01 \
   -d '{"site":"lyon","name":"srv-erp-01","type":"server","vlan":"v-lyo-20","ip":"10.20.0.20",
        "os":"RHEL 8","role":"ERP","crit":3,
@@ -569,7 +589,8 @@ This map describes your weak spots precisely: treat it as sensitive data.
 | "This browser only" badge at the top left | The page cannot reach the API: it is opened as a local file, or the proxy blocks `/api/`. |
 | Other users only see changes after a reload | The proxy buffers `/api/events` (see section 5, option B). |
 | "You have read-only access" | You are signed in with the viewer account, or `READ_ONLY=true`. |
-| Switching accounts in the browser | The browser keeps Basic Auth credentials: open a private window or close the browser. |
+| Switching accounts in the browser | *Sign out* in the title block, then sign in with the other account. |
+| A script gets `401` with “HTTP Basic sign-in was removed” | Create an API token (*Account › API tokens*) and send `Authorization: Bearer stk_…`. |
 | Permission error on `/data` (Docker) | Keep the named volume from `docker-compose.yml`. If you mount a host folder, give it to UID 1000: `chown -R 1000:1000 ./data`. |
 
 ---
@@ -577,7 +598,7 @@ This map describes your weak spots precisely: treat it as sensitive data.
 ## 13. Limits of v0.10
 
 - Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
-- Sessions of single sign-on are kept in memory: restarting Strata signs SSO users out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 8 by default), or at once with *End all single sign-on sessions*. LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).
+- Sessions are kept in memory: restarting Strata signs everyone out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 8 by default), or at once with *End all single sign-on sessions*. LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).
 - Two approvers editing the same IS directly at the same time: the last save wins (the history lets you go back). Proposals, on the other hand, detect conflicts.
 - draw.io or Visio diagrams cannot be imported: only Strata JSON exports can become a proposal.
 - Opened without its server, the app keeps the map in the browser only: no accounts, history, proposals or connectors.
