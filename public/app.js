@@ -1999,6 +1999,7 @@ async function act(name){
   if(name==='wipe'){if(!confirmArm('wipe'))return;await replaceAll({si:{},assets:{},wan:[]},'Deleting');state.ovSelId=null;closeDet();return;}
   if(name==='export')return exportJson();
   if(name==='import'){$('#io').value='';$('#io').click();return;}
+  if(name==='import-vlans'){if(!SITE)return;$('#vlanFile').value='';$('#vlanFile').click();return;}
 }
 // Destructive actions need a second click on the same button
 const armed={};
@@ -2014,6 +2015,100 @@ document.addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(
 async function exportJson(){
   const data=JSON.stringify({format:'strata',version:3,exportedAt:new Date().toISOString(),si:raw.si,assets:raw.assets,wan:raw.wan,services:raw.services||[],risk:raw.risk||{}},null,2);
   await saveFile(`strata-${today()}.json`,'application/json',data);
+}
+/* ---- Import VLANs: pick some VLANs of a file and the zone each one goes to ---- */
+$('#vlanFile').addEventListener('change',e=>{
+  const f=e.target.files&&e.target.files[0];if(!f||!SITE)return;
+  if(f.size>20*1024*1024){toast('This file is too large (20 MB at most).',true);return;}
+  const r=new FileReader();
+  r.onload=()=>{let P,src=null;
+    try{P=SA.vlansFromFile(r.result,f.name);if(P.kind==='strata')src=JSON.parse(r.result);}
+    catch(err){toast(`Could not read ${f.name}: ${err.message}.`,true);return;}
+    vlanImportForm(P,f.name,src);};
+  r.readAsText(f);
+});
+function vlanImportForm(P,fileName,src){
+  const zones=SITE.raw.zones&&SITE.raw.zones.length?clone(SITE.raw.zones):[{id:'z-def',name:'Main zone'}];
+  const have=new Map((SITE.raw.vlans||[]).map(v=>[+v.num,v]));
+  const zByName=n=>zones.find(z=>z.name.toLowerCase()===String(n).trim().toLowerCase());
+  let extraZones=[...new Set(P.items.map(i=>i.zone).filter(z=>z&&!zByName(z)))];
+  const seen=new Set(),srcAssets=src&&src.assets&&typeof src.assets==='object'?src.assets:{};
+  const rows=P.items.map((it,i)=>{const dup=seen.has(it.num);seen.add(it.num);const ex=have.get(it.num)||null;
+    const n=src?Object.values(srcAssets).filter(a=>a&&a.site===it.site&&a.vlan===it.vlanId).length:0;
+    return Object.assign({},it,{i,dup,ex,assets:n,zoneSel:zByName(it.zone)?zByName(it.zone).id:it.zone?'new:'+it.zone:zones[zones.length-1].id,on:!dup&&!ex});});
+  const zOpts=(sel,bulk)=>[...zones.slice().reverse().map(z=>[z.id,z.name]),...extraZones.map(n=>['new:'+n,`New zone: ${n}`]),...(bulk?[['__new','New zone…']]:[])]
+    .map(([v,t])=>`<option value="${esc(v)}"${v===sel?' selected':''}>${esc(t)}</option>`).join('');
+  const sites=src?[...new Set(P.items.map(i=>i.siteName))]:[];
+  const row=r=>`<tr data-vi-row="${r.i}"${r.on?' class="on"':''}><td><input type="checkbox" data-vi-on aria-label="Import VLAN ${r.num}"${r.on?' checked':''}></td><td class="m">${r.num}</td>
+    <td><b>${esc(r.name)}</b>${r.cidr?`<small class="m">${esc(r.cidr)}</small>`:''}${sites.length>1?`<small>IS ${esc(r.siteName)}</small>`:''}
+    ${r.ex?`<span class="tag warn" title="VLAN ${r.num} is already in IS ${esc(SITE.name)}: ticked, its name, range and zone are updated">exists</span>`:''}${r.dup?'<span class="tag warn" title="This number is already further up in the file">twice in the file</span>':''}${r.assets?`<span class="tag">${plural(r.assets,'asset')}</span>`:''}</td>
+    <td><select data-vi-zone aria-label="Zone of VLAN ${r.num}">${zOpts(r.zoneSel)}</select></td></tr>`;
+  const kindTxt={csv:'CSV',json:'JSON list',strata:'Strata export'}[P.kind];
+  openForm('Import VLANs',`IS ${SITE.name}`,`
+    <p class="fhint">${esc(fileName)} · ${kindTxt} · ${plural(P.items.length,'VLAN')}${P.skipped?` · ${plural(P.skipped,'line')} without a VLAN number left out`:''}</p>
+    <div class="vi-tools"><button type="button" class="ibtn" data-vi="all">All</button><button type="button" class="ibtn" data-vi="none">None</button><button type="button" class="ibtn" data-vi="new" title="Only the VLANs not yet in this IS">New only</button>
+      <input type="search" id="viFilter" class="search" placeholder="Filter: number, name, range, zone" autocomplete="off"></div>
+    <div class="vi-bulk"><label for="viZone">Zone for the ticked VLANs</label><div class="arrRow"><select id="viZone" class="search">${zOpts(zones[zones.length-1].id,true)}</select><button type="button" class="btn small" data-vi="apply">Apply</button></div>
+      <div class="f" id="viZoneNewBox" hidden><label for="viZoneNew">New zone name (placed at the top)</label><input id="viZoneNew" maxlength="40"></div></div>
+    <div class="vi-list"><table class="vi"><thead><tr><th></th><th>VLAN</th><th>Name, range</th><th>Zone</th></tr></thead><tbody id="viBody">${rows.map(row).join('')}</tbody></table></div>
+    <p class="fhint" id="viCount"></p>
+    ${src?`<label class="row" for="viAssets"><span>Also bring their assets, and the flows between them</span><input type="checkbox" id="viAssets" checked></label>`:''}
+    <p class="fhint">A ticked VLAN whose number is already in this IS is updated: name, range and zone.</p>`,
+  async()=>{
+    const chosen=rows.filter(r=>r.on);
+    if(!chosen.length)return formErr('Tick at least one VLAN.');
+    const nums=new Map();for(const r of chosen){if(nums.has(r.num))return formErr(`VLAN ${r.num} is ticked twice: keep one.`);nums.set(r.num,r);}
+    const d=clone(SITE.raw);d.zones=d.zones&&d.zones.length?d.zones:clone(zones);d.vlans=d.vlans||[];d.flows=d.flows||[];
+    const zoneId=sel=>{if(!sel.startsWith('new:'))return sel;const n=sel.slice(4);let z=d.zones.find(x=>x.name.toLowerCase()===n.toLowerCase());if(!z){z={id:uid('z'),name:n};d.zones.push(z);}return z.id;};
+    const vmap={};let added=0,updated=0;
+    chosen.forEach(r=>{const zone=zoneId(r.zoneSel);
+      if(r.ex){d.vlans=d.vlans.map(x=>{if(x.id!==r.ex.id)return x;const y=Object.assign({},x,{name:r.name,zone});if(r.cidr)y.cidr=r.cidr;if(x.zone!==zone)delete y.place;return y;});vmap[r.site+'|'+r.vlanId]=r.ex.id;updated++;}
+      else{const id=uid('v');d.vlans.push({id,num:r.num,name:r.name,cidr:r.cidr,zone});vmap[r.site+'|'+r.vlanId]=id;added++;}});
+    const tasks=[()=>Store.putSite(SITE.id,d)];let nA=0,nF=0;
+    if(src&&$('#viAssets')&&$('#viAssets').checked){
+      const amap={},taken=new Set(Object.keys(raw.assets));
+      Object.entries(srcAssets).forEach(([aid,a])=>{if(!a||typeof a!=='object')return;const v=vmap[a.site+'|'+a.vlan];if(!v)return;
+        const nid=taken.has(aid)||!/^[\w.:-]{1,64}$/.test(aid)?uid('a-'):aid;taken.add(nid);amap[a.site+'|'+aid]=nid;
+        const doc=clone(a);doc.site=SITE.id;doc.vlan=v;tasks.push(()=>Store.putAsset(nid,doc));nA++;});
+      const svcOk=id=>id==='internet'||(String(id).startsWith('svc:')&&SVC[id]);
+      const fids=new Set(d.flows.map(f=>f.id)),same=new Set(d.flows.map(f=>`${f.src}>${f.dst}>${f.port}`));
+      [...new Set(chosen.map(r=>r.site))].forEach(sid=>{const sd=src.si&&src.si[sid];
+        (sd&&Array.isArray(sd.flows)?sd.flows:[]).forEach(f=>{if(!f||typeof f!=='object')return;
+          const m=id=>amap[sid+'|'+id]||(svcOk(id)?id:null),s=m(f.src),t=m(f.dst);
+          if(!s||!t||s===t||(isNet(s)&&isNet(t))||same.has(`${s}>${t}>${f.port}`))return;
+          const doc=Object.assign(clone(f),{src:s,dst:t,id:f.id&&!fids.has(f.id)?f.id:uid('f')});
+          if(Array.isArray(f.via))doc.via=f.via.map(x=>amap[sid+'|'+x]).filter(Boolean);
+          fids.add(doc.id);same.add(`${s}>${t}>${f.port}`);d.flows.push(doc);nF++;});});
+    }
+    // the plates first, then the assets on them
+    if(tasks.length>1)await Store.many(tasks,'Importing the VLANs');else await Busy.track(()=>Store.putSite(SITE.id,d),'Importing the VLANs');
+    toast(`VLANs: ${added} added, ${updated} updated${nA?`, ${plural(nA,'asset')}`:''}${nF?`, ${plural(nF,'flow')}`:''}.`);
+    afterSave(()=>restorePanel());
+  });
+  det.querySelector('.form-foot [type=submit]').textContent='Import';
+  const body=$('#viBody'),frm=$('#frm');
+  const count=()=>{const n=rows.filter(r=>r.on).length;$('#viCount').textContent=`${n} of ${rows.length} ticked`;};
+  const visible=()=>[...body.querySelectorAll('tr[data-vi-row]')].filter(tr=>!tr.hidden).map(tr=>rows[+tr.dataset.viRow]);
+  const paint=()=>{const q=$('#viFilter').value.trim().toLowerCase();
+    body.querySelectorAll('tr[data-vi-row]').forEach(tr=>{const r=rows[+tr.dataset.viRow];tr.hidden=!!q&&!`${r.num} ${r.name} ${r.cidr} ${r.zone} ${r.siteName||''}`.toLowerCase().includes(q);
+      tr.classList.toggle('on',r.on);tr.querySelector('[data-vi-on]').checked=r.on;});count();};
+  frm.addEventListener('change',e=>{const tr=e.target.closest('tr[data-vi-row]');if(!tr)return;const r=rows[+tr.dataset.viRow];
+    if(e.target.matches('[data-vi-on]')){r.on=e.target.checked;tr.classList.toggle('on',r.on);count();}
+    if(e.target.matches('[data-vi-zone]'))r.zoneSel=e.target.value;});
+  $('#viZone').addEventListener('change',e=>{$('#viZoneNewBox').hidden=e.target.value!=='__new';});
+  $('#viFilter').addEventListener('input',paint);
+  frm.addEventListener('click',e=>{const b=e.target.closest('[data-vi]');if(!b)return;const k=b.dataset.vi;
+    if(k==='all'||k==='none'||k==='new'){visible().forEach(r=>r.on=k==='all'?!r.dup:k==='new'?!r.ex&&!r.dup:false);paint();return;}
+    if(k==='apply'){let sel=$('#viZone').value;
+      if(sel==='__new'){const n=$('#viZoneNew').value.trim();if(!n)return formErr('Name the new zone.','viZoneNew');
+        const z=zByName(n);sel=z?z.id:'new:'+n;if(!z&&!extraZones.includes(n))extraZones.push(n);}
+      const t=rows.filter(r=>r.on);if(!t.length)return formErr('Tick the VLANs to put in this zone first.');
+      t.forEach(r=>r.zoneSel=sel);$('#ferr').hidden=true;
+      body.innerHTML=rows.map(row).join('');paint();
+      $('#viZone').innerHTML=zOpts(sel,true);$('#viZoneNewBox').hidden=true;$('#viZoneNew').value='';
+      toast(`${plural(t.length,'VLAN')} set to zone ${sel.startsWith('new:')?sel.slice(4):(zones.find(z=>z.id===sel)||{}).name}.`);}
+  });
+  count();
 }
 $('#io').addEventListener('change',e=>{
   const f=e.target.files&&e.target.files[0];if(!f)return;

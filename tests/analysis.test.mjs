@@ -264,3 +264,27 @@ test('arrange: automatic columns, a single plate, and none', () => {
   assert.deepEqual(J(A.arrangeGrid([{ id: 'x', w: 8, D: 6 }], () => 0, 6, 2)).places, { x: [0, 0] });
   assert.deepEqual(J(A.arrangeGrid([], () => 0, 6, 2)).places, {});
 });
+
+test('VLAN files: a CSV with a French header, quotes and a semicolon separator', () => {
+  const r = J(A.vlansFromFile('Numéro;Nom;Réseau;Zone\n10;Serveurs;10.0.10.0/24;DC\n"20";"Postes; étage 1";10.0.20.0/24;Bureaux\nabc;x;;\n5000;trop grand;;\n'));
+  assert.equal(r.kind, 'csv');
+  assert.deepEqual(r.items, [
+    { num: 10, name: 'Serveurs', cidr: '10.0.10.0/24', zone: 'DC' },
+    { num: 20, name: 'Postes; étage 1', cidr: '10.0.20.0/24', zone: 'Bureaux' },
+  ]);
+  assert.equal(r.skipped, 2);
+  // without a header: number, name, range, zone
+  assert.deepEqual(J(A.vlansFromFile('30,Cameras,10.0.30.0/24\n40,Printers')).items.map(i => [i.num, i.name, i.cidr]), [[30, 'Cameras', '10.0.30.0/24'], [40, 'Printers', '']]);
+  assert.throws(() => A.vlansFromFile('name,range\nx,y'), /no VLAN number column/);
+  assert.throws(() => A.vlansFromFile(''), /empty/);
+});
+
+test('VLAN files: a JSON list (NetBox style) and a Strata export', () => {
+  const nb = J(A.vlansFromFile(JSON.stringify({ results: [{ id: 912, vid: 30, name: 'Cams', group: { name: 'OT' } }, { id: 913, name: 'no number' }] })));
+  assert.equal(nb.kind, 'json');
+  assert.deepEqual(nb.items, [{ num: 30, name: 'Cams', cidr: '', zone: 'OT' }]);
+  assert.equal(nb.skipped, 1);
+  const strata = J(A.vlansFromFile(JSON.stringify({ format: 'strata', si: { lyon: { name: 'Lyon', zones: [{ id: 'z1', name: 'DMZ' }], vlans: [{ id: 'v1', num: 100, name: 'Web', cidr: '192.0.2.0/24', zone: 'z1' }] } }, assets: {} })));
+  assert.equal(strata.kind, 'strata');
+  assert.deepEqual(strata.items, [{ num: 100, name: 'Web', cidr: '192.0.2.0/24', zone: 'DMZ', site: 'lyon', siteName: 'Lyon', vlanId: 'v1' }]);
+});

@@ -88,6 +88,7 @@
       <button class="btn small" data-act="new-vlan"><span>+ VLAN</span></button>
       <button class="btn small" data-act="edit-site"><span>Zones, contacts</span></button>
     </div>
+    <div class="btns" style="margin-top:6px"><button class="btn small" data-act="import-vlans" title="Pick VLANs from a CSV, a JSON list or a Strata export and put them in the zones you choose"><span>Import VLANs</span><span class="mono">CSV · JSON</span></button></div>
   </div>
   <div class="sec" data-view="site">
     <h3 class="cap"><label for="search">Search</label></h3>
@@ -224,6 +225,7 @@
 <div id="tip" class="panel" hidden></div>
 <div id="hint" class="panel"></div>
 <input type="file" id="io" accept="application/json,.json" tabindex="-1" aria-hidden="true">
+<input type="file" id="vlanFile" accept=".csv,.json,.txt,text/csv,application/json" tabindex="-1" aria-hidden="true" hidden>
 
 <script src="analysis.js"></script>
 <script src="incident.js"></script>

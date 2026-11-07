@@ -274,6 +274,64 @@ function chokePoints(site,byTarget){
   return [...pts.values()].sort((x,y)=>y.every.length-x.every.length||y.paths-x.paths||byName(x.id,y.id));
 }
 
+/* ---- VLANs read from a file, to import some of them ---- */
+// A CSV (header in English or French, separator , ; or tab), a JSON list ([{num, name, cidr, zone}] or
+// {vlans: [...]}) or a Strata export (format "strata": every VLAN of every IS, with its zone and its IS).
+// Returns {kind: 'csv'|'json'|'strata', items: [{num, name, cidr, zone, site, siteName, vlanId}], skipped}
+// where skipped counts the lines without a valid VLAN number (1 to 4094). Throws when nothing is readable.
+const VCOL={num:['vlan','vlan id','vlan_id','vlanid','vid','vlan number','num','number','numero','numéro','n°','tag'],
+  name:['name','nom','vlan name','description','desc','label','libellé','libelle'],
+  cidr:['cidr','subnet','network','prefix','range','réseau','reseau','sous-réseau','sous-reseau','plage','ip range','address range','prefixe','préfixe'],
+  zone:['zone','group','groupe','vlan group','site','location','emplacement','tenant']};
+function csvRows(text){
+  const lines=String(text).replace(/^﻿/,'').split(/\r?\n/).filter(l=>l.trim());
+  if(!lines.length)return [];
+  const head=lines[0],sep=[';','\t',','].map(c=>[c,head.split(c).length]).sort((a,b)=>b[1]-a[1])[0][0];
+  return lines.map(l=>{const out=[];let cur='',q=false;
+    for(let i=0;i<l.length;i++){const ch=l[i];
+      if(q){if(ch==='"'&&l[i+1]==='"'){cur+='"';i++;}else if(ch==='"')q=false;else cur+=ch;}
+      else if(ch==='"')q=true;else if(ch===sep){out.push(cur.trim());cur='';}else cur+=ch;}
+    out.push(cur.trim());return out;});
+}
+const vlanNum=v=>{const m=/\d+/.exec(String(v==null?'':v));const n=m?parseInt(m[0],10):NaN;return n>=1&&n<=4094?n:null;};
+function vlansFromFile(text,fileName=''){
+  const t=String(text||'').replace(/^﻿/,'').trim();
+  if(!t)throw new Error('the file is empty');
+  const items=[];let skipped=0,kind;
+  const push=(o,extra={})=>{const num=vlanNum(o.num);if(num===null){skipped++;return;}
+    items.push(Object.assign({num,name:String(o.name||'').trim().slice(0,50)||`VLAN ${num}`,cidr:String(o.cidr||'').trim().slice(0,60),zone:String(o.zone||'').trim().slice(0,40)},extra));};
+  if(/^[[{]/.test(t)&&!/\.csv$/i.test(fileName)){
+    let o;try{o=JSON.parse(t);}catch(e){throw new Error('this is not valid JSON');}
+    if(o&&typeof o.si==='object'&&o.si&&!Array.isArray(o.si)){
+      kind='strata';
+      Object.entries(o.si).forEach(([sid,d])=>{if(!d||typeof d!=='object')return;
+        const zones=Array.isArray(d.zones)?d.zones:[];
+        (Array.isArray(d.vlans)?d.vlans:[]).forEach(v=>{if(!v||typeof v!=='object')return;const z=zones.find(x=>x&&x.id===v.zone);
+          push({num:v.num,name:v.name,cidr:v.cidr,zone:z?z.name:''},{site:sid,siteName:String(d.name||sid),vlanId:String(v.id||'')});});});
+    }else{
+      kind='json';
+      const list=Array.isArray(o)?o:Array.isArray(o&&o.vlans)?o.vlans:Array.isArray(o&&o.results)?o.results:null;
+      if(!list)throw new Error('expected a list of VLANs, {"vlans": [...]}, or a Strata export');
+      const pick=(x,keys)=>{for(const k of keys){const hit=Object.keys(x).find(y=>y.toLowerCase()===k);if(hit!==undefined&&x[hit]!=null&&typeof x[hit]!=='object')return x[hit];}
+        // NetBox and others: {group: {name}}, {site: {name}}
+        for(const k of keys){const hit=Object.keys(x).find(y=>y.toLowerCase()===k);if(hit!==undefined&&x[hit]&&typeof x[hit]==='object'&&x[hit].name)return x[hit].name;}return '';};
+      list.forEach(x=>{if(!x||typeof x!=='object'){skipped++;return;}push({num:pick(x,VCOL.num),name:pick(x,VCOL.name),cidr:pick(x,VCOL.cidr),zone:pick(x,VCOL.zone)});});
+    }
+  }else{
+    kind='csv';
+    const rows=csvRows(t);
+    const norm=h=>h.toLowerCase().replace(/^["']|["']$/g,'').trim();
+    const head=rows[0].map(norm),col={};
+    Object.entries(VCOL).forEach(([k,names])=>{const i=head.findIndex(h=>names.includes(h));if(i>=0)col[k]=i;});
+    let body=rows.slice(1);
+    // no header: number, name, range, zone in that order
+    if(col.num===undefined){if(vlanNum(rows[0][0])===null)throw new Error('no VLAN number column (vlan, vid, num, numéro…)');Object.assign(col,{num:0,name:1,cidr:2,zone:3});body=rows;}
+    body.forEach(r=>push({num:r[col.num],name:col.name!==undefined?r[col.name]:'',cidr:col.cidr!==undefined?r[col.cidr]:'',zone:col.zone!==undefined?r[col.zone]:''}));
+  }
+  if(!items.length)throw new Error('no VLAN with a number from 1 to 4094 in this file');
+  return {kind,items,skipped};
+}
+
 /* ---- Arranging the plates of a level on rows and columns ---- */
 // plates: [{id, w, D}] in their current order; weight(a, b): how much two VLANs talk (symmetric, >= 0);
 // cols: the most plates per row (0 or less: about the square root of their number, a little wider than deep);
@@ -304,6 +362,6 @@ function arrangeGrid(plates,weight,cols,gap=2){
   return {places,cols:C,rows:R,order:grid.map(p=>p.id)};
 }
 
-root.StrataAnalysis={arrangeGrid,riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph,
+root.StrataAnalysis={arrangeGrid,vlansFromFile,riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph,
   stepOdds,blastRadius,attackPaths,chokePoints,outside};
 })(typeof globalThis!=='undefined'?globalThis:this);

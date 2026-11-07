@@ -712,7 +712,7 @@ body.has-dash{overflow:hidden}
 @media (prefers-reduced-motion:reduce){#flatSvg .selhalo{animation:none}}
 .ibtn.signout{border-color:var(--line);color:var(--fg);margin-left:6px;min-height:22px;padding:2px 8px}
 .vtools{display:flex;align-items:center;gap:4px;margin:0 0 4px}.vtools .fl{margin-right:auto}
-.zone-h .zsel{float:right;display:inline-flex;gap:2px}.zone-h .zsel .ibtn{min-height:22px;padding:1px 6px}
+.zone-h{display:flex;align-items:center;gap:4px;min-height:24px}.zone-h>span,.zone-h>.ibtn{float:none}.zone-h>:first-child{margin-left:auto}.zone-h .zsel{display:inline-flex;gap:2px;opacity:1}.zone-h .zsel .ibtn{min-height:22px;padding:1px 6px}
 .vrow.off{opacity:.45}
 /* Loading bar for long operations */
 #busy{position:fixed;top:0;left:0;right:0;height:3px;z-index:1000;overflow:hidden;background:color-mix(in srgb,var(--fg) 10%,transparent);pointer-events:none}
@@ -723,3 +723,15 @@ body.has-dash{overflow:hidden}
 @keyframes busy{0%{left:-30%}100%{left:100%}}
 @media (prefers-reduced-motion:reduce){#busy i{animation:none;width:100%;opacity:.5}}
 .arrRow{display:flex;gap:6px;align-items:stretch}.arrRow select{width:auto;flex:0 0 76px;padding:6px 8px}.arrRow .btn{flex:1}
+/* Import VLANs */
+.vi-tools{display:flex;gap:4px;align-items:center;margin:6px 0}.vi-tools .search{flex:1;padding:6px 8px;margin-left:4px}
+.vi-bulk{margin:4px 0 8px}.vi-bulk>label{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}
+.vi-list{max-height:min(48vh,460px);overflow:auto;border:1px solid var(--line);border-radius:3px}
+table.vi{width:100%;border-collapse:collapse;font-size:12px}
+table.vi th{position:sticky;top:0;background:var(--panel-2);text-align:left;font-weight:600;padding:5px 6px;font-size:11px;color:var(--muted)}
+table.vi td{padding:5px 6px;border-top:1px solid var(--line);vertical-align:top}
+table.vi td small{display:block;color:var(--muted)}table.vi td.m,table.vi .m{font-family:var(--f-mono)}
+table.vi tr:not(.on) td:not(:first-child){opacity:.55}
+table.vi select{max-width:140px;font-size:11px;background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:3px;padding:3px}
+table.vi .tag{display:inline-block;font-size:10px;padding:0 5px;border:1px solid var(--line);border-radius:8px;margin:2px 3px 0 0;color:var(--muted)}
+table.vi .tag.warn{border-color:var(--high);color:var(--high)}
