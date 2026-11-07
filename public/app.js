@@ -757,7 +757,8 @@ const eco=()=>GFX.pref==='eco'||(GFX.pref==='auto'&&(GFX.slow||GFX.soft));
 const renderer=new THREE.WebGLRenderer({antialias:!eco()});
 try{const gl=renderer.getContext(),x=gl.getExtension('WEBGL_debug_renderer_info');GFX.gpu=String(x?gl.getParameter(x.UNMASKED_RENDERER_WEBGL):'');GFX.soft=/swiftshader|llvmpipe|softpipe|software|basic render/i.test(GFX.gpu);}catch(e){}
 // Resolution at rest, and while the view moves (a little lower, sharp again as soon as it stops)
-const basePR=()=>eco()?1:Math.min(devicePixelRatio,2),movePR=()=>eco()?0.75:Math.min(devicePixelRatio,1.25);
+// (never below the screen's own resolution: text drawn below it shimmers while the view moves)
+const basePR=()=>eco()?1:Math.min(devicePixelRatio,2),movePR=()=>eco()?1:Math.min(devicePixelRatio,1.5);
 let curPR=basePR();renderer.setPixelRatio(curPR);
 // Shadows are drawn again only when something in the model changes, not when the view moves
 renderer.shadowMap.enabled=!eco();renderer.shadowMap.type=THREE.PCFShadowMap;renderer.shadowMap.autoUpdate=false;
@@ -844,9 +845,11 @@ function placard(v,col){
   ctx.font='500 58px "IBM Plex Mono", monospace';ctx.fillStyle='#4a5359';ctx.fillText(v.cidr||'',60,210);
   const tex=new THREE.CanvasTexture(c);tex.anisotropy=4;
   const side=new THREE.MeshStandardMaterial({color:new THREE.Color(css('--card')),roughness:0.9});
-  const face=new THREE.MeshStandardMaterial({map:tex,roughness:0.9});
+  // the printed face sits just in front of the box and always wins the depth test against it: drawn
+  // half a millimetre away it fought the box face for each pixel, and the names flickered from afar
+  const face=new THREE.MeshStandardMaterial({map:tex,roughness:0.9,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4});
   // the box in one material and its printed face on top: two draw calls instead of six
-  const m=new THREE.Mesh(PLACARD_BOX,side),f=new THREE.Mesh(PLACARD_FACE,face);f.position.z=0.0505;m.add(f);m.castShadow=true;return m;
+  const m=new THREE.Mesh(PLACARD_BOX,side),f=new THREE.Mesh(PLACARD_FACE,face);f.position.z=0.06;m.add(f);m.castShadow=true;return m;
 }
 
 /* ---- Low-poly models ---- */
