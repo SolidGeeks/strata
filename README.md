@@ -1,4 +1,4 @@
-# Strata — v0.10
+# Strata — v0.11
 
 [![Release](https://img.shields.io/github/v/release/SolidGeeks/strata)](https://github.com/SolidGeeks/strata/releases) [![License AGPL-3.0](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/license-agpl.svg)](LICENSE) [![Signed releases](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/signed-releases.svg)](#2-quick-start-with-docker) [![Tests](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml)
 
@@ -16,9 +16,20 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 | [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) ✅ | Connector modules and a module store, three.js 0.186. Released on 2026-10-26 |
 | [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) ✅ | The last breaking changes: single sign-on, pre-releases, an API reference, the old product name removed. Released on 2026-10-26 |
 | 0.10.0 ✅ | Incident mode with Muster, the risk register with baselines, logs for the SIEM, the steering dashboard. Released on 2026-10-28 |
+| 0.11.0 ✅ | Cookie sessions and sign-out, VLAN import with zones, Arrange VLANs and zones suggested from the flows, Palo Alto builds an IS, a lighter 3D view for small laptops. Released on 2026-11-08 |
 | [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
 
 Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
+
+## New in v0.11: sign-out, VLAN import, zones from the flows, a lighter 3D view
+
+- **Sessions and sign-out**: local accounts sign in with the form and get a session cookie; *Sign out* is in the title block for everyone. HTTP Basic is gone: scripts use API tokens (read *Upgrading* in the [CHANGELOG](CHANGELOG.md)).
+- **Import VLANs** (*Edit › Import VLANs*): a CSV, a JSON list or a Strata export; tick the VLANs to bring and choose the zone of each. The **CSV VLANs** module of the store does the same as a proposal, and modules can now ask for such a choice before an import (`file.pick`, see [MODULES.md](MODULES.md)).
+- **Arrange VLANs** lays each zone out on rows and columns by its flows; **Suggest zones from the flows** proposes the zones of an IS, the Internet on top, in a window to review before applying.
+- **Palo Alto builds the IS** from a configuration alone: zones, VLANs from the sub-interfaces, assets from the address objects, the firewall, then the flows.
+- **On the map**: show all or no VLANs per zone, hide empty VLANs, move the Internet cloud, fold the title block, a loading bar for long requests; the overview shows each IS in its compact form.
+- **A lighter 3D view**: 8 to 15 times fewer draw calls, drawn only when something changes, and an Economy mode chosen automatically on slow laptops (*Display › Graphics*).
+- **Large IS**: one document can now reach `MAX_DOC_MB` (8 MB), and the history stops at `HISTORY_MAX_MB` (200 MB).
 
 ## New in v0.10: incident mode with Muster, the risk register, the steering dashboard
 
@@ -229,7 +240,7 @@ Or use the prebuilt image published with each release (tag `vX.Y.Z`, see the `Re
 Every published image is **signed**: an attestation proves it was built by this repository's `Release` workflow, from the code of the tag. To check it before deploying (you need the [GitHub CLI](https://cli.github.com/)):
 
 ```bash
-gh attestation verify oci://ghcr.io/solidgeeks/strata:0.10.0 --owner SolidGeeks
+gh attestation verify oci://ghcr.io/solidgeeks/strata:0.11.0 --owner SolidGeeks
 ```
 
 The command must print `Verification succeeded!`. If it fails, do not use the image, and report it (see [SECURITY.md](SECURITY.md)). Images older than 0.5.4 are not signed.
@@ -572,7 +583,7 @@ Fields added since v0.2 (all optional):
 Strata follows [Semantic Versioning](https://semver.org/). Before 1.0 a minor version may still break things, and the [CHANGELOG](CHANGELOG.md) says how to upgrade. From **1.0** on, every 1.x version keeps working:
 
 - the `/api/` routes, their methods, roles, request and answer fields;
-- authentication (Basic, `Bearer stk_…` tokens), the write headers, `X-Batch` and `X-Batch-Label`;
+- authentication (the session cookie of `POST /auth/login`, `Bearer stk_…` tokens), the write headers, `X-Batch` and `X-Batch-Label`;
 - status codes and the `error` key (not its wording);
 - the export format: every export written by an earlier version keeps importing;
 - the module API (`"strataModule": 1`, `ctx`, the SDK) and the store index (`"strataRegistry": 1`);
@@ -613,10 +624,10 @@ This map describes your weak spots precisely: treat it as sensitive data.
 
 ---
 
-## 13. Limits of v0.10
+## 13. Limits of v0.11
 
 - Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
-- Sessions are kept in memory: restarting Strata signs everyone out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 8 by default), or at once with *End all single sign-on sessions*. LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).
+- Sessions are kept in memory: restarting Strata signs everyone out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 8 by default), or at once with *End all sessions*. LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).
 - Two approvers editing the same IS directly at the same time: the last save wins (the history lets you go back). Proposals, on the other hand, detect conflicts.
 - draw.io or Visio diagrams cannot be imported: only Strata JSON exports can become a proposal.
 - Opened without its server, the app keeps the map in the browser only: no accounts, history, proposals or connectors.
@@ -649,7 +660,7 @@ A pull request must start from the latest release or later: the `base` job fails
 
 ### Releasing
 
-1. Merge a pull request that sets the new version in `package.json` (`npm version 0.10.0 --no-git-tag-version`), `docker-compose.yml`, the interface and the docs, and dates its CHANGELOG section.
+1. Merge a pull request that sets the new version in `package.json` (`npm version 0.11.0 --no-git-tag-version`), `docker-compose.yml`, the interface and the docs, and dates its CHANGELOG section.
 2. *Actions › Release › Run workflow*, on `main`. The workflow reads the version from `package.json` and creates the `vX.Y.Z` tag itself, so there is nothing to type. It waits for a maintainer's approval (the `release` environment), then runs the tests, publishes the signed image and the GitHub release with its notes.
 
 Pushing a `vX.Y.Z` tag, or publishing a release from the web page with a new tag on `main`, still works: the tag must then be exactly `v` and the version (`v0.9.0`, not `V0.9.0` or `v.0.9.0`).

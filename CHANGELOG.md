@@ -3,6 +3,8 @@
 All notable changes to Strata. Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+## [0.11.0] - 2026-11-08
 ### Upgrading
 - **HTTP Basic is gone.** Local accounts sign in with the form of the sign-in page and get a session cookie (`SESSION_HOURS`, 8 by default). Scripts that sent `curl -u name:password` get `401` with a message: give them an API token (*Account › API tokens*) and send `Authorization: Bearer stk_…`. `GET /?local` is gone too.
 - Sessions are kept in memory: restarting Strata signs everyone out.
@@ -252,6 +254,7 @@ All notable changes to Strata. Versions follow [Semantic Versioning](https://sem
 ## [0.1.0]
 - First release: 3D map of IS, zones, VLANs, assets, flows, exposure, vulnerabilities and incident contacts.
 
+[0.11.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.11.0
 [0.10.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.10.0
 [0.9.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.9.0
 [0.8.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.8.0
