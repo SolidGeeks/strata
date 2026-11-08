@@ -35,7 +35,7 @@ buildNpmPackage {
   nodejs = nodejs_22;
   # Changes with package-lock.json: Nix prints the new value when it no longer matches
   # (README, "Nix and NixOS")
-  npmDepsHash = "sha256-fr4NO/VIuBQB9rc5TnwisLIvPWuTDnobwmiWin87+4A=";
+  npmDepsHash = "sha256-YGrqCpxo9cZZomxUqMsHz21uIBTZ91QwW3osm4NaNrs=";
 
   npmBuildScript = "vendor";
 
