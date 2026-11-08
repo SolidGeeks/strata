@@ -11,6 +11,7 @@ import zlib from 'node:zlib';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth } from './session.mjs';
 import { readTgz, writeTgz, sha256 } from '../server/connectors/store.js';
 import { checkManifest, compareVersions } from '../server/connectors/modules.js';
 
@@ -109,7 +110,7 @@ after(async () => {
 async function api(user, method, path, body) {
   const r = await fetch(base + path, {
     method,
-    headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${PASS[user]}`).toString('base64'), ...(body !== undefined ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
+    headers: { ...(await auth(base, user, PASS[user])), ...(body !== undefined ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   return { status: r.status, data: await r.json().catch(() => null) };
@@ -121,7 +122,7 @@ test('the built-in modules, the server-provided ones, and the folders that are n
   const by = Object.fromEntries(r.data.connectors.map(c => [c.id, c]));
   for (const id of ['cyberwatch', 'glpi', 'phpipam', 'paloalto']) assert.equal(by[id].origin, 'builtin', id);
   assert.equal(by.paloalto.badge, 'FW');
-  assert.deepEqual(by.paloalto.file.fields, ['site', 'firewall', 'scope']);
+  assert.deepEqual(by.paloalto.file.fields, ['site', 'firewall', 'scope', 'build']);
   assert.equal(by.spy.origin, 'provided');
   assert.equal(by.glpi.name, 'GLPI', 'a provided module cannot take a built-in id');
   const problems = r.data.problems.map(p => p.folder + ': ' + p.error).join('\n');
@@ -130,7 +131,7 @@ test('the built-in modules, the server-provided ones, and the folders that are n
   // a contributor only sees the file imports open to them, with their own settings
   const a = await api('alice', 'GET', '/api/connectors');
   assert.deepEqual(a.data.connectors.map(c => c.id), ['paloalto']);
-  assert.deepEqual(Object.keys(a.data.connectors[0].settings).sort(), ['firewall', 'scope', 'site']);
+  assert.deepEqual(Object.keys(a.data.connectors[0].settings).sort(), ['build', 'firewall', 'scope', 'site']);
   assert.equal(a.data.problems, undefined);
 });
 
@@ -283,6 +284,54 @@ test('store modules: an Nmap scan imported by a contributor, NetBox synced by an
   for (const id of ['nmap', 'netbox']) assert.equal((await api('admin', 'DELETE', `/api/modules/${id}`, {})).status, 200);
 });
 
+test('CSV VLANs: the VLANs of a file, a choice of VLANs and zones, then a proposal', async () => {
+  assert.equal((await api('admin', 'POST', '/api/modules/csv-vlans/install', {})).status, 200);
+  const c = (await api('alice', 'GET', '/api/connectors')).data.connectors.find(x => x.id === 'csv-vlans');
+  assert.deepEqual(c.file.pick, { title: 'Choose the VLANs and their zone', help: c.file.pick.help, zones: true });
+  // no header, columns in the order range, name, number; VLAN 20 is already in Lyon; a line without number
+  const file = { name: 'vlans.csv', text: '10.30.0.0/24;Lab A;300\n10.30.1.0/24;Lab B;301\n10.20.0.0/24;Servers (renamed);20\nbad;line;x\n10.40.0.0/24;Cameras;400\n' };
+  const pv = await api('alice', 'POST', '/api/connectors/csv-vlans/preview', { file, overrides: { site: 'lyon' } });
+  assert.equal(pv.status, 200, JSON.stringify(pv.data));
+  assert.deepEqual(pv.data.items.map(i => [i.key, i.label, i.detail, i.on]), [
+    ['300', 'VLAN 300 · Lab A', '10.30.0.0/24', true], ['301', 'VLAN 301 · Lab B', '10.30.1.0/24', true],
+    ['20', 'VLAN 20 · Servers (renamed)', '10.20.0.0/24', false], ['400', 'VLAN 400 · Cameras', '10.40.0.0/24', true]]);
+  assert.match(pv.data.items[2].tags[0], /already in the IS/);
+  assert.equal(pv.data.items[2].zone, 'Main', 'a VLAN already in the IS suggests its own zone');
+  assert.match(pv.data.skipped[0], /Line 4: no VLAN number/);
+  assert.equal(pv.data.pick.zones, true);
+  // a preview records no run and opens no proposal
+  assert.equal((await api('admin', 'GET', '/api/proposals')).data.proposals.filter(p => p.connector === 'csv-vlans').length, 0);
+
+  // the choice: 300 and 301 in a new zone Lab, 20 updated where it is, 400 left out
+  const picks = { 300: { zone: 'new:Lab' }, 301: { zone: 'new:Lab' }, 20: { zone: 'z1' } };
+  const r = await api('alice', 'POST', '/api/connectors/csv-vlans/run', { wait: true, file, overrides: { site: 'lyon' }, picks });
+  assert.equal(r.data.run.ok, true, r.data.run.error);
+  assert.match(r.data.run.summary, /4 VLAN\(s\) read, 3 chosen: 2 to add, 1 to update; new zone\(s\): Lab/);
+  const p = (await api('admin', 'GET', `/api/proposals/${r.data.run.proposals[0].id}`)).data.proposal;
+  const si = p.changes.si.lyon, lab = si.zones.find(z => z.name === 'Lab');
+  assert.ok(lab, 'the new zone is in the proposal');
+  assert.deepEqual(si.vlans.filter(v => v.zone === lab.id).map(v => v.num).sort(), [300, 301]);
+  assert.equal(si.vlans.find(v => v.num === 20).name, 'Servers (renamed)');
+  assert.equal(si.vlans.find(v => v.num === 20).id, 'v20', 'an updated VLAN keeps its id, and so its assets');
+  assert.ok(!si.vlans.some(v => v.num === 400), 'a VLAN left unticked is not brought');
+  assert.equal(p.uploadedBy, 'alice');
+
+  // the same choice again refreshes the same proposal; from a script, without a choice, every new VLAN comes
+  const again = await api('alice', 'POST', '/api/connectors/csv-vlans/run', { wait: true, file, overrides: { site: 'lyon' }, picks });
+  assert.equal(again.data.run.proposals[0].id, p.id);
+  await api('admin', 'PUT', '/api/connectors/csv-vlans', { defaultZone: 'Imported' });
+  const all = await api('alice', 'POST', '/api/connectors/csv-vlans/run', { wait: true, file, overrides: { site: 'lyon' } });
+  assert.match(all.data.run.summary, /4 VLAN\(s\) read: 3 to add, 0 to update, 1 unchanged; new zone\(s\): Imported/);
+
+  // what is refused
+  assert.equal((await api('alice', 'POST', '/api/connectors/csv-vlans/preview', { file: { name: 'x.csv', text: 'name;range\nx;10.0.0.0/8' }, overrides: { site: 'lyon' } })).status, 400);
+  assert.equal((await api('alice', 'POST', '/api/connectors/csv-vlans/preview', { overrides: { site: 'lyon' } })).status, 400);
+  assert.equal((await api('alice', 'POST', '/api/connectors/csv-vlans/run', { wait: true, file, overrides: { site: 'lyon' }, picks: 'all' })).status, 400);
+  assert.equal((await api('bob', 'POST', '/api/connectors/csv-inventory/preview', { file, overrides: { site: 'lyon' } })).status, 404, 'csv-inventory is not installed');
+  for (const pr of (await api('admin', 'GET', '/api/proposals')).data.proposals.filter(x => x.connector === 'csv-vlans')) await api('admin', 'DELETE', `/api/proposals/${pr.id}`, {});
+  assert.equal((await api('admin', 'DELETE', '/api/modules/csv-vlans', {})).status, 200);
+});
+
 test('the store refuses a package that does not match its checksum', async () => {
   tamper = true;
   try {
@@ -323,6 +372,11 @@ test('package reader and manifest checks', () => {
   assert.throws(() => checkManifest({ ...man, permissions: { files: true } }), /permissions/);
   assert.throws(() => checkManifest({ ...man, live: false }), /must import files/);
   assert.throws(() => checkManifest({ ...man, minStrata: '99.0.0' }, { strataVersion: '0.8.0' }), /needs Strata 99/);
+  const fileOf = pick => ({ ...man, live: false, fields: [{ k: 'site', label: 'IS', type: 'site' }], file: { label: 'Import', fields: ['site'], pick } });
+  assert.deepEqual(checkManifest(fileOf({ zones: true })).file.pick, { title: 'Choose what to import', help: '', zones: true });
+  assert.equal(checkManifest({ ...man, live: false, file: { label: 'Import' } }).file.pick, null);
+  assert.throws(() => checkManifest(fileOf('yes')), /file.pick must be an object/);
+  assert.throws(() => checkManifest({ ...fileOf({ zones: true }), file: { label: 'Import', pick: { zones: true } } }), /needs a setting of type site/);
   assert.ok(compareVersions('0.10.0', '0.9.1') > 0 && compareVersions('1.0.0-rc.1', '1.0.0') < 0 && compareVersions('1.2.3', '1.2.3') === 0);
   // the top folder goes, whatever its name; a link inside a package is refused
   const tgz = writeTgz([{ path: 'strata-module.json', data: Buffer.from('{}') }, { path: 'lib/a.mjs', data: Buffer.from('') }], 'anything');

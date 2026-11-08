@@ -6,10 +6,11 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth } from './session.mjs';
 import { chromium } from 'playwright';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,7 +32,7 @@ before(async () => {
     assert.equal(r.status, 200);
   }
   // WebGL without a GPU: SwiftShader
-  browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  browser = await chromium.launch({ ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}), args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 });
 after(async () => {
   if (browser) await browser.close();
@@ -39,16 +40,23 @@ after(async () => {
   rmSync(dataDir, { recursive: true, force: true, maxRetries: 5 });
 });
 
-function api(user, method, path, body) {
+async function api(user, method, path, body) {
   return fetch(base + path, {
     method,
-    headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${PASS[user]}`).toString('base64'), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
+    headers: { ...(await auth(base, user, PASS[user])), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   }).then(async r => ({ status: r.status, data: await r.json().catch(() => null) }));
 }
 // A signed-in page; every page error and console error is recorded and fails the test
 async function signIn(user) {
-  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, httpCredentials: { username: user, password: PASS[user] } });
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  // the sign-in form, as a person would fill it
+  const login = await ctx.newPage();
+  await login.goto(base);
+  await login.fill('#u', user);
+  await login.fill('#p', PASS[user]);
+  await Promise.all([login.waitForURL(u => !String(u).includes('/auth/')), login.click('button[type=submit]')]);
+  await login.close();
   const page = await ctx.newPage();
   page.on('pageerror', e => errors.push(`${user}: ${e.message}`));
   page.on('console', m => { if (m.type() === 'error') errors.push(`${user} console: ${m.text()}`); });
@@ -293,5 +301,128 @@ test('risk register: threats per asset on the matrix, requirements applied, sett
   assert.equal(await bob.locator('#dash .ktile').count(), 7);
   assert.match(await bob.locator('#dash').textContent(), /Internet-facing assets[\s\S]*Scan coverage/);
   await bob.click('#dash [data-dash="close"]');
+  assert.deepEqual(errors, [], 'JavaScript errors in the pages');
+});
+
+test('plates: all or none, empty VLANs hidden, VLANs imported into chosen zones, arranged on a grid, Internet moved, sign-out', async () => {
+  const admin = await signIn('admin');
+  if (!(await admin.locator('#siteList [data-site="lyon"]').count())) {
+    await admin.click('#empty [data-act="demo"]');
+    await admin.waitForFunction(() => document.querySelectorAll('#siteList [data-site]').length === 5);
+  }
+  await openIs(admin, 'lyon');
+  await admin.waitForSelector('#vlans .vrow');
+  const boxes = () => admin.locator('#vlans input[type=checkbox]:checked').count();
+  const total = await admin.locator('#vlans input[type=checkbox]').count();
+
+  // the title block folds into one line, and the controls move up with it
+  const cartH = () => admin.evaluate(() => document.getElementById('cart').getBoundingClientRect().height);
+  const ctlTop = () => admin.evaluate(() => document.getElementById('ctl').getBoundingClientRect().top);
+  const [h0, t0] = [await cartH(), await ctlTop()];
+  await admin.click('#cart [data-cart-tog]');
+  assert.ok(await cartH() < h0 / 2, 'the title block did not fold');
+  assert.ok(await ctlTop() < t0 - 50, 'the controls did not move up');
+  assert.match(await admin.locator('#cart .mini').textContent(), /IS Lyon.*assets.*exposed.*crit.*risky/s);
+  await admin.click('#cart [data-cart-tog]');
+  assert.ok(Math.abs(await cartH() - h0) < 2);
+
+  // all / none, for the IS and for one zone
+  await admin.click('.vtools [data-vsel="none"]');
+  assert.equal(await boxes(), 0);
+  await admin.click('.vtools [data-vsel="all"]');
+  assert.equal(await boxes(), total);
+  const zone = admin.locator('#vlans .zone-h [data-vsel="none"]').first();
+  const zoneId = await zone.getAttribute('data-zone');
+  const inZone = (await api('admin', 'GET', 'api/state')).data.si.lyon.vlans.filter(v => v.zone === zoneId).length;
+  await zone.click();
+  assert.equal(await boxes(), total - inZone);
+  await admin.click('.vtools [data-vsel="all"]');
+
+  // a CSV of VLANs: two ticked, put in a new zone at once, one in a zone named by the file
+  const csv = join(dataDir, 'vlans.csv');
+  writeFileSync(csv, 'Numéro;Nom;Réseau;Zone\n300;Lab A;10.30.0.0/24;Labo\n301;Lab B;10.30.1.0/24;Labo\n302;Printers R&D;10.30.2.0/24;\n10;DMZ renamed;;\n');
+  await admin.locator('#vlanFile').setInputFiles(csv);
+  await admin.waitForSelector('#viBody tr');
+  assert.equal(await admin.locator('#viBody tr').count(), 4);
+  assert.equal(await admin.locator('#viBody tr').nth(3).locator('[data-vi-on]').isChecked(), false, 'a VLAN already in the IS starts unticked');
+  await admin.click('[data-vi="none"]');
+  await admin.locator('#viBody tr').nth(1).locator('[data-vi-on]').check();
+  await admin.locator('#viBody tr').nth(2).locator('[data-vi-on]').check();
+  await admin.selectOption('#viZone', '__new');
+  await admin.fill('#viZoneNew', 'Peripherals');
+  await admin.click('[data-vi="apply"]');
+  await admin.locator('#viBody tr').nth(0).locator('[data-vi-on]').check();
+  await admin.click('#frm button[type=submit]');
+  await admin.waitForFunction(() => /Lab A/.test(document.querySelector('#vlans')?.textContent || ''));
+  const si = (await api('admin', 'GET', 'api/state')).data.si.lyon;
+  const zoneOf = num => si.zones.find(z => z.id === si.vlans.find(v => v.num === num).zone).name;
+  assert.equal(zoneOf(300), 'Labo');
+  assert.equal(zoneOf(301), 'Peripherals');
+  assert.equal(zoneOf(302), 'Peripherals');
+  assert.equal(si.vlans.find(v => v.num === 10).name, 'DMZ', 'an unticked VLAN is left alone');
+
+  // the three new VLANs are empty: hidden from the model when asked
+  await admin.check('#optEmpty');
+  await admin.waitForFunction(() => document.querySelectorAll('#vlans .vrow.off').length >= 3);
+  await admin.uncheck('#optEmpty');
+
+  // Arrange VLANs: 3 per row at most, saved as plate positions
+  await admin.selectOption('#arrCols', '3');
+  await admin.click('#arrangeGridBtn');
+  await admin.waitForFunction(async () => (await (await fetch('api/state')).json()).si.lyon.vlans.every(v => Array.isArray(v.place)));
+  const placed = (await api('admin', 'GET', 'api/state')).data.si.lyon;
+  for (const z of placed.zones) {
+    const rows = new Set(placed.vlans.filter(v => v.zone === z.id).map(v => v.place[1]));
+    const n = placed.vlans.filter(v => v.zone === z.id).length;
+    assert.equal(rows.size, Math.ceil(n / 3), `zone ${z.name}: ${n} VLANs on ${rows.size} rows`);
+  }
+
+  // the Internet node, dragged in the 2D diagram, keeps its place
+  await admin.click('#viewSeg [data-v="2d"]');
+  await admin.waitForSelector('#flatSvg [data-internet="internet"] rect');
+  const b = await admin.locator('#flatSvg [data-internet="internet"] rect').boundingBox();
+  await admin.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await admin.mouse.down();
+  await admin.mouse.move(b.x + 300, b.y + 200, { steps: 8 });
+  await admin.mouse.up();
+  await admin.waitForFunction(async () => Array.isArray((await (await fetch('api/state')).json()).si.lyon.cloud2d));
+  await admin.click('#cloudReset');
+  await admin.waitForFunction(async () => !(await (await fetch('api/state')).json()).si.lyon.cloud2d);
+
+  // Suggest zones: the Internet on top; applied by the admin
+  await admin.click('#viewSeg [data-v="3d"]');
+  await admin.click('#suggestZonesBtn');
+  await admin.waitForSelector('#szBody .sz');
+  assert.equal(await admin.locator('#frm button[type=submit]').textContent(), 'Apply');
+  await admin.click('#frm button[type=submit]');
+  await admin.waitForFunction(async () => { const s = (await (await fetch('api/state')).json()).si.lyon; const top = s.zones[s.zones.length - 1]; return s.vlans.some(v => v.num === 10 && v.zone === top.id); });
+
+  // the 3D view is cheap to draw: a few hundred draw calls, nothing drawn while idle, nothing leaked on a rebuild
+  await admin.click('#viewSeg [data-v="3d"]');
+  await admin.click('.vtools [data-vsel="all"]');
+  await admin.waitForTimeout(1500);
+  const rs = () => admin.evaluate(() => window.strataRenderStats());
+  const r0 = await rs();
+  assert.ok(r0.calls > 20 && r0.calls < 400, `${r0.calls} draw calls for the Lyon model`);
+  await admin.click('#gfxSeg [data-gfx="eco"]');
+  await admin.waitForTimeout(800);
+  assert.equal((await rs()).mode, 'eco');
+  const idle0 = (await rs()).frames;
+  await admin.waitForTimeout(1500);
+  assert.ok((await rs()).frames - idle0 <= 1, 'the model is drawn again while nothing changes');
+  // shared geometries (equipment models) go to the GPU the first time they are seen: one cycle warms them up,
+  // then rebuilding the model again and again must not add any
+  const cycle = async () => { for (const sp of ['wide', 'compact']) { await admin.click(`#spaceSeg [data-space="${sp}"]`); await admin.waitForTimeout(500); } await admin.waitForTimeout(600); return (await rs()).geometries; };
+  const geo0 = await cycle(), geos = [await cycle(), await cycle(), await cycle()];
+  assert.ok(Math.max(...geos) <= geo0 + 2, `GPU geometries grow on each rebuild (${geo0} → ${geos.join(', ')})`);
+  await admin.click('#gfxSeg [data-gfx="quality"]');
+  await admin.waitForTimeout(800);
+  assert.equal((await rs()).mode, 'quality');
+  await admin.click('#gfxSeg [data-gfx="auto"]');
+
+  // sign out: back to the sign-in page, and the session no longer opens the API
+  await admin.click('#cart [data-signout]');
+  await admin.waitForURL(/\/auth\/login/);
+  assert.equal((await admin.request.get(base + 'api/me')).status(), 401);
   assert.deepEqual(errors, [], 'JavaScript errors in the pages');
 });

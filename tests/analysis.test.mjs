@@ -233,3 +233,100 @@ test('attack paths: unlikely and long paths are left out, and a cut-short search
   // a target nothing leads to has no path
   assert.deepEqual(J(A.attackPaths(s, A.outside(s), ['bastion', 'fw']).byTarget.fw), []);
 });
+
+test('arrange: plates of a level on rows and columns, the VLANs that talk side by side', () => {
+  const plates = 'abcdefghij'.split('').map((id, i) => ({ id, w: 8 + (i % 3), D: 6 + (i % 2) }));
+  const W = { 'a|h': 9, 'h|c': 7, 'c|j': 5 };
+  const weight = (x, y) => W[`${x}|${y}`] || W[`${y}|${x}`] || 0;
+  const r = J(A.arrangeGrid(plates, weight, 4, 2));
+  assert.equal(r.cols, 4);
+  assert.equal(r.rows, 3);
+  // the busiest VLAN first, then the one it talks to most beside it, and so on; VLANs without flows last
+  assert.deepEqual(r.order.slice(0, 4), ['h', 'a', 'c', 'j']);
+  assert.deepEqual(r.order.slice(4), ['b', 'd', 'e', 'f', 'g', 'i']);
+  // no two plates overlap, and the grid is centred on 0
+  const box = id => { const p = plates.find(q => q.id === id), [x, z] = r.places[id]; return { x0: x - p.w / 2, x1: x + p.w / 2, z0: z - p.D / 2, z1: z + p.D / 2 }; };
+  const ids = Object.keys(r.places);
+  for (const i of ids) for (const j of ids) if (i < j) {
+    const a = box(i), b = box(j);
+    assert.ok(a.x1 <= b.x0 || b.x1 <= a.x0 || a.z1 <= b.z0 || b.z1 <= a.z0, `${i} and ${j} overlap`);
+  }
+  const xs = ids.flatMap(id => [box(id).x0, box(id).x1]);
+  assert.ok(Math.abs(Math.min(...xs) + Math.max(...xs)) <= 1);
+});
+
+test('arrange: automatic columns, a single plate, and none', () => {
+  const plates = Array.from({ length: 40 }, (_, i) => ({ id: 'v' + i, w: 8, D: 6 }));
+  const r = J(A.arrangeGrid(plates, () => 0, 0, 2));
+  assert.equal(r.cols, 8, 'about the square root, a little wider than deep: no more 40 plates on one row');
+  assert.equal(r.rows, 5);
+  assert.deepEqual(r.order, plates.map(p => p.id), 'with no flow, the current order is kept');
+  assert.deepEqual(J(A.arrangeGrid([{ id: 'x', w: 8, D: 6 }], () => 0, 6, 2)).places, { x: [0, 0] });
+  assert.deepEqual(J(A.arrangeGrid([], () => 0, 6, 2)).places, {});
+});
+
+test('VLAN files: a CSV with a French header, quotes and a semicolon separator', () => {
+  const r = J(A.vlansFromFile('Numéro;Nom;Réseau;Zone\n10;Serveurs;10.0.10.0/24;DC\n"20";"Postes; étage 1";10.0.20.0/24;Bureaux\nabc;x;;\n5000;trop grand;;\n'));
+  assert.equal(r.kind, 'csv');
+  assert.deepEqual(r.items, [
+    { num: 10, name: 'Serveurs', cidr: '10.0.10.0/24', zone: 'DC' },
+    { num: 20, name: 'Postes; étage 1', cidr: '10.0.20.0/24', zone: 'Bureaux' },
+  ]);
+  assert.equal(r.skipped, 2);
+  // without a header: number, name, range, zone
+  assert.deepEqual(J(A.vlansFromFile('30,Cameras,10.0.30.0/24\n40,Printers')).items.map(i => [i.num, i.name, i.cidr]), [[30, 'Cameras', '10.0.30.0/24'], [40, 'Printers', '']]);
+  assert.throws(() => A.vlansFromFile('name,range\nx,y'), /no VLAN number column/);
+  assert.throws(() => A.vlansFromFile(''), /empty/);
+});
+
+test('VLAN files: a JSON list (NetBox style) and a Strata export', () => {
+  const nb = J(A.vlansFromFile(JSON.stringify({ results: [{ id: 912, vid: 30, name: 'Cams', group: { name: 'OT' } }, { id: 913, name: 'no number' }] })));
+  assert.equal(nb.kind, 'json');
+  assert.deepEqual(nb.items, [{ num: 30, name: 'Cams', cidr: '', zone: 'OT' }]);
+  assert.equal(nb.skipped, 1);
+  const strata = J(A.vlansFromFile(JSON.stringify({ format: 'strata', si: { lyon: { name: 'Lyon', zones: [{ id: 'z1', name: 'DMZ' }], vlans: [{ id: 'v1', num: 100, name: 'Web', cidr: '192.0.2.0/24', zone: 'z1' }] } }, assets: {} })));
+  assert.equal(strata.kind, 'strata');
+  assert.deepEqual(strata.items, [{ num: 100, name: 'Web', cidr: '192.0.2.0/24', zone: 'DMZ', site: 'lyon', siteName: 'Lyon', vlanId: 'v1' }]);
+});
+
+test('zones from the flows: the Internet on top, by depth, then by role; matching zones kept, empty VLANs stay', () => {
+  const r = J(A.suggestZones({
+    zones: [{ id: 'z1', name: 'Main' }, { id: 'zd', name: 'Our DMZ' }],
+    vlans: [{ id: 'dmz', zone: 'zd' }, { id: 'app', zone: 'z1' }, { id: 'db', zone: 'z1' }, { id: 'pc', zone: 'z1' }, { id: 'ot', zone: 'z1' }, { id: 'mg', zone: 'z1' }, { id: 'empty', zone: 'z1' }],
+    assets: [{ id: 'w', vlan: 'dmz', type: 'server' }, { id: 'a', vlan: 'app', type: 'server' }, { id: 'd', vlan: 'db', type: 'db' }, { id: 'd2', vlan: 'db', type: 'db' },
+      { id: 'p', vlan: 'pc', type: 'workstation' }, { id: 'plc', vlan: 'ot', type: 'plc' }, { id: 'sw', vlan: 'mg', type: 'switch' }],
+    flows: [{ src: 'internet', dst: 'w' }, { src: 'w', dst: 'a' }, { src: 'a', dst: 'd' }, { src: 'p', dst: 'a' }, { src: 'p', dst: 'internet' }, { src: 'svc:x', dst: 'd2' }],
+  }));
+  // bottom first: empty VLANs keep their zone, then the roles of what the Internet never reaches, then depth, the exposed on top
+  // (db is reached by an Internet service: it is exposed too, on the floor of the DMZ)
+  assert.deepEqual(r.zones.map(z => [z.name, z.vlans]), [
+    ['Main', ['empty']], ['Network and administration', ['mg']], ['Industrial (OT)', ['ot']], ['Users', ['pc']],
+    ['Reached from the exposed zone', ['app']], ['Our DMZ', ['dmz', 'db']],
+  ]);
+  assert.equal(r.zones.at(-1).id, 'zd', 'the DMZ zone is kept, with its name');
+  assert.equal(r.byVlan.pc.depth, null, 'a VLAN that only calls the Internet is not reached from it');
+  assert.equal(r.byVlan.db.depth, 1, 'an Internet service counts as the Internet');
+  assert.equal(r.byVlan.empty.moved, false);
+  assert.equal(r.byVlan.app.moved, true);
+});
+
+test('zones from the flows: a VLAN with PLCs among its servers is industrial', () => {
+  const r = J(A.suggestZones({ zones: [{ id: 'z1', name: 'Main' }],
+    vlans: [{ id: 'v50', name: 'OT production', zone: 'z1' }, { id: 'v60', name: 'Lab', zone: 'z1' }],
+    assets: [{ id: 'plc', vlan: 'v50', type: 'plc' }, { id: 'hmi', vlan: 'v50', type: 'server' }, { id: 'hist', vlan: 'v50', type: 'server' },
+      { id: 's1', vlan: 'v60', type: 'server' }, { id: 's2', vlan: 'v60', type: 'server' }, { id: 's3', vlan: 'v60', type: 'server' }, { id: 'cam', vlan: 'v60', type: 'camera' }],
+    flows: [] }));
+  assert.equal(r.byVlan.v50.role, 'ot');
+  assert.equal(r.byVlan.v60.role, 'srv', 'one camera among four servers does not make it industrial');
+});
+
+test('zones from the flows: meeting-room screens are the users\', PLCs make a VLAN industrial', () => {
+  const r = J(A.suggestZones({ zones: [{ id: 'z1', name: 'Main' }],
+    vlans: [{ id: 'room', name: 'Salles de réunion étage 1', zone: 'z1' }, { id: 'line', name: 'Line 1', zone: 'z1' }, { id: 'cams', name: 'Vidéosurveillance', zone: 'z1' }],
+    assets: [{ id: 's1', vlan: 'room', type: 'iot' }, { id: 's2', vlan: 'room', type: 'iot' }, { id: 'p', vlan: 'line', type: 'plc' }, { id: 'h', vlan: 'line', type: 'server' }, { id: 'h2', vlan: 'line', type: 'server' },
+      { id: 'c1', vlan: 'cams', type: 'camera' }, { id: 'c2', vlan: 'cams', type: 'camera' }],
+    flows: [] }));
+  assert.equal(r.byVlan.room.role, 'users');
+  assert.equal(r.byVlan.line.role, 'ot');
+  assert.equal(r.byVlan.cams.role, 'ot');
+});

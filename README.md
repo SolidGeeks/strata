@@ -1,4 +1,4 @@
-# Strata — v0.10
+# Strata — v0.11
 
 [![Release](https://img.shields.io/github/v/release/SolidGeeks/strata)](https://github.com/SolidGeeks/strata/releases) [![License AGPL-3.0](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/license-agpl.svg)](LICENSE) [![Signed releases](https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/badges/signed-releases.svg)](#2-quick-start-with-docker) [![Tests](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/SolidGeeks/strata/actions/workflows/ci.yml)
 
@@ -16,9 +16,20 @@ Strata is on its way to **1.0.0**: from then on, the API, the export format, the
 | [0.8.0](https://github.com/SolidGeeks/strata/milestone/2) ✅ | Connector modules and a module store, three.js 0.186. Released on 2026-10-26 |
 | [0.9.0](https://github.com/SolidGeeks/strata/milestone/3) ✅ | The last breaking changes: single sign-on, pre-releases, an API reference, the old product name removed. Released on 2026-10-26 |
 | 0.10.0 ✅ | Incident mode with Muster, the risk register with baselines, logs for the SIEM, the steering dashboard. Released on 2026-10-28 |
+| 0.11.0 ✅ | Cookie sessions and sign-out, VLAN import with zones, Arrange VLANs and zones suggested from the flows, Palo Alto builds an IS, a lighter 3D view for small laptops. Released on 2026-11-08 |
 | [1.0.0](https://github.com/SolidGeeks/strata/milestone/4) | Release candidates (`1.0.0-rc.N`), then 1.0.0 |
 
 Follow it on the [milestones page](https://github.com/SolidGeeks/strata/milestones). Ideas for after 1.0 are discussed, and voted on, in [Discussions](https://github.com/orgs/SolidGeeks/discussions/categories/ideas). Want to help? Start with a [good first issue](https://github.com/SolidGeeks/strata/issues?q=is%3Aopen+label%3A%22good+first+issue%22).
+
+## New in v0.11: sign-out, VLAN import, zones from the flows, a lighter 3D view
+
+- **Sessions and sign-out**: local accounts sign in with the form and get a session cookie; *Sign out* is in the title block for everyone. HTTP Basic is gone: scripts use API tokens (read *Upgrading* in the [CHANGELOG](CHANGELOG.md)).
+- **Import VLANs** (*Edit › Import VLANs*): a CSV, a JSON list or a Strata export; tick the VLANs to bring and choose the zone of each. The **CSV VLANs** module of the store does the same as a proposal, and modules can now ask for such a choice before an import (`file.pick`, see [MODULES.md](MODULES.md)).
+- **Arrange VLANs** lays each zone out on rows and columns by its flows; **Suggest zones from the flows** proposes the zones of an IS, the Internet on top, in a window to review before applying.
+- **Palo Alto builds the IS** from a configuration alone: zones, VLANs from the sub-interfaces, assets from the address objects, the firewall, then the flows.
+- **On the map**: show all or no VLANs per zone, hide empty VLANs, move the Internet cloud, fold the title block, a loading bar for long requests; the overview shows each IS in its compact form.
+- **A lighter 3D view**: 8 to 15 times fewer draw calls, drawn only when something changes, and an Economy mode chosen automatically on slow laptops (*Display › Graphics*).
+- **Large IS**: one document can now reach `MAX_DOC_MB` (8 MB), and the history stops at `HISTORY_MAX_MB` (200 MB).
 
 ## New in v0.10: incident mode with Muster, the risk register, the steering dashboard
 
@@ -176,6 +187,41 @@ The machine needs access to the npm registry **once**, during the build, to down
 
 Users need a browser with WebGL 2 and JavaScript modules: Chrome or Edge 80 and later, Firefox 114 and later, Safari 15 and later (three.js has needed WebGL 2 since 2024).
 
+### Memory and CPU
+
+Measured on Node.js 22 (the Docker image), one server process, maps generated with 2 flows per asset and a vulnerability on one asset in four. *Peak* is during an import of the whole map, ten browsers opening it at once, 50 edits and the dashboard.
+
+| Map | Server RAM, at rest → peak | Opening the map (10 browsers at once) | One edit | Dashboard (12 months) |
+|---|---|---|---|---|
+| Empty | 57 → 73 MB | — | — | — |
+| Demo size: 5 IS, ~150 assets | 83 MB | 13 ms | 2 ms | 4 ms |
+| 10 IS, 200 VLANs, 5 000 assets (2 MB of JSON) | 125 MB | 0.14 s | 17 ms | 70 ms |
+| 20 IS, 1 000 VLANs, 30 000 assets (11.5 MB of JSON) | 290 → 340 MB | 0.9 s | 90 ms | 0.35 s |
+
+| Size of the map | Server: vCPU | Server: RAM | Disk (`/data`) |
+|---|---|---|---|
+| Up to ~5 000 assets | 0.5 | 256 MB | 1 GB |
+| Up to ~30 000 assets | 1 to 2 | 512 MB (1 GB with connectors running) | 5 GB |
+
+The server is idle between requests: CPU is spent on writes (each one saves the map and appends to the history) and on the dashboard. The history is kept in memory too, up to `HISTORY_MAX_MB` (200 MB by default): count that much more RAM for an IS of thousands of flows edited often, or lower it. Each connector or module run starts a separate Node.js process, about 50 MB for as long as it runs. Disk: the map, the history (`HISTORY_KEEP` entries) and `BACKUP_KEEP` daily copies of the map, so roughly the size of the JSON export × (`BACKUP_KEEP` + 2), plus the history.
+
+**The browser does most of the work** (the 3D model, the 2D diagram, the analysis): 8 GB of RAM and WebGL 2 are enough, an integrated GPU included. An IS of 300 assets and 600 flows takes about 150 MB of browser memory. `docker-compose.yml` has the server limits, commented out.
+
+**Small laptops.** The 3D view is drawn only when something changes (the view, the data, a filter), sharper once the view stops moving, and *Display › Graphics* has three modes: *Quality*, *Economy* (screen resolution, no shadows, no moving dots on the flows, labels hidden sooner from afar) and *Auto*, the default, which is Quality until the view turns out slow on this computer, or when the browser draws without a graphics card. *Animated flows* turns the moving dots on or off in any mode. Measured on the same machine, without a GPU:
+
+| | Draw calls per frame | Triangles | Frames per second while turning the view | Frames drawn in 3 s, idle |
+|---|---|---|---|---|
+| Demo Lyon (34 assets), before 0.11 | 1 569 | 187 000 | 5 | 15 |
+| … 0.11, Quality | 208 | 85 000 | 8 | only those of the moving dots (30 a second) |
+| … 0.11, Economy | 173 | 30 000 | 35 | 2 |
+| 120 assets, 260 flows, before 0.11 | 5 731 | 929 000 | 1.7 | 6 |
+| … 0.11, Quality | 397 | 400 000 | 2.8 | only those of the moving dots |
+| … 0.11, Economy | 365 | 134 000 | 21 | 2 |
+
+**Laying out a large IS.** *Layout › Suggest zones* proposes zones from the flows, the Internet on top (distance from the Internet along the flows, then the role of the assets for what the Internet never reaches); *Arrange VLANs* then puts each zone on rows and columns. Both are reviewed or can be undone (*History*).
+
+Without a GPU (a virtual desktop, a remote session), Auto chooses Economy; for very large IS, the 2D diagram and *Plates › None*, then the VLANs you need, stay the lightest.
+
 ---
 
 ## 2. Quick start with Docker
@@ -194,7 +240,7 @@ Or use the prebuilt image published with each release (tag `vX.Y.Z`, see the `Re
 Every published image is **signed**: an attestation proves it was built by this repository's `Release` workflow, from the code of the tag. To check it before deploying (you need the [GitHub CLI](https://cli.github.com/)):
 
 ```bash
-gh attestation verify oci://ghcr.io/solidgeeks/strata:0.10.0 --owner SolidGeeks
+gh attestation verify oci://ghcr.io/solidgeeks/strata:0.11.0 --owner SolidGeeks
 ```
 
 The command must print `Verification succeeded!`. If it fails, do not use the image, and report it (see [SECURITY.md](SECURITY.md)). Images older than 0.5.4 are not signed.
@@ -224,6 +270,8 @@ By default, the port only listens on the machine itself (`127.0.0.1:8080`). To o
 | `EDIT_PASS_FILE` / `VIEW_PASS_FILE` | — | Read the password from this file instead (Docker secrets, systemd credentials, sops-nix, agenix). The file wins over the variable; a trailing newline is ignored. If the file cannot be read, the server does not start. |
 | `ALLOW_SELF_APPROVAL` | `false` | `true` lets an approver approve their own proposals. |
 | `HISTORY_KEEP` | `5000` | Number of changes kept in the history. |
+| `HISTORY_MAX_MB` | `200` | The history also stops at this size: each change keeps the whole edited document before and after it, so editing a large IS often (moving plates, importing flows) adds about twice its size each time. The oldest changes go first. |
+| `MAX_DOC_MB` | `8` | Largest document saved at once. An IS holds its VLANs and all its flows (about 300 bytes a flow: 8 MB is some 25 000 flows). |
 | `READ_ONLY` | `false` | Freezes the map for everyone. |
 | `BACKUP_KEEP` | `14` | Number of automatic backups kept. |
 | `BACKUP_EVERY_HOURS` | `24` | How often automatic backups are made. |
@@ -268,7 +316,7 @@ SSO_ROLE_CONTRIBUTOR=it-ops
 SSO_DEFAULT_ROLE=viewer                      # everyone else; empty: no access
 ```
 
-Opening Strata then shows a sign-in page: *Sign in with Microsoft Entra ID*, and *Sign in with a local account* if local accounts are allowed. The groups come from the `groups` claim (`SSO_GROUPS_CLAIM`; for Entra ID, add the groups claim to the token, or use app roles with `SSO_GROUPS_CLAIM=roles`), the user name from `preferred_username` (`SSO_USER_CLAIM`). Strata checks the ID token's signature against the provider's keys, its issuer, audience, expiry and nonce, and uses PKCE. *Account › Sign out* ends the session at the provider too.
+Opening Strata then shows a sign-in page: *Sign in with Microsoft Entra ID*, and the form for a local account under it if local accounts are allowed. The groups come from the `groups` claim (`SSO_GROUPS_CLAIM`; for Entra ID, add the groups claim to the token, or use app roles with `SSO_GROUPS_CLAIM=roles`), the user name from `preferred_username` (`SSO_USER_CLAIM`). Strata checks the ID token's signature against the provider's keys, its issuer, audience, expiry and nonce, and uses PKCE. *Sign out* (in the title block, or *Account*) ends the session at the provider too.
 
 **A sign-in proxy you already run** (Authelia, oauth2-proxy, Pomerium, Authentik outpost): `SSO_HEADER_USER=Remote-User`, `SSO_HEADER_GROUPS=Remote-Groups` and `SSO_HEADER_TRUST`, the address the proxy connects to Strata from (`127.0.0.1` when it runs on the same machine; several addresses comma-separated, no range: anything in a range could claim to be anyone). The same `SSO_ROLE_*` apply. The proxy must set the headers itself and drop any coming from the browser. `TRUST_PROXY` stays what it was, for the client address.
 
@@ -276,13 +324,13 @@ Opening Strata then shows a sign-in page: *Sign in with Microsoft Entra ID*, and
 
 **Names.** The history and the proposals name people by the name the provider gives. A name that is also a local account is refused (rename one of them), and an e-mail address is used only once the provider has verified it. Prefer a name people cannot change themselves at the provider (`SSO_USER_CLAIM=oid` on Entra ID, or `sub`), or make sure they cannot.
 
-**Sessions** last `SESSION_HOURS` (8 by default) with the role given at sign-in. *Account › End all single sign-on sessions* (admin) signs everyone out, after a group change or when someone leaves.
+**Sessions** last `SESSION_HOURS` (8 by default), for single sign-on and for local accounts alike: a local account signs in once with the form of the sign-in page and gets a session cookie. *Sign out*, in the title block, ends it. Changing a password, or disabling or deleting an account, ends that account's other sessions. *Account › End all sessions* (admin) signs everyone else out, after a group change or when someone leaves. Sessions are kept in memory: restarting Strata signs everyone out.
 
-**API tokens** for scripts and integrations: *Account › API tokens* (admin), with a name, a role and a validity of 1 to 730 days. The token (`stk_…`) is shown once and stored hashed; send it as `Authorization: Bearer stk_…`. Basic Auth with a local account keeps working for scripts.
+**API tokens** for scripts and integrations: *Account › API tokens* (admin), with a name, a role and a validity of 1 to 730 days. The token (`stk_…`) is shown once and stored hashed; send it as `Authorization: Bearer stk_…`. Since 0.11, scripts can no longer send a local account's password with HTTP Basic: the API answers 401 and says to use a token.
 
 ## 5. Network access and HTTPS
 
-Passwords travel with Basic Auth: **never expose the app over plain HTTP outside the machine**.
+Passwords travel in the sign-in form and sessions in a cookie: **never expose the app over plain HTTP outside the machine**. Set `PUBLIC_URL=https://…` behind HTTPS, so the session cookie is `Secure` and `__Host-` prefixed.
 
 ### Option A — the bundled HTTPS proxy (Caddy)
 
@@ -458,7 +506,7 @@ The data lives in the Docker volume and is not touched by the rebuild. Before up
 
 The full reference, with every route's role, request and answer, the data format, the module API and the compatibility policy, is the [API reference](https://solidgeeks.github.io/strata/api.html) ([`docs/api.html`](docs/api.html)).
 
-Every route needs the same credentials as the interface (a local account with Basic Auth, an API token as `Authorization: Bearer stk_…`, or the session of a signed-in browser), with the rights of the account's role (direct writes need `approver`). Writes require the headers `Content-Type: application/json` and `X-Requested-With: strata`. A script can group several writes into a single history entry with the headers `X-Batch: <id>` and `X-Batch-Label: <URL-encoded label>`. To have a tool propose instead of write, give it a `contributor` account and use `POST /api/proposals` with `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (a document set to `null` = deletion).
+Every route needs the same credentials as the interface (an API token as `Authorization: Bearer stk_…`, or the session of a signed-in browser; HTTP Basic is no longer accepted since 0.11), with the rights of the account's role (direct writes need `approver`). Writes require the headers `Content-Type: application/json` and `X-Requested-With: strata`. A script can group several writes into a single history entry with the headers `X-Batch: <id>` and `X-Batch-Label: <URL-encoded label>`. To have a tool propose instead of write, give it a `contributor` account and use `POST /api/proposals` with `{"title", "siteId", "changes": {"si": {...}, "assets": {...}}}` (a document set to `null` = deletion).
 
 | Method and route | What it does |
 |---|---|
@@ -484,11 +532,12 @@ Every route needs the same credentials as the interface (a local account with Ba
 | `GET/POST /api/proposals`, `GET/PUT/DELETE /api/proposals/{id}` | Proposals; `POST …/{id}/submit`, `/withdraw`, `/comment`, `/approve` (`{"force": true}` on a conflict), `/reject` |
 | `GET /api/users`, `PUT/DELETE /api/users/{name}` | Accounts (admin); `PUT /api/me/password`: `{"current","next"}` (local accounts) |
 | `GET/POST /api/tokens`, `DELETE /api/tokens/{id}` | API tokens (admin): `POST` `{"name", "role", "days"}` answers the token once |
-| `GET /auth/login`, `/auth/oidc/start`, `POST /auth/logout` | Sign-in page, single sign-on, sign-out (`{"location"}` to go to) |
+| `GET /auth/login`, `POST /auth/login`, `/auth/oidc/start`, `POST /auth/logout` | Sign-in page; a local account's sign-in (the form, or JSON `{"user", "password"}`: sets the session cookie; 401 wrong, 429 locked); single sign-on; sign-out (`{"location"}` to go to) |
 | `GET /api/connectors` | Connectors, settings (secrets masked) and latest syncs |
 | `PUT /api/connectors/{id}` | A connector's settings (admin); `id`: `cyberwatch`, `glpi`, `phpipam`, `paloalto`, or a module's id |
 | `POST /api/connectors/{id}/test` | Tests access (approver) |
-| `POST /api/connectors/{id}/run` | Runs a sync (approver); `{"wait": true}` waits for the result. `{"file": {"name", "text"}, "overrides": {…}}` imports a file, for the modules that do (Palo Alto, CSV inventory: contributor); `overrides`: the settings the module lets one import change. The older Palo Alto form `{"xml", "fileName"}` still works |
+| `POST /api/connectors/{id}/preview` | For a module that asks for a choice before its import (CSV VLANs): `{"file", "overrides"}` → the items of the file to choose from (`{items, summary, skipped, pick}`); nothing is recorded |
+| `POST /api/connectors/{id}/run` | Runs a sync (approver); `{"wait": true}` waits for the result. With a choice: `"picks": {"<key>": {"zone": "<zone id or new:Name>"}}` next to `file`. `{"file": {"name", "text"}, "overrides": {…}}` imports a file, for the modules that do (Palo Alto, CSV inventory: contributor); `overrides`: the settings the module lets one import change. The older Palo Alto form `{"xml", "fileName"}` still works |
 | `GET /api/modules` | The module store: what the registry offers, and what is installed (admin; `?fresh=1` reads the registry again) |
 | `POST /api/modules/{id}/install` | Installs or updates a module from the store (admin) |
 | `POST /api/modules/upload` | Installs a package: `{"data": "<.tgz in base64>"}` (admin, with `MODULE_UPLOAD=true`) |
@@ -499,7 +548,7 @@ Every route needs the same credentials as the interface (a local account with Ba
 Example: adding an asset from a script (inventory, NetBox, scanner export…):
 
 ```bash
-curl -u admin:PASSWORD -H 'Content-Type: application/json' -H 'X-Requested-With: strata' \
+curl -H "Authorization: Bearer $STRATA_TOKEN" -H 'Content-Type: application/json' -H 'X-Requested-With: strata' \
   -X PUT https://strata.example.lan/api/assets/srv-erp-01 \
   -d '{"site":"lyon","name":"srv-erp-01","type":"server","vlan":"v-lyo-20","ip":"10.20.0.20",
        "os":"RHEL 8","role":"ERP","crit":3,
@@ -534,7 +583,7 @@ Fields added since v0.2 (all optional):
 Strata follows [Semantic Versioning](https://semver.org/). Before 1.0 a minor version may still break things, and the [CHANGELOG](CHANGELOG.md) says how to upgrade. From **1.0** on, every 1.x version keeps working:
 
 - the `/api/` routes, their methods, roles, request and answer fields;
-- authentication (Basic, `Bearer stk_…` tokens), the write headers, `X-Batch` and `X-Batch-Label`;
+- authentication (the session cookie of `POST /auth/login`, `Bearer stk_…` tokens), the write headers, `X-Batch` and `X-Batch-Label`;
 - status codes and the `error` key (not its wording);
 - the export format: every export written by an earlier version keeps importing;
 - the module API (`"strataModule": 1`, `ctx`, the SDK) and the store index (`"strataRegistry": 1`);
@@ -569,15 +618,16 @@ This map describes your weak spots precisely: treat it as sensitive data.
 | "This browser only" badge at the top left | The page cannot reach the API: it is opened as a local file, or the proxy blocks `/api/`. |
 | Other users only see changes after a reload | The proxy buffers `/api/events` (see section 5, option B). |
 | "You have read-only access" | You are signed in with the viewer account, or `READ_ONLY=true`. |
-| Switching accounts in the browser | The browser keeps Basic Auth credentials: open a private window or close the browser. |
+| Switching accounts in the browser | *Sign out* in the title block, then sign in with the other account. |
+| A script gets `401` with “HTTP Basic sign-in was removed” | Create an API token (*Account › API tokens*) and send `Authorization: Bearer stk_…`. |
 | Permission error on `/data` (Docker) | Keep the named volume from `docker-compose.yml`. If you mount a host folder, give it to UID 1000: `chown -R 1000:1000 ./data`. |
 
 ---
 
-## 13. Limits of v0.10
+## 13. Limits of v0.11
 
 - Storage is a single JSON file, suited to a few thousand assets. Beyond that, a real database will be needed.
-- Sessions of single sign-on are kept in memory: restarting Strata signs SSO users out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 8 by default), or at once with *End all single sign-on sessions*. LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).
+- Sessions are kept in memory: restarting Strata signs everyone out. Roles come from the groups at sign-in: a group change applies at the next sign-in (`SESSION_HOURS`, 8 by default), or at once with *End all sessions*. LDAP is not read directly: use an OpenID Connect provider in front of it (Keycloak, Authentik, Entra ID).
 - Two approvers editing the same IS directly at the same time: the last save wins (the history lets you go back). Proposals, on the other hand, detect conflicts.
 - draw.io or Visio diagrams cannot be imported: only Strata JSON exports can become a proposal.
 - Opened without its server, the app keeps the map in the browser only: no accounts, history, proposals or connectors.
@@ -610,7 +660,7 @@ A pull request must start from the latest release or later: the `base` job fails
 
 ### Releasing
 
-1. Merge a pull request that sets the new version in `package.json` (`npm version 0.10.0 --no-git-tag-version`), `docker-compose.yml`, the interface and the docs, and dates its CHANGELOG section.
+1. Merge a pull request that sets the new version in `package.json` (`npm version 0.11.0 --no-git-tag-version`), `docker-compose.yml`, the interface and the docs, and dates its CHANGELOG section.
 2. *Actions › Release › Run workflow*, on `main`. The workflow reads the version from `package.json` and creates the `vX.Y.Z` tag itself, so there is nothing to type. It waits for a maintainer's approval (the `release` environment), then runs the tests, publishes the signed image and the GitHub release with its notes.
 
 Pushing a `vX.Y.Z` tag, or publishing a release from the web page with a new tag on `main`, still works: the tag must then be exactly `v` and the version (`v0.9.0`, not `V0.9.0` or `v.0.9.0`).

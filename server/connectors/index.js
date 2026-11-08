@@ -41,6 +41,37 @@ function ownSite(changes, siteId, state) {
   return out;
 }
 
+// The choices made after a preview, as the module receives them in ctx.picks: {key: {zone}}, the key of
+// each item chosen and, when the module offers zones, the zone id of the IS or "new:<name>"
+export function cleanPicks(p) {
+  if (p === undefined || p === null) return null;
+  const list = Array.isArray(p) ? p.map(k => [k, {}]) : p && typeof p === 'object' ? Object.entries(p) : null;
+  if (!list) throw new ConnectorError('picks must be a list of keys or {key: {zone}}');
+  if (list.length > 5000) throw new ConnectorError('At most 5000 items can be chosen in one import.');
+  const out = Object.create(null);
+  for (const [k, v] of list) {
+    if (typeof k !== 'string' || !k || k.length > 200 || ['__proto__', 'constructor', 'prototype'].includes(k)) continue;
+    const o = {};
+    if (v && typeof v === 'object' && typeof v.zone === 'string' && v.zone.trim()) o.zone = v.zone.trim().slice(0, 120);
+    out[k] = o;
+  }
+  return { ...out };
+}
+// What a preview may answer: the items of the file people choose from
+function cleanPreview(r) {
+  if (!r || typeof r !== 'object' || !Array.isArray(r.items)) throw new Error('the module answered its preview without a list of items');
+  const seen = new Set(), items = [], s = (v, n) => (typeof v === 'string' || typeof v === 'number' ? String(v).slice(0, n) : '');
+  for (const x of r.items.slice(0, 5000)) {
+    if (!x || typeof x !== 'object') continue;
+    const key = s(x.key, 200);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    items.push({ key, label: s(x.label, 200) || key, detail: s(x.detail, 300), tags: Array.isArray(x.tags) ? x.tags.map(t => s(t, 40)).filter(Boolean).slice(0, 6) : [],
+      warn: Array.isArray(x.warn) ? x.warn.map(t => s(t, 80)).filter(Boolean).slice(0, 4) : [], on: x.on !== false, zone: s(x.zone, 80), group: s(x.group, 80) });
+  }
+  return { items, summary: s(r.summary, 500), skipped: Array.isArray(r.skipped) ? r.skipped.map(t => s(t, 200)).filter(Boolean).slice(0, 40) : [] };
+}
+
 // opts: dataDir, providedDir (MODULES_DIR), installedDir (DATA_DIR/modules), strataVersion, timeoutMs,
 // and the server's getState, upsertProposal, log, writeJson, broadcast
 export function createConnectors({ dataDir, providedDir, installedDir, strataVersion, timeoutMs, getState, upsertProposal, log, writeJson, broadcast }) {
@@ -122,7 +153,19 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
     finally { testing.delete(id); }
     return typeof r === 'string' ? r : r && typeof r.message === 'string' ? r.message : 'Connected.';
   }
-  // Starts a run; resolves when it is finished. opts: {by, file: {name, text}, overrides}
+  // Reads a file for a module whose import starts with a choice (file.pick): returns the items to choose
+  // from. Nothing is recorded: the import itself is the run that follows, with the picks.
+  async function preview(id, { file, overrides } = {}) {
+    if (!known(id)) throw new ConnectorError('Unknown connector');
+    const m = mod(id);
+    if (!m.file || !m.file.pick) throw new ConnectorError(`${m.name} has no choice to make before an import.`);
+    if (!file) throw new ConnectorError('Choose the file.');
+    const cfg = effective(id, fileOverrides(id, overrides));
+    const state = m.permissions.map ? JSON.parse(JSON.stringify(getState())) : null;
+    const r = await runModule(m, 'preview', { cfg, state, file: { name: String(file.name || 'file').slice(0, 120), text: String(file.text) } }, { timeoutMs: Math.min(timeoutMs, 5 * 60000), log });
+    return cleanPreview(r);
+  }
+  // Starts a run; resolves when it is finished. opts: {by, file: {name, text}, overrides, picks}
   async function run(id, opts = {}) {
     if (!known(id)) throw new ConnectorError('Unknown connector');
     const m = mod(id);
@@ -142,6 +185,7 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
       const res = await runModule(m, 'run', {
         cfg, state: m.permissions.map ? state : null,
         file: opts.file ? { name: fileName, text: String(opts.file.text) } : null,
+        picks: opts.file && m.file.pick ? cleanPicks(opts.picks) : null,
       }, { timeoutMs, log }) || {};
       if (res.proposals !== undefined && !Array.isArray(res.proposals)) throw new Error('the module answered without a list of proposals');
       const sites = Array.isArray(cfg.sites) && cfg.sites.length ? new Set(cfg.sites) : null, rejected = [];
@@ -195,7 +239,7 @@ export function createConnectors({ dataDir, providedDir, installedDir, strataVer
     list: () => ({ connectors: [...MODULES.keys()].map(publicView), runs: store.runs.slice(0, 30), problems }),
     get: id => (known(id) ? publicView(id) : null),
     module: id => (known(id) ? mod(id) : null),
-    update, test, run, reload, forget,
+    update, test, preview, run, reload, forget,
     isRunning: id => running.has(id) || testing.has(id),
     exists: known,
   };

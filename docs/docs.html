@@ -69,7 +69,7 @@ cp .env.example .env
 nano .env                         # set EDIT_PASS
 docker compose up -d --build      # builds the image here</code></pre><button class="copy" type="button">Copy</button></div>
     <p>On Windows: <code>copy .env.example .env</code> then <code>notepad .env</code>.</p>
-    <p>Or skip the build: <code>docker compose pull &amp;&amp; docker compose up -d</code> fetches the ready-made image <code>ghcr.io/solidgeeks/strata</code> of the release. Every image is signed; check it before deploying with <code>gh attestation verify oci://ghcr.io/solidgeeks/strata:0.10.0 --owner SolidGeeks</code>, which must print <em>Verification succeeded!</em></p>
+    <p>Or skip the build: <code>docker compose pull &amp;&amp; docker compose up -d</code> fetches the ready-made image <code>ghcr.io/solidgeeks/strata</code> of the release. Every image is signed; check it before deploying with <code>gh attestation verify oci://ghcr.io/solidgeeks/strata:0.11.0 --owner SolidGeeks</code>, which must print <em>Verification succeeded!</em></p>
     <p>Open <code>http://localhost:8080</code> and sign in with <code>EDIT_USER</code> / <code>EDIT_PASS</code>. The map starts empty: <em>Load demo (5 IS)</em> fills it with five sample sites, <em>Delete everything</em> clears it.</p>
     <div class="code"><pre><code>docker compose logs -f strata     # logs
 docker compose restart strata     # restart
@@ -86,6 +86,8 @@ docker compose down               # stop (data stays in the volume)</code></pre>
         <tr><td><code>EDIT_PASS_FILE</code> / <code>VIEW_PASS_FILE</code></td><td>none</td><td>Read the password from this file instead (Docker secrets, systemd credentials, sops-nix, agenix). The file wins; a trailing newline is ignored; an unreadable file stops the server.</td></tr>
         <tr><td><code>ALLOW_SELF_APPROVAL</code></td><td><code>false</code></td><td><code>true</code> lets an approver approve their own proposals.</td></tr>
         <tr><td><code>HISTORY_KEEP</code></td><td><code>5000</code></td><td>How many document changes the history keeps.</td></tr>
+        <tr><td><code>HISTORY_MAX_MB</code></td><td><code>200</code></td><td>The history also stops at this size, the oldest changes first (each change keeps the edited document before and after it).</td></tr>
+        <tr><td><code>MAX_DOC_MB</code></td><td><code>8</code></td><td>Largest document saved at once: an IS with all its VLANs and flows (about 300 bytes a flow).</td></tr>
         <tr><td><code>READ_ONLY</code></td><td><code>false</code></td><td>Freezes the map for everyone (an audit, a migration).</td></tr>
         <tr><td><code>BACKUP_KEEP</code> / <code>BACKUP_EVERY_HOURS</code></td><td><code>14</code> / <code>24</code></td><td>Automatic backups: how many to keep, how often.</td></tr>
         <tr><td><code>MAX_IMPORT_MB</code></td><td><code>20</code></td><td>Largest JSON or firewall configuration file accepted.</td></tr>
@@ -106,7 +108,7 @@ docker compose down               # stop (data stays in the volume)</code></pre>
     </table></div>
 
     <h2 id="https" style="--edge:var(--s3)">HTTPS and network</h2>
-    <p class="note warn">Passwords travel as HTTP Basic credentials. Never expose Strata over plain HTTP beyond the machine it runs on.</p>
+    <p class="note warn">Passwords travel in the sign-in form, and sessions in a cookie. Never expose Strata over plain HTTP beyond the machine it runs on; set <code>PUBLIC_URL=https://…</code> so the cookie is <code>Secure</code>.</p>
     <h3>Bundled proxy (Caddy)</h3>
     <ol class="list">
       <li>In <code>.env</code>, set <code>SITE_ADDRESS=strata.example.lan</code>, the name your users will type.</li>
@@ -189,16 +191,20 @@ sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable --now strata</code
 docker compose exec strata node scripts/users.mjs set alice contributor   # asks for a password
 docker compose exec strata node scripts/users.mjs role alice approver
 docker compose exec strata node scripts/users.mjs disable alice</code></pre><button class="copy" type="button">Copy</button></div>
+    <p>Local accounts sign in with the form of the sign-in page and get a session cookie for <code>SESSION_HOURS</code> (8); <em>Sign out</em> is in the title block. Changing a password, or disabling or deleting an account, ends its other sessions. Scripts use an API token: HTTP Basic is refused since 0.11.</p>
     <p>Repeated failed sign-ins are refused for a while (<code>429</code>), per account and per client address (see <a href="#config">Configuration</a>). Only different wrong passwords count, so a tab left open with an old password locks nobody out, and browsers already signed in keep working.</p>
     <h3>Single sign-on</h3>
     <p><strong>OpenID Connect</strong> (Entra ID, Keycloak, Authentik, Google Workspace, Okta): register Strata at the provider with the redirect URI <code>https://strata.example.org/auth/oidc/callback</code>, then set <code>PUBLIC_URL</code>, <code>SSO_ISSUER</code>, <code>SSO_CLIENT_ID</code>, <code>SSO_CLIENT_SECRET</code> (or <code>_FILE</code>) and the groups that give each role (<code>SSO_ROLE_ADMIN</code>, <code>SSO_ROLE_APPROVER</code>, <code>SSO_ROLE_CONTRIBUTOR</code>, <code>SSO_ROLE_VIEWER</code>; <code>SSO_DEFAULT_ROLE</code> for everyone else). Opening Strata shows a sign-in page; the ID token’s signature, issuer, audience, expiry and nonce are checked, with PKCE.</p>
     <p><strong>A sign-in proxy</strong> (Authelia, oauth2-proxy, Pomerium): <code>SSO_HEADER_USER</code> and <code>SSO_HEADER_GROUPS</code> name the headers it sets; they are believed only from the addresses in <code>SSO_HEADER_TRUST</code> (exact addresses, no range).</p>
-    <p>A name the provider gives that is also a local account is refused, and an e-mail address is used only once verified: prefer a name people cannot change (<code>SSO_USER_CLAIM=oid</code> on Entra ID). Sessions last <code>SESSION_HOURS</code> (8); <em>Account › End all single sign-on sessions</em> signs everyone out.</p>
+    <p>A name the provider gives that is also a local account is refused, and an e-mail address is used only once verified: prefer a name people cannot change (<code>SSO_USER_CLAIM=oid</code> on Entra ID). Sessions last <code>SESSION_HOURS</code> (8); <em>Account › End all sessions</em> signs everyone else out.</p>
     <p>Local accounts stay, for tests, small installations and as a way in when the provider is down: <code>LOCAL_LOGIN=admins</code> keeps them for administrators, <code>off</code> turns them off. <strong>API tokens</strong> for scripts: <em>Account › API tokens</em> (admin), shown once, sent as <code>Authorization: Bearer stk_…</code>.</p>
 
     <h2 id="map" style="--edge:var(--s1)">Building the map</h2>
     <h3>Sites, zones, VLANs</h3>
-    <p>An information system (IS) is a site. <em>Zones, contacts</em> sets its zones (one level each, for example Industrial, Office, Core IT, Exposed), its VLANs with their ranges, and the IS contacts shown on assets that have none of their own. <em>Arrange plates</em> lets you drag a plate anywhere on its level; <em>Line up</em> puts a level back in a row.</p>
+    <p>An information system (IS) is a site. <em>Zones, contacts</em> sets its zones (one level each, for example Industrial, Office, Core IT, Exposed), its VLANs with their ranges, and the IS contacts shown on assets that have none of their own. <em>Arrange plates</em> lets you drag a plate anywhere on its level, and the Internet cloud too (<em>Put Internet back</em> returns it); <em>Line up</em> puts a level back in a row.</p>
+    <p><strong>Import VLANs</strong> (<em>Edit › Import VLANs</em>, in an IS) reads a CSV (header in English or French, <code>,</code> <code>;</code> or tab), a JSON list (<code>[{num, name, cidr, zone}]</code>, NetBox’s <code>{"results": […]}</code>) or a Strata export: tick the VLANs to bring, filter, and choose the zone of each, or of all the ticked ones at once. A VLAN whose number is already in the IS is updated. The <strong>CSV VLANs</strong> module of the store does the same as a proposal, open to contributors.</p>
+    <p><strong>Arrange VLANs</strong> (<em>Layout</em>) lays each zone out on rows and columns, the VLANs that talk to each other side by side and those without flows last; <em>VLANs per row</em> is automatic or 3 to 12. <strong>Suggest zones from the flows</strong> (<em>Edit</em> or <em>Layout</em>) proposes zones from the Internet down: each VLAN goes to the floor of its distance from the Internet along the flows, and those the Internet never reaches go below by the role of their assets (internal servers, users, industrial, network and administration). Zones that already hold most of the same VLANs keep their name; a window lets you rename and move before <em>Apply</em>, or <em>Propose</em> for contributors.</p>
+    <p>In the plate list, <em>All</em> and <em>None</em> show or hide every VLAN of the IS or of one zone; <em>Plates › Hide empty VLANs</em> leaves out the plates without an asset.</p>
     <h3>Assets</h3>
     <p>Each asset has a type (server, firewall, router, switch, workstation, PLC…), a VLAN, an IP, a system, applications with their listening ports, vulnerabilities, a criticality, incident contacts and notes. A new asset starts on the first free IP of its VLAN range; an IP outside the range is pointed out. A vulnerability has a CVSS score or a severity, and optionally an EPSS (0 to 1, or a percentage) and a <em>Known exploited (CISA KEV)</em> mark. Search by name or IP to fly to it.</p>
     <h3>Flows</h3>
@@ -208,6 +214,9 @@ docker compose exec strata node scripts/users.mjs disable alice</code></pre><but
     <p>Drag with the left button to orbit, with the <strong>middle</strong> (or right) button to move the view left, right, up and down, and scroll to zoom. On a touch screen, one finger orbits, two fingers zoom and move. The view stops at the edge of the model; <em>Reset view</em> centres it again.</p>
     <h3>2D diagram</h3>
     <p>The <em>2D diagram</em> view is the same model, flat: drag assets and plates, draw a flow from one asset to another (<kbd>F</kbd>), add an asset on a plate (<kbd>A</kbd>), move (<kbd>V</kbd>). Positions are shared with the 3D model.</p>
+    <h3>Graphics on small laptops</h3>
+    <p><em>Display › Graphics</em>: <em>Auto</em> (the default) draws in Quality until moving the view turns out slow on this computer, then switches to <em>Economy</em> and remembers it; <em>Economy</em> uses the screen resolution, drops shadows and moving dots and hides labels sooner. <em>Animated flows</em> turns the moving dots off on its own. The 3D view is only drawn when something changes.</p>
+    <p>The title block folds into one line (▴ in its corner), keeping the name of the IS, the key figures, back to the overview and sign out. A long request shows a loading bar at the top of the screen.</p>
     <h3>Theme</h3>
     <p><em>Display › Theme</em>: Auto follows the system, Day and Night force it. <kbd>N</kbd> switches.</p>
 
@@ -273,15 +282,17 @@ docker compose exec strata node scripts/users.mjs disable alice</code></pre><but
       <li><code>any</code> in an <code>untrust</code>, <code>internet</code>, <code>outside</code> or <code>wan</code> zone → the Internet;</li>
       <li>the chosen firewall as the device crossed; Internet-to-admin or database ports flagged as risky.</li>
     </ul>
+    <p><strong>Build the IS</strong> (a box of the file import): on an empty or incomplete IS, the configuration also gives what the map lacks. A zone per security zone; a VLAN per layer-3 interface or sub-interface outside the Internet zones (its tag and subnet, named after its comment; an untagged interface gets a number from 4001 on, to change); an asset per host address object of a private range, in the VLAN whose range holds it, its type from its name or description (<code>PC-</code>, <code>TEL-</code>, <code>SQL-</code>, <code>CAM-</code>…), else from the ports opened to it, else a workstation if it only opens connections; and the firewall itself, from its host name and inside address, crossed by the flows that change VLAN. What the map has (a zone of the same name, a VLAN of the same number or range, an asset at the same IP) is kept; the same file again changes nothing. Systems, vulnerabilities and contacts still come from an inventory or a scanner.</p>
     <p>What cannot be drawn (internal <code>any</code>→<code>any</code>, dynamic groups, negations, addresses with no asset) is listed in the proposal. Flows from a rule that disappeared are removed; flows drawn by hand are never touched. A proposal from a file counts as the importer’s own for the four-eyes rule.</p>
     <h3>Modules and the module store</h3>
-    <p>Each connector is a module: a folder with a manifest (its settings, whether it imports files, what it may reach) and its code. The four above ship with Strata; three more come from the store:</p>
+    <p>Each connector is a module: a folder with a manifest (its settings, whether it imports files, what it may reach) and its code. The four above ship with Strata; four more come from the store:</p>
     <ul>
       <li><strong>CSV inventory</strong> imports the assets of an IS from a spreadsheet saved as CSV (columns <code>name</code>, <code>ip</code>, <code>type</code>, <code>os</code>, <code>role</code>, <code>vlan</code>, <code>criticality</code>, <code>notes</code>);</li>
       <li><strong>Nmap scan</strong> imports a scan saved with <code>-oX</code>: hosts that are up, the system Nmap guessed, open ports as listening ports of the applications;</li>
+      <li><strong>CSV VLANs</strong> imports the VLANs of an IS from a CSV (number, name, range): after the file, a window lists them, to tick the ones to bring and choose their zone;</li>
       <li><strong>NetBox</strong> syncs devices, virtual machines, VLANs and prefixes with a read-only token, a NetBox site going to an IS through rules such as <code>Lyon HQ = lyon</code>.</li>
     </ul>
-    <p>The first two are file imports open to any contributor; NetBox is run by approvers.</p>
+    <p>The first three are file imports open to any contributor; NetBox is run by approvers.</p>
     <ol>
       <li><strong>Install</strong>: <em>Connectors › Module store</em> (admin). Each card says what the module reaches (<em>reads the map</em>, <em>connects to your tool over the network</em>), its version, licence and source. <em>Install</em> downloads the package and refuses it if it differs from the checksum the store publishes.</li>
       <li><strong>Set it up</strong>: <em>Settings</em> on its card under <em>Installed</em>, then <em>Test the connection</em>. Every module also has <em>Enabled</em> with <em>Sync automatically every … hours</em> (both needed for scheduled syncs), the TLS options and <em>Limit to these IS</em> under <em>More settings</em>.</li>
@@ -339,7 +350,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
         <tr><td><code>GET /healthz</code></td><td>Health check, no authentication</td></tr>
       </tbody>
     </table></div>
-    <div class="code"><pre><code>curl -u admin:PASSWORD -H 'Content-Type: application/json' -H 'X-Requested-With: strata' \
+    <div class="code"><pre><code>curl -H "Authorization: Bearer $STRATA_TOKEN" -H 'Content-Type: application/json' -H 'X-Requested-With: strata' \
   -X PUT https://strata.example.lan/api/assets/srv-erp-01 \
   -d '{"site":"lyon","name":"srv-erp-01","type":"server","vlan":"v-lyo-20","ip":"10.20.0.20",
        "os":"RHEL 8","role":"ERP","crit":3,
@@ -369,7 +380,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
         <tr><td>“This browser only” badge</td><td>The page cannot reach the API: it was opened as a local file, or the proxy blocks <code>/api/</code>.</td></tr>
         <tr><td>Others see changes only after reloading</td><td>The proxy buffers <code>/api/events</code>: see <a href="#https">your own reverse proxy</a>.</td></tr>
         <tr><td>“You have read-only access”</td><td>You are signed in as a viewer, or <code>READ_ONLY=true</code>.</td></tr>
-        <tr><td>Switching accounts</td><td>Browsers keep Basic credentials: use a private window, or close the browser.</td></tr>
+        <tr><td>Switching accounts</td><td><em>Sign out</em> in the title block, then sign in again.</td></tr>
         <tr><td>Permission error on <code>/data</code></td><td>Keep the named volume. A host folder must belong to UID 1000: <code>chown -R 1000:1000 ./data</code>.</td></tr>
         <tr><td>A connector cannot connect</td><td><em>Test the connection</em> names the cause: DNS, refused port, untrusted certificate, refused credentials.</td></tr>
       </tbody>
@@ -378,7 +389,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
     <h2 id="limits" style="--edge:var(--s6)">Known limits</h2>
     <ul>
       <li>Storage is a single JSON file, fine for a few thousand assets.</li>
-      <li>Single sign-on sessions live in memory: a restart signs SSO users out, and a group change applies at the next sign-in.</li>
+      <li>Sessions live in memory: a restart signs everyone out, and a single sign-on group change applies at the next sign-in.</li>
       <li>Two approvers editing the same IS directly at the same moment: the last save wins (history lets you go back). Proposals detect conflicts.</li>
       <li>Connectors follow the public API documentation of each tool and were tested against simulators: test, sync, and read the first proposal carefully. GLPI 11’s new API (<code>/api.php/v2</code>) is not supported yet.</li>
       <li>Palo Alto: NAT rules, security profiles, dynamic address groups and the Panorama device-group hierarchy are not interpreted.</li>
@@ -395,7 +406,7 @@ docker compose up -d --build  # or: docker compose pull &amp;&amp; docker compos
     <a href="https://solidgeeks.github.io/SolidGeeks/"> <img src="https://raw.githubusercontent.com/SolidGeeks/.github/main/assets/footer/solid-geeks-footer.gif" alt="Solid Geeks: open source the world." width="100%"> </a>
   </div>
   <div class="wrap">
-    <p>Strata 0.10.0 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a> · <a href="https://github.com/SolidGeeks/strata/blob/main/CHANGELOG.md">Changelog</a></p>
+    <p>Strata 0.11.0 · <a href="https://github.com/SolidGeeks/strata/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/SolidGeeks/strata">github.com/SolidGeeks/strata</a> · <a href="https://github.com/SolidGeeks/strata/blob/main/CHANGELOG.md">Changelog</a></p>
     <p>Cyberwatch, GLPI, phpIPAM and Palo Alto Networks are trademarks of their owners; Strata is not affiliated with them.</p>
   </div>
 </footer>

@@ -8,6 +8,7 @@ import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth } from './session.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = mkdtempSync(join(tmpdir(), 'strata-api-'));
@@ -34,10 +35,10 @@ after(async () => {
 });
 
 class Client {
-  constructor(user, password = PASS[user]) { this.auth = user ? 'Basic ' + Buffer.from(`${user}:${password}`).toString('base64') : ''; }
+  constructor(user, password = PASS[user]) { this.user = user; this.password = password; }
   // headers: extra headers; a null value removes a default one (used by the CSRF test)
   async req(method, path, body, headers = {}) {
-    const h = { ...(body !== undefined ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}), ...(this.auth ? { Authorization: this.auth } : {}), ...headers };
+    const h = { ...(body !== undefined ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}), ...(await auth(base, this.user, this.password)), ...headers };
     for (const k of Object.keys(h)) if (h[k] === null) delete h[k];
     const res = await fetch(base + path, {
       method,
@@ -73,7 +74,14 @@ test('a malformed percent-encoding in the path gets 400, not a server error', as
 test('auth: no credentials, wrong password and unknown user are refused', async () => {
   const none = await new Client().get('/api/state');
   assert.equal(none.status, 401);
-  assert.match(none.headers.get('www-authenticate'), /^Basic /);
+  assert.equal(none.headers.get('www-authenticate'), null);
+  // a page sends the browser to the sign-in form; HTTP Basic is refused, with what to use instead
+  const page = await fetch(`${base}/`, { redirect: 'manual' });
+  assert.equal(page.status, 302);
+  assert.equal(page.headers.get('location'), '/auth/login');
+  const basic = await fetch(`${base}/api/state`, { headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASS.admin}`).toString('base64') } });
+  assert.equal(basic.status, 401);
+  assert.match((await basic.json()).error, /API token/);
   assert.equal((await new Client('admin', 'wrong-password').get('/api/state')).status, 401);
   assert.equal((await new Client('nobody', 'whatever-123').get('/api/state')).status, 401);
   const me = await as('alice').get('/api/me');
@@ -242,8 +250,9 @@ test('import: replaces the map, validates ids, and enforces MAX_IMPORT_MB', asyn
 });
 
 test('static files: path traversal cannot reach the server code', async () => {
+  const vicAuth = await auth(base, 'vic', PASS.vic);
   const raw = p => new Promise((res, rej) => {
-    request({ host: '127.0.0.1', port, path: p, headers: { Authorization: as('vic').auth } }, r => { let b = ''; r.on('data', c => (b += c)); r.on('end', () => res({ status: r.statusCode, body: b })); }).on('error', rej).end();
+    request({ host: '127.0.0.1', port, path: p, headers: vicAuth }, r => { let b = ''; r.on('data', c => (b += c)); r.on('end', () => res({ status: r.statusCode, body: b })); }).on('error', rej).end();
   });
   for (const p of ['/../server/server.js', '/%2e%2e/server/server.js', '/..%2fserver%2fserver.js', '/%2e%2e%2f%2e%2e%2fpackage.json']) {
     const r = await raw(p);
@@ -316,7 +325,7 @@ test('reserved keys: the users.mjs command line refuses them too', async () => {
 // (": ping") are skipped
 async function openEvents(user) {
   const ctrl = new AbortController();
-  const res = await fetch(base + '/api/events', { headers: user ? { Authorization: as(user).auth } : {}, signal: ctrl.signal });
+  const res = await fetch(base + '/api/events', { headers: await auth(base, user, PASS[user]), signal: ctrl.signal });
   if (res.status !== 200) { await res.body.cancel(); return { status: res.status }; }
   const reader = res.body.getReader(), dec = new TextDecoder();
   let buf = '';

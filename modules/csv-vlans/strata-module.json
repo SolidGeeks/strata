@@ -1,0 +1,31 @@
+{
+  "strataModule": 1,
+  "id": "csv-vlans",
+  "name": "CSV VLANs",
+  "version": "1.0.0",
+  "description": "VLANs of an IS from a CSV (number, name, address range): choose the VLANs to bring and the zone of each",
+  "author": "Solid Geeks",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/SolidGeeks/strata/tree/main/modules/csv-vlans",
+  "badge": "VLAN",
+  "main": "index.mjs",
+  "permissions": { "map": true, "network": false },
+  "live": false,
+  "file": {
+    "label": "Import VLANs from a CSV",
+    "accept": ".csv,.txt,text/csv",
+    "role": "contributor",
+    "fields": ["site", "updateExisting", "defaultZone"],
+    "help": "One VLAN per line: its number, its name and its address range (CIDR), in any order, with or without a header (number, vlan or vid; name or nom; cidr, subnet, network or réseau; optionally zone). Separated by commas, semicolons or tabs.",
+    "pick": {
+      "title": "Choose the VLANs and their zone",
+      "zones": true,
+      "help": "Tick the VLANs to bring into the IS and choose the zone of each, or of all the ticked ones at once. A VLAN already in the IS (same number) is updated when ticked."
+    }
+  },
+  "fields": [
+    { "k": "site", "label": "IS the VLANs go to", "type": "site", "required": true },
+    { "k": "updateExisting", "label": "Without a choice (from a script): also update the VLANs already in the IS", "type": "bool", "default": false },
+    { "k": "defaultZone", "label": "Zone when none is chosen nor given by the file (its name; empty: the top zone of the IS)", "default": "" }
+  ]
+}

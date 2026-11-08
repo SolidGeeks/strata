@@ -274,6 +274,163 @@ function chokePoints(site,byTarget){
   return [...pts.values()].sort((x,y)=>y.every.length-x.every.length||y.paths-x.paths||byName(x.id,y.id));
 }
 
-root.StrataAnalysis={riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph,
+/* ---- VLANs read from a file, to import some of them ---- */
+// A CSV (header in English or French, separator , ; or tab), a JSON list ([{num, name, cidr, zone}] or
+// {vlans: [...]}) or a Strata export (format "strata": every VLAN of every IS, with its zone and its IS).
+// Returns {kind: 'csv'|'json'|'strata', items: [{num, name, cidr, zone, site, siteName, vlanId}], skipped}
+// where skipped counts the lines without a valid VLAN number (1 to 4094). Throws when nothing is readable.
+const VCOL={num:['vlan','vlan id','vlan_id','vlanid','vid','vlan number','num','number','numero','numéro','n°','tag'],
+  name:['name','nom','vlan name','description','desc','label','libellé','libelle'],
+  cidr:['cidr','subnet','network','prefix','range','réseau','reseau','sous-réseau','sous-reseau','plage','ip range','address range','prefixe','préfixe'],
+  zone:['zone','group','groupe','vlan group','site','location','emplacement','tenant']};
+function csvRows(text){
+  const lines=String(text).replace(/^﻿/,'').split(/\r?\n/).filter(l=>l.trim());
+  if(!lines.length)return [];
+  const head=lines[0],sep=[';','\t',','].map(c=>[c,head.split(c).length]).sort((a,b)=>b[1]-a[1])[0][0];
+  return lines.map(l=>{const out=[];let cur='',q=false;
+    for(let i=0;i<l.length;i++){const ch=l[i];
+      if(q){if(ch==='"'&&l[i+1]==='"'){cur+='"';i++;}else if(ch==='"')q=false;else cur+=ch;}
+      else if(ch==='"')q=true;else if(ch===sep){out.push(cur.trim());cur='';}else cur+=ch;}
+    out.push(cur.trim());return out;});
+}
+const vlanNum=v=>{const m=/\d+/.exec(String(v==null?'':v));const n=m?parseInt(m[0],10):NaN;return n>=1&&n<=4094?n:null;};
+function vlansFromFile(text,fileName=''){
+  const t=String(text||'').replace(/^﻿/,'').trim();
+  if(!t)throw new Error('the file is empty');
+  const items=[];let skipped=0,kind;
+  const push=(o,extra={})=>{const num=vlanNum(o.num);if(num===null){skipped++;return;}
+    items.push(Object.assign({num,name:String(o.name||'').trim().slice(0,50)||`VLAN ${num}`,cidr:String(o.cidr||'').trim().slice(0,60),zone:String(o.zone||'').trim().slice(0,40)},extra));};
+  if(/^[[{]/.test(t)&&!/\.csv$/i.test(fileName)){
+    let o;try{o=JSON.parse(t);}catch(e){throw new Error('this is not valid JSON');}
+    if(o&&typeof o.si==='object'&&o.si&&!Array.isArray(o.si)){
+      kind='strata';
+      Object.entries(o.si).forEach(([sid,d])=>{if(!d||typeof d!=='object')return;
+        const zones=Array.isArray(d.zones)?d.zones:[];
+        (Array.isArray(d.vlans)?d.vlans:[]).forEach(v=>{if(!v||typeof v!=='object')return;const z=zones.find(x=>x&&x.id===v.zone);
+          push({num:v.num,name:v.name,cidr:v.cidr,zone:z?z.name:''},{site:sid,siteName:String(d.name||sid),vlanId:String(v.id||'')});});});
+    }else{
+      kind='json';
+      const list=Array.isArray(o)?o:Array.isArray(o&&o.vlans)?o.vlans:Array.isArray(o&&o.results)?o.results:null;
+      if(!list)throw new Error('expected a list of VLANs, {"vlans": [...]}, or a Strata export');
+      const pick=(x,keys)=>{for(const k of keys){const hit=Object.keys(x).find(y=>y.toLowerCase()===k);if(hit!==undefined&&x[hit]!=null&&typeof x[hit]!=='object')return x[hit];}
+        // NetBox and others: {group: {name}}, {site: {name}}
+        for(const k of keys){const hit=Object.keys(x).find(y=>y.toLowerCase()===k);if(hit!==undefined&&x[hit]&&typeof x[hit]==='object'&&x[hit].name)return x[hit].name;}return '';};
+      list.forEach(x=>{if(!x||typeof x!=='object'){skipped++;return;}push({num:pick(x,VCOL.num),name:pick(x,VCOL.name),cidr:pick(x,VCOL.cidr),zone:pick(x,VCOL.zone)});});
+    }
+  }else{
+    kind='csv';
+    const rows=csvRows(t);
+    const norm=h=>h.toLowerCase().replace(/^["']|["']$/g,'').trim();
+    const head=rows[0].map(norm),col={};
+    Object.entries(VCOL).forEach(([k,names])=>{const i=head.findIndex(h=>names.includes(h));if(i>=0)col[k]=i;});
+    let body=rows.slice(1);
+    // no header: number, name, range, zone in that order
+    if(col.num===undefined){if(vlanNum(rows[0][0])===null)throw new Error('no VLAN number column (vlan, vid, num, numéro…)');Object.assign(col,{num:0,name:1,cidr:2,zone:3});body=rows;}
+    body.forEach(r=>push({num:r[col.num],name:col.name!==undefined?r[col.name]:'',cidr:col.cidr!==undefined?r[col.cidr]:'',zone:col.zone!==undefined?r[col.zone]:''}));
+  }
+  if(!items.length)throw new Error('no VLAN with a number from 1 to 4094 in this file');
+  return {kind,items,skipped};
+}
+
+/* ---- Zones suggested from the flows ---- */
+// The floors of an IS, the Internet on top: each VLAN goes to the floor of its depth, the number of flow
+// hops from the Internet in the direction of the traffic (1: reached straight from the Internet), and the
+// VLANs never reached from it go below, by the role of their assets (servers, users, industrial,
+// network and administration). Empty VLANs stay in their zone. Existing zones that hold most of the same
+// VLANs are kept, with their name and id.
+// input: {vlans: [{id, num, name, zone}], assets: [{id, vlan, type}], flows: [{src, dst}],
+//   zones: [{id, name}] (bottom first, as stored), sources: ids that stand for the Internet (default
+//   'internet' and every 'svc:…')}
+// returns {zones: [{id, name, key, vlans: [ids], existing}] bottom first, byVlan: {vlanId: {zone, depth, role,
+//   moved}}, depth: {vlanId: n|null}}
+const ROLE_OF={server:'srv',dc:'srv',db:'srv',hypervisor:'srv',workstation:'users',phone:'users',printer:'users',ap:'users',
+  plc:'ot',camera:'ot',iot:'ot',switch:'net',router:'net',firewall:'net',gateway:'net'};
+const ROLE_NAME={srv:'Internal servers',users:'Users',ot:'Industrial (OT)',net:'Network and administration',other:'Other'};
+// bottom to top below the floors reached from the Internet
+const ROLE_ORDER=['net','ot','users','other','srv'];
+function suggestZones({vlans,assets,flows,zones,sources}){
+  const isNet=id=>sources?sources.includes(id):(id==='internet'||String(id).startsWith('svc:'));
+  const vOf={};assets.forEach(a=>{vOf[a.id]=a.vlan;});
+  // hops from the Internet, following the flows from source to destination
+  const out={};flows.forEach(f=>{(out[f.src]=out[f.src]||[]).push(f.dst);});
+  const dist={},q=[];
+  Object.keys(out).filter(isNet).forEach(id=>{dist[id]=0;q.push(id);});
+  while(q.length){const n=q.shift();(out[n]||[]).forEach(m=>{if(dist[m]===undefined&&!isNet(m)){dist[m]=dist[n]+1;q.push(m);}});}
+  const depth={},role={},count={},types={};
+  vlans.forEach(v=>{depth[v.id]=null;count[v.id]={};types[v.id]={};});
+  assets.forEach(a=>{if(!(a.vlan in depth))return;const d=dist[a.id];if(d!==undefined&&(depth[a.vlan]===null||d<depth[a.vlan]))depth[a.vlan]=d;
+    const r=ROLE_OF[a.type]||'other';count[a.vlan][r]=(count[a.vlan][r]||0)+1;types[a.vlan][a.type]=(types[a.vlan][a.type]||0)+1;});
+  // the role most of its assets have; a VLAN with PLCs, cameras or sensors (a third of it, or named so) is industrial
+  // (cameras and sensors alone, in a VLAN named for offices — meeting rooms, floors, VoIP, Wi-Fi — are the users')
+  const OT_NAME=/(^|[^a-z])(ot|scada|ics|plc|automat\w*|industri\w*|atelier|usine|production)([^a-z]|$)/i;
+  const USER_NAME=/(r[ée]union|meeting|bureau|office|[ée]tage|floor|poste|user|utilisateur|voip|t[ée]l[ée]phon|imprim|print|wi-?fi|accueil)/i;
+  vlans.forEach(v=>{const C=count[v.id],c=Object.entries(C).sort((x,y)=>y[1]-x[1]||ROLE_ORDER.indexOf(y[0])-ROLE_ORDER.indexOf(x[0]));
+    const n=c.reduce((t,x)=>t+x[1],0),ot=C.ot||0,name=v.name||'',plcs=types[v.id].plc||0;
+    if(!n)role[v.id]=null;
+    else if(plcs||(ot&&OT_NAME.test(name)))role[v.id]='ot';
+    else if(USER_NAME.test(name)&&((C.users||0)+ot)*2>=n)role[v.id]='users';
+    else if(ot*3>=n)role[v.id]='ot';
+    else role[v.id]=c[0][0];});
+  // the floors, bottom first
+  const maxD=Math.max(0,...vlans.map(v=>depth[v.id]||0)),deep=Math.min(maxD,3);
+  const floors=[...ROLE_ORDER.map(r=>({key:'role:'+r,name:ROLE_NAME[r]})),
+    ...[3,2,1].filter(d=>d<=deep).map(d=>({key:'depth:'+d,name:d===1?'Exposed to the Internet':d===2?'Reached from the exposed zone':'Back end, 3 hops or more'}))];
+  const keyOf=v=>{if(role[v.id]===null)return null;const d=depth[v.id];if(d!==null)return 'depth:'+Math.min(d,3);return 'role:'+role[v.id];};
+  const want={};vlans.forEach(v=>{const k=keyOf(v);if(k)(want[k]=want[k]||[]).push(v.id);});
+  // keep an existing zone for the floor that holds most of its VLANs (and at least half of the floor)
+  const cur={};zones.forEach(z=>{cur[z.id]=new Set(vlans.filter(v=>v.zone===z.id).map(v=>v.id));});
+  // (and that floor holds at least half of the zone's own VLANs with assets: a catch-all zone is not reused)
+  const full=z=>[...cur[z]].filter(id=>role[id]!==null).length;
+  const pairs=[];floors.forEach(f=>{const ids=want[f.key]||[];zones.forEach(z=>{const n=ids.filter(id=>cur[z.id].has(id)).length;if(n&&n*2>=ids.length&&n*2>=full(z.id))pairs.push({f:f.key,z:z.id,n});});});
+  pairs.sort((a,b)=>b.n-a.n);
+  const zoneFor={},taken=new Set();pairs.forEach(p=>{if(!zoneFor[p.f]&&!taken.has(p.z)){zoneFor[p.f]=p.z;taken.add(p.z);}});
+  const usedIds=new Set(zones.map(z=>z.id));
+  const newId=key=>{let id='z-'+key.replace(/[^a-z0-9]+/g,'-');for(let i=2;usedIds.has(id);i++)id='z-'+key.replace(/[^a-z0-9]+/g,'-')+'-'+i;usedIds.add(id);return id;};
+  const outZones=[],byVlan={};
+  floors.forEach(f=>{const ids=want[f.key]||[];if(!ids.length)return;
+    const z=zoneFor[f.key],ex=z?zones.find(x=>x.id===z):null;
+    outZones.push({id:ex?ex.id:newId(f.key),name:ex?ex.name:f.name,key:f.key,vlans:ids.slice(),existing:!!ex,suggested:f.name});});
+  // empty VLANs keep their zone: kept zones stay where they were, below the floors
+  const stay=vlans.filter(v=>role[v.id]===null);
+  const kept=new Set(outZones.map(z=>z.id));
+  zones.forEach(z=>{const ids=stay.filter(v=>v.zone===z.id).map(v=>v.id);if(!ids.length)return;
+    const hit=outZones.find(o=>o.id===z.id);if(hit){hit.vlans.push(...ids);return;}
+    outZones.unshift({id:z.id,name:z.name,key:'keep:'+z.id,vlans:ids,existing:true,suggested:z.name});kept.add(z.id);});
+  stay.filter(v=>!zones.some(z=>z.id===v.zone)).forEach(v=>{const z=outZones[0];if(z)z.vlans.push(v.id);});
+  outZones.forEach(z=>z.vlans.forEach(id=>{const v=vlans.find(x=>x.id===id);byVlan[id]={zone:z.id,depth:depth[id],role:role[id],moved:v.zone!==z.id};}));
+  return {zones:outZones,byVlan,depth};
+}
+
+/* ---- Arranging the plates of a level on rows and columns ---- */
+// plates: [{id, w, D}] in their current order; weight(a, b): how much two VLANs talk (symmetric, >= 0);
+// cols: the most plates per row (0 or less: about the square root of their number, a little wider than deep);
+// gap: space between plates. Filled row by row from the back, each cell takes the plate with the most
+// traffic to the plates already left of it and behind it, then the busiest plate, then the current order:
+// VLANs that talk sit side by side, and VLANs with no flow end up last. Returns {id: [x, z]} (plate
+// centres, the grid centred on 0) and the number of columns used.
+function arrangeGrid(plates,weight,cols,gap=2){
+  const n=plates.length;if(!n)return {places:{},cols:0,rows:0};
+  const C=Math.max(1,Math.min(n,cols>0?Math.round(cols):Math.ceil(Math.sqrt(n*1.6))));
+  const w=(a,b)=>{const v=+weight(a,b);return v>0&&isFinite(v)?v:0;};
+  const total={};plates.forEach(p=>{total[p.id]=plates.reduce((t,q)=>t+(q.id!==p.id?w(p.id,q.id):0),0);});
+  const left=plates.map((p,i)=>({p,i})),grid=[];
+  for(let k=0;k<n;k++){
+    const c=k%C,nb=[];if(c>0)nb.push(grid[k-1]);if(k>=C)nb.push(grid[k-C]);
+    let best=0,bs=null;
+    left.forEach((e,j)=>{const s=[nb.reduce((t,q)=>t+w(e.p.id,q.id),0),total[e.p.id],-e.i];
+      if(!bs||s[0]>bs[0]||(s[0]===bs[0]&&(s[1]>bs[1]||(s[1]===bs[1]&&s[2]>bs[2])))){bs=s;best=j;}});
+    grid.push(left.splice(best,1)[0].p);
+  }
+  const R=Math.ceil(n/C),colW=Array(C).fill(0),rowD=Array(R).fill(0);
+  grid.forEach((p,k)=>{colW[k%C]=Math.max(colW[k%C],p.w);rowD[Math.floor(k/C)]=Math.max(rowD[Math.floor(k/C)],p.D);});
+  const sum=a=>a.reduce((t,x)=>t+x,0),W=sum(colW)+gap*(C-1),Dt=sum(rowD)+gap*(R-1);
+  const places={};
+  grid.forEach((p,k)=>{const c=k%C,r=Math.floor(k/C);
+    const x=-W/2+sum(colW.slice(0,c))+gap*c+colW[c]/2,z=-Dt/2+sum(rowD.slice(0,r))+gap*r+rowD[r]/2;
+    places[p.id]=[Math.round(x*2)/2,Math.round(z*2)/2];});
+  return {places,cols:C,rows:R,order:grid.map(p=>p.id)};
+}
+
+root.StrataAnalysis={suggestZones,arrangeGrid,vlansFromFile,riskScore,riskPriorities,vulnRisk,likelihoodOf,inCidr,nextFreeIp,lanes,flowColours,dependencies,businessImpact,appGraph,
   stepOdds,blastRadius,attackPaths,chokePoints,outside};
 })(typeof globalThis!=='undefined'?globalThis:this);

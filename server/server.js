@@ -9,7 +9,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { createConnectors } from './connectors/index.js';
+import { createConnectors, cleanPicks } from './connectors/index.js';
 import { createStore } from './connectors/store.js';
 import { ID_RE as MODULE_ID_RE } from './connectors/modules.js';
 import { ssoConfig, createSso, loginPage } from './sso.js';
@@ -44,8 +44,12 @@ const CONFIG = {
   backupKeep: Math.max(0, parseInt(env.BACKUP_KEEP || '14', 10)),
   backupEveryHours: Math.max(1, parseInt(env.BACKUP_EVERY_HOURS || '24', 10)),
   historyKeep: Math.max(50, parseInt(env.HISTORY_KEEP || '5000', 10)),
+  // the history also stops at this size: each change keeps the whole document before and after it, so a
+  // large IS edited often (plates moved, flows imported) would otherwise grow it by a megabyte a change
+  historyMaxBytes: Math.max(1, parseFloat(env.HISTORY_MAX_MB || '200') || 200) * 1024 * 1024,
   maxImportBytes: parseInt(env.MAX_IMPORT_MB || '20', 10) * 1024 * 1024,
-  maxDocBytes: 512 * 1024,
+  // one document: an IS holds its VLANs and all its flows (about 300 bytes a flow, 8 MB ≈ 25 000 flows)
+  maxDocBytes: Math.max(0.5, parseFloat(env.MAX_DOC_MB || '8') || 8) * 1024 * 1024,
   // Failed sign-ins: 0 turns a limit off
   loginMaxFails: Math.max(0, parseInt(env.LOGIN_MAX_FAILS ?? '10', 10) || 0),
   loginMaxFailsPerAddress: Math.max(0, parseInt(env.LOGIN_MAX_FAILS_PER_ADDRESS ?? '20', 10) || 0),
@@ -134,7 +138,10 @@ async function backup(reason) {
    One line per changed document: {rev, at, user, batch, label, kind, id, before, after}.
    kind: si | assets | wan | services | risk | all (whole map, for imports). Rolling back replays the
    "before" of later lines, and is itself recorded, so a rollback can be undone too. */
-let history = [];
+let history = [], historyBytes = 0;
+// the size of each line in the history file, kept aside (the lines go to the file and the API as they are)
+const LINE_BYTES = new WeakMap();
+const lineBytes = h => { let n = LINE_BYTES.get(h); if (n === undefined) { n = Buffer.byteLength(JSON.stringify(h)) + 1; LINE_BYTES.set(h, n); } return n; };
 function loadHistory() {
   if (!fs.existsSync(HISTORY_FILE)) return;
   history = fs.readFileSync(HISTORY_FILE, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
@@ -145,12 +152,16 @@ function loadHistory() {
   log(`History: ${history.length} changes, back to rev ${history.length ? history[0].rev : state.rev}`);
 }
 function trimHistory(rewrite) {
-  if (history.length <= CONFIG.historyKeep && !rewrite) return;
-  if (history.length > CONFIG.historyKeep) {
-    // keep whole revisions: drop the oldest ones until under the limit
-    let cut = history.length - CONFIG.historyKeep;
-    while (cut < history.length && history[cut].rev === history[cut - 1]?.rev) cut++;
-    history = history.slice(cut);
+  if (rewrite) historyBytes = history.reduce((t, h) => t + lineBytes(h), 0);
+  if (history.length <= CONFIG.historyKeep && historyBytes <= CONFIG.historyMaxBytes && !rewrite) return;
+  if (history.length > CONFIG.historyKeep || historyBytes > CONFIG.historyMaxBytes) {
+    // keep whole revisions, and always the latest one: drop the oldest until under both limits
+    let cut = Math.max(0, history.length - CONFIG.historyKeep), bytes = historyBytes;
+    for (let i = 0; i < cut; i++) bytes -= lineBytes(history[i]);
+    while (cut < history.length - 1 && bytes > CONFIG.historyMaxBytes) bytes -= lineBytes(history[cut++]);
+    while (cut > 0 && cut < history.length && history[cut].rev === history[cut - 1].rev) bytes -= lineBytes(history[cut++]);
+    if (cut >= history.length) { cut = history.length - 1; while (cut > 0 && history[cut - 1].rev === history[cut].rev) cut--; bytes = history.slice(cut).reduce((t, h) => t + lineBytes(h), 0); }
+    if (cut > 0) { log(`History: ${cut} oldest change(s) dropped (limits: ${CONFIG.historyKeep} changes, ${Math.round(CONFIG.historyMaxBytes / 1048576)} MB)`); history = history.slice(cut); historyBytes = bytes; }
   }
   writeJson(HISTORY_FILE, history.map(h => JSON.stringify(h)).join('\n') + (history.length ? '\n' : ''));
 }
@@ -163,6 +174,7 @@ async function commitChanges(changes, auth, meta = {}) {
   state.updatedAt = new Date().toISOString();
   const lines = real.map(c => ({ rev: state.rev, at: state.updatedAt, user: auth.user || '', batch: meta.batch || `r${state.rev}`, label: meta.label || '', kind: c.kind, id: c.id ?? null, before: c.before ?? null, after: c.after ?? null }));
   history.push(...lines);
+  for (const l of lines) historyBytes += lineBytes(l);
   await writeJson(DB_FILE, state);
   const text = lines.map(l => JSON.stringify(l)).join('\n') + '\n';
   writeChain = writeChain.then(() => fsp.appendFile(HISTORY_FILE, text, { mode: 0o600 })).catch(e => log('ERROR history', e.message));
@@ -298,9 +310,9 @@ const hashPass = (pass, salt) => crypto.scryptSync(String(pass), salt, 32).toStr
 function loadUsers() {
   try { const st = fs.statSync(USERS_FILE); usersMtime = st.mtimeMs; const p = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); users = isObj(p.users) ? p.users : {}; }
   catch { users = {}; }
-  authCache.clear();
+
 }
-function saveUsers() { authCache.clear(); return writeJson(USERS_FILE, JSON.stringify({ users }, null, 2)).then(() => { try { usersMtime = fs.statSync(USERS_FILE).mtimeMs; } catch { } }); }
+function saveUsers() { return writeJson(USERS_FILE, JSON.stringify({ users }, null, 2)).then(() => { try { usersMtime = fs.statSync(USERS_FILE).mtimeMs; } catch { } }); }
 function setUser(name, { role, password, disabled }) {
   const u = own(users, name) || { createdAt: new Date().toISOString() };
   if (role) u.role = role;
@@ -368,50 +380,38 @@ function recordFailure(kind, key, credential) {
   if (m.size > 10000) m.delete(m.keys().next().value);
 }
 
-// Successful logins are cached for 10 minutes, so scrypt runs once per session, not per request
-const authCache = new Map();
-// Returns the account and role, null when the credentials are missing or wrong, or {retryAfter} (ms)
-// while sign-ins are locked
-// Single sign-on and API tokens come first (sso.js); {denied} is a refusal to explain (403)
+// Returns the account and role, or null when there is no valid sign-in. Local accounts sign in once
+// with the form (/auth/login) and then carry a session cookie; scripts use API tokens. HTTP Basic is
+// no longer accepted (0.11). {denied} is a refusal to explain (403)
 function authenticate(req) {
   const other = sso.fromSession(req) || sso.fromToken(req) || sso.fromHeaders(req);
+  if (other && other.via === 'local') {
+    // the account may have been disabled, deleted, given another role or a new password since
+    const u = own(users, other.user);
+    if (!u || u.disabled || !u.hash || (u.passwordChangedAt && Date.parse(u.passwordChangedAt) > other.since)
+      || sso.localLogin === 'off' || (sso.localLogin === 'admins' && u.role !== 'admin')) { sso.endUserSessions(other.user); return null; }
+    return { ...other, role: CONFIG.readOnly ? 'viewer' : (RANK[u.role] !== undefined ? u.role : 'viewer') };
+  }
   if (other) return other.denied ? other : { ...other, role: CONFIG.readOnly ? 'viewer' : other.role };
   if (!authEnabled() && !sso.enabled()) return { user: '', role: CONFIG.readOnly ? 'viewer' : 'admin', open: true, via: 'open' };
+  return null;
+}
+// Checks a local account's password, with the limits on failed sign-ins: true, false, or {retryAfter} (ms)
+function checkLocalPassword(name, pass, addr) {
+  name = String(name || ''); pass = String(pass || '');
   // LOCAL_LOGIN=off: no local sign-in at all; admins: only the accounts whose stored role is admin. The
-  // others are not even checked, so the answer (401) says nothing of their password
-  if (sso.localLogin === 'off') return null;
-  if (sso.localLogin === 'admins' && own(users, basicName(req))?.role !== 'admin') return null;
-  return authenticateLocal(req);
-}
-function basicName(req) {
-  const h = req.headers.authorization || '';
-  if (!h.startsWith('Basic ')) return '';
-  const raw = Buffer.from(h.slice(6), 'base64').toString('utf8'), i = raw.indexOf(':');
-  return i < 1 ? '' : raw.slice(0, i);
-}
-function authenticateLocal(req) {
-  const h = req.headers.authorization || '';
-  if (!h.startsWith('Basic ')) return null;
-  const raw = Buffer.from(h.slice(6), 'base64').toString('utf8'), i = raw.indexOf(':');
-  const name = i < 1 ? '' : raw.slice(0, i), pass = raw.slice(i + 1);
-  const key = crypto.createHash('sha256').update(raw).digest('hex'), hit = authCache.get(key), addr = clientAddress(req);
-  const ok = hit && hit.until > Date.now() && hit.addrs.has(addr);
-  if (!ok) {
-    const wait = Math.max(lockedFor('address', addr), name ? lockedFor('account', name) : 0);
-    if (wait) return { retryAfter: wait };
-    const u = name ? own(users, name) : undefined;
-    let good = !!(u && !u.disabled && u.hash);
-    if (good) { const a = Buffer.from(hashPass(pass, u.salt), 'hex'), b = Buffer.from(u.hash, 'hex'); good = a.length === b.length && crypto.timingSafeEqual(a, b); }
-    if (!good) { recordFailure('address', addr, key); if (name) recordFailure('account', name, key); return null; }
-    failures.account.delete(name);
-    const addrs = hit && hit.until > Date.now() ? hit.addrs : new Set();
-    addrs.add(addr);
-    authCache.set(key, { until: Date.now() + 600000, addrs });
-  }
-  const u = own(users, name);
-  if (!u || u.disabled) return null;
-  const role = CONFIG.readOnly ? 'viewer' : (RANK[u.role] !== undefined ? u.role : 'viewer');
-  return { user: name, role, via: 'local' };
+  // others are not even checked, so the answer says nothing of their password
+  if (sso.localLogin === 'off') return false;
+  if (sso.localLogin === 'admins' && own(users, name)?.role !== 'admin') return false;
+  const wait = Math.max(lockedFor('address', addr), name ? lockedFor('account', name) : 0);
+  if (wait) return { retryAfter: wait };
+  const key = crypto.createHash('sha256').update(`${name}:${pass}`).digest('hex');
+  const u = name ? own(users, name) : undefined;
+  let good = !!(u && !u.disabled && u.hash);
+  if (good) { const a = Buffer.from(hashPass(pass, u.salt), 'hex'), b = Buffer.from(u.hash, 'hex'); good = a.length === b.length && crypto.timingSafeEqual(a, b); }
+  if (!good) { recordFailure('address', addr, key); if (name) recordFailure('account', name, key); return false; }
+  failures.account.delete(name);
+  return true;
 }
 const can = (auth, role) => RANK[auth.role] >= RANK[role];
 const need = (auth, role) => { if (!can(auth, role)) throw httpError(403, `This needs the ${role} role (you are ${auth.role}).`); };
@@ -430,7 +430,7 @@ const SEC_HEADERS = {
   // no other site's window or page may hold a reference to the app, or load its responses
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Resource-Policy': 'same-origin',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
 };
 function send(res, status, body, headers = {}) {
   const isJson = typeof body !== 'string' && !Buffer.isBuffer(body);
@@ -442,6 +442,15 @@ const fail = (res, status, error, extra) => send(res, status, { error, ...(extra
 // (closing the connection at once left it with a network error). Past the limit by more than
 // DISCARD_MAX, the connection is cut: nobody waits for a body that large.
 const DISCARD_MAX = 64 * 1024 * 1024;
+// The raw body as text (a sign-in form), up to limit bytes
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    let size = 0; const chunks = [];
+    req.on('data', c => { size += c.length; if (size > limit) { reject(httpError(413, 'Payload too large')); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
 function readBody(req, limit) {
   return new Promise((resolve, reject) => {
     let size = 0, over = false; const chunks = [];
@@ -494,7 +503,7 @@ async function api(req, res, parts, url, auth) {
   const ok = rev => send(res, 200, { ok: true, rev: rev ?? state.rev });
 
   if (r1 === 'me' && !id && method === 'GET') return send(res, 200, {
-    user: auth.user, role: auth.role, auth: !auth.open, via: auth.via, signOut: auth.via === 'sso', sso: sso.oidc || sso.header, readOnly: CONFIG.readOnly, allowSelfApproval: CONFIG.allowSelfApproval,
+    user: auth.user, role: auth.role, auth: !auth.open, via: auth.via, signOut: auth.via === 'sso' || auth.via === 'local', sso: sso.oidc || sso.header, readOnly: CONFIG.readOnly, allowSelfApproval: CONFIG.allowSelfApproval,
     canWrite: can(auth, 'approver'), canPropose: can(auth, 'contributor'), canReview: can(auth, 'approver'), canAdmin: can(auth, 'admin'), connectors: !!connectors, sourceUrl: CONFIG.sourceUrl, muster: muster ? { url: muster.url } : null,
   });
   if (r1 === 'me' && id === 'password' && method === 'PUT') {
@@ -504,7 +513,12 @@ async function api(req, res, parts, url, auth) {
     const given = u ? Buffer.from(hashPass(b?.current || '', u.salt), 'hex') : null, stored = u ? Buffer.from(u.hash, 'hex') : null;
     if (!u || given.length !== stored.length || !crypto.timingSafeEqual(given, stored)) throw httpError(403, 'Current password is wrong.');
     if (String(b?.next || '').length < 10) throw httpError(400, 'Use at least 10 characters.');
-    setUser(auth.user, { password: b.next }); await saveUsers(); return send(res, 200, { ok: true });
+    setUser(auth.user, { password: b.next }); await saveUsers();
+    // other browsers signed in with the old password are signed out; this one gets a fresh session
+    sso.endUserSessions(auth.user, auth.sessionId);
+    const fresh = auth.sessionId ? sso.createSession({ user: auth.user, role: u.role, via: 'local' }) : null;
+    if (fresh) sso.endUserSessions(auth.user, fresh.sessionId);
+    return send(res, 200, { ok: true }, fresh ? { 'Set-Cookie': fresh.setCookie } : {});
   }
   if (r1 === 'state' && method === 'GET') {
     const at = url.searchParams.get('at');
@@ -759,6 +773,15 @@ async function api(req, res, parts, url, auth) {
       try { return send(res, 200, { ok: true, message: await connectors.test(id) }); }
       catch (e) { return send(res, 200, { ok: false, message: e.constructor.name === 'ConnectorError' ? e.message : `Unexpected error: ${e.message}` }); }
     }
+    // A module whose file import starts with a choice: reads the file and answers what there is to choose
+    if (r3 === 'preview' && method === 'POST') {
+      const b = await readBody(req, CONFIG.maxImportBytes) || {}, m = connectors.module(id);
+      if (!m.file || !m.file.pick) throw httpError(400, `${m.name} has no choice to make before an import.`);
+      need(auth, m.file.role === 'contributor' ? 'contributor' : 'approver');
+      if (!isObj(b.file) || typeof b.file.text !== 'string' || !b.file.text.length) throw httpError(400, 'Choose the file.');
+      try { return send(res, 200, { ok: true, pick: m.file.pick, ...(await connectors.preview(id, { file: b.file, overrides: isObj(b.overrides) ? b.overrides : {} })) }); }
+      catch (e) { if (e.constructor.name === 'ConnectorError') throw httpError(400, e.message); log('ERROR connector preview', id, e.stack || e.message); throw httpError(500, `Unexpected error: ${e.message}`); }
+    }
     if (r3 === 'run' && method === 'POST') {
       const b = await readBody(req, CONFIG.maxImportBytes) || {};
       // {file: {name, text}}; the Palo Alto import also took {xml, fileName}, kept for scripts written for it
@@ -770,7 +793,9 @@ async function api(req, res, parts, url, auth) {
       need(auth, f && m.file.role === 'contributor' ? 'contributor' : 'approver');
       if (connectors.isRunning(id)) throw httpError(409, 'This connector is already running.');
       if (!f && !connectors.get(id).live) throw httpError(400, m.live === false ? `${m.name} only imports files.` : 'Fill in its settings first.');
-      const p = connectors.run(id, { by: auth.user || 'admin', file: f || undefined, overrides: isObj(b.overrides) ? b.overrides : {} });
+      let picks;
+      try { picks = cleanPicks(b.picks); } catch (e) { throw httpError(400, e.message); }
+      const p = connectors.run(id, { by: auth.user || 'admin', file: f || undefined, overrides: isObj(b.overrides) ? b.overrides : {}, picks });
       if (b.wait) return send(res, 200, { ok: true, run: await p });
       p.catch(() => { });
       return send(res, 202, { ok: true, started: true });
@@ -778,7 +803,7 @@ async function api(req, res, parts, url, auth) {
   }
 
   /* ---- API tokens (admin) ---- */
-  if (r1 === 'sessions' && !id && method === 'DELETE') { need(auth, 'admin'); return send(res, 200, { ok: true, ended: sso.endSessions(auth.user || 'admin') }); }
+  if (r1 === 'sessions' && !id && method === 'DELETE') { need(auth, 'admin'); return send(res, 200, { ok: true, ended: sso.endSessions(auth.user || 'admin', auth.sessionId) }); }
   if (r1 === 'tokens') {
     need(auth, 'admin');
     if (auth.open) throw httpError(400, 'Create an admin account first: with no account, a token would lock everyone else out.');
@@ -803,11 +828,12 @@ async function api(req, res, parts, url, auth) {
       if (b?.password && String(b.password).length < 10) throw httpError(400, 'Use at least 10 characters.');
       if (id === auth.user && (b?.disabled || (b?.role && b.role !== 'admin'))) throw httpError(400, 'You cannot remove your own admin access.');
       setUser(id, { role: b?.role || own(users, id)?.role || 'viewer', password: b?.password, disabled: b?.disabled });
+      if (b?.password || b?.disabled) sso.endUserSessions(id);
       await saveUsers(); return send(res, 200, { ok: true });
     }
     if (id && method === 'DELETE') {
       if (id === auth.user) throw httpError(400, 'You cannot delete your own account.');
-      delete users[id]; await saveUsers(); return send(res, 200, { ok: true });
+      delete users[id]; sso.endUserSessions(id); await saveUsers(); return send(res, 200, { ok: true });
     }
   }
   return fail(res, 404, 'Unknown API route');
@@ -819,7 +845,29 @@ const localSignIn = () => sso.localLogin !== 'off' && authEnabled();
 const html = (res, status, body, headers = {}) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', ...headers });
 async function authRoute(req, res, url) {
   const p = url.pathname, page = (status, message, extra) => html(res, status, loginPage({ ssoName: sso.name, oidc: sso.oidc, local: localSignIn(), message, out: url.searchParams.has('out'), base: sso.publicUrl }), extra);
-  if (p === '/auth/login' && req.method === 'GET') return page(200);
+  if (p === '/auth/login' && req.method === 'GET') return authenticate(req) && !url.searchParams.has('out') ? send(res, 302, '', { Location: `${sso.publicUrl}/` }) : page(200);
+  // Local sign-in: the form of the sign-in page (urlencoded), or JSON from a script or a test
+  if (p === '/auth/login' && req.method === 'POST') {
+    const json = (req.headers['content-type'] || '').startsWith('application/json');
+    // a page of another site must not sign a visitor in to an account of its choosing
+    const origin = req.headers.origin;
+    let fromHere = true;
+    if (origin && origin !== 'null') { try { fromHere = new URL(origin).host === req.headers.host || (!!sso.publicUrl && origin === new URL(sso.publicUrl).origin); } catch { fromHere = false; } }
+    if (!fromHere) return fail(res, 403, 'Sign-in from another site refused');
+    if (!localSignIn()) return json ? fail(res, 404, 'Local sign-in is off') : page(404, 'Local sign-in is off on this server.');
+    let b;
+    try { b = json ? await readBody(req, 4096) : Object.fromEntries(new URLSearchParams(await readRaw(req, 4096))); }
+    catch (e) { return fail(res, e.status || 400, e.message); }
+    const name = String(b?.user || '').slice(0, 64), r = checkLocalPassword(name, b?.password, clientAddress(req));
+    if (r && r.retryAfter) {
+      const sec = Math.ceil(r.retryAfter / 1000), msg = `Too many failed sign-ins. Try again in ${sec >= 120 ? Math.ceil(sec / 60) + ' minutes' : sec + ' seconds'}.`;
+      return json ? send(res, 429, { error: msg }, { 'Retry-After': String(sec) }) : html(res, 429, loginPage({ ssoName: sso.name, oidc: sso.oidc, local: true, message: msg, base: sso.publicUrl, user: name }), { 'Retry-After': String(sec) });
+    }
+    if (r !== true) return json ? fail(res, 401, 'Wrong user name or password') : html(res, 401, loginPage({ ssoName: sso.name, oidc: sso.oidc, local: true, message: 'Wrong user name or password.', base: sso.publicUrl, user: name }));
+    const u = own(users, name), s = sso.createSession({ user: name, role: u.role, via: 'local' });
+    log(`Sign-in: ${JSON.stringify(name)} (local account)`);
+    return json ? send(res, 200, { ok: true, user: name, role: u.role }, { 'Set-Cookie': s.setCookie }) : send(res, 303, '', { Location: `${sso.publicUrl}/`, 'Set-Cookie': s.setCookie });
+  }
   if (p === '/auth/oidc/start' && req.method === 'GET' && sso.oidc) {
     try { const s = await sso.start(); return send(res, 302, '', { Location: s.location, 'Set-Cookie': s.setCookie }); }
     catch (e) { log('SSO:', e.message); return page(502, `The identity provider cannot be reached: ${e.message}`); }
@@ -847,20 +895,11 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/auth/')) return await authRoute(req, res, url);
     const auth = authenticate(req);
     if (auth && auth.denied) return send(res, 403, url.pathname.startsWith('/api/') ? { error: auth.denied } : loginPage({ ssoName: sso.name, oidc: sso.oidc, local: localSignIn(), message: auth.denied, base: sso.publicUrl }), url.pathname.startsWith('/api/') ? {} : { 'Content-Type': 'text/html; charset=utf-8' });
-    if (auth && auth.retryAfter) {
-      const s = Math.ceil(auth.retryAfter / 1000);
-      res.writeHead(429, { ...SEC_HEADERS, 'Retry-After': String(s), 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
-      return res.end(`Too many failed sign-ins. Try again in ${s >= 120 ? Math.ceil(s / 60) + ' minutes' : s + ' seconds'}.`);
-    }
     if (!auth) {
-      // with OpenID Connect, a page asks for the sign-in page, and the API answers 401 without a password prompt
-      // …except "/?local": the browser's password prompt for a local account, asked at the root so that
-      // the browser then sends the password with every request of the app
-      if (sso.oidc && url.pathname === '/' && url.searchParams.has('local') && localSignIn())
-        return send(res, 401, loginPage({ ssoName: sso.name, oidc: sso.oidc, local: true, message: 'Local sign-in cancelled or refused.', base: sso.publicUrl }), { 'Content-Type': 'text/html; charset=utf-8', 'WWW-Authenticate': 'Basic realm="Strata", charset="UTF-8"' });
-      if (sso.oidc && !url.pathname.startsWith('/api/') && (req.method === 'GET' || req.method === 'HEAD')) return send(res, 302, '', { Location: `${sso.publicUrl}/auth/login` });
-      res.writeHead(401, { ...SEC_HEADERS, ...(sso.oidc || !localSignIn() ? {} : { 'WWW-Authenticate': 'Basic realm="Strata", charset="UTF-8"' }), 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end('Authentication required');
+      // a page goes to the sign-in page; the API answers 401 (and says why when a script still sends HTTP Basic)
+      if (!url.pathname.startsWith('/api/') && (req.method === 'GET' || req.method === 'HEAD')) return send(res, 302, '', { Location: `${sso.publicUrl}/auth/login` });
+      const basic = String(req.headers.authorization || '').startsWith('Basic ');
+      return fail(res, 401, basic ? 'HTTP Basic sign-in was removed in Strata 0.11: use an API token (Authorization: Bearer stk_…), created in Account › API tokens' : 'Authentication required');
     }
     if (url.pathname.startsWith('/api/')) await api(req, res, url.pathname.slice(5).split('/').filter(Boolean).map(decodeURIComponent), url, auth);
     else if (req.method === 'GET' || req.method === 'HEAD') await serveStatic(req, res, url.pathname);

@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auth } from './session.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = mkdtempSync(join(tmpdir(), 'strata-muster-'));
@@ -38,8 +39,8 @@ function fakeMuster(req, res) {
     json(404, { error: 'Not found' });
   });
 }
-const as = user => (method, path, body) => fetch(base + path, {
-  method, headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${PASS[user]}`).toString('base64'), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
+const as = user => async (method, path, body) => fetch(base + path, {
+  method, headers: { ...(await auth(base, user, PASS[user])), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'strata' } : {}) },
   body: body ? JSON.stringify(body) : undefined,
 }).then(async r => ({ status: r.status, data: await r.json().catch(() => null) }));
 

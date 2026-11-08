@@ -2,6 +2,42 @@
 
 All notable changes to Strata. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [0.11.0] - 2026-11-08
+### Upgrading
+- **HTTP Basic is gone.** Local accounts sign in with the form of the sign-in page and get a session cookie (`SESSION_HOURS`, 8 by default). Scripts that sent `curl -u name:password` get `401` with a message: give them an API token (*Account › API tokens*) and send `Authorization: Bearer stk_…`. `GET /?local` is gone too.
+- Sessions are kept in memory: restarting Strata signs everyone out.
+
+### Added
+- **Sign out** for every account, in the title block (it was in *Account*, for single sign-on only).
+- **Import VLANs** (*Edit › Import VLANs*, in an IS): a CSV (header in English or French, `,` `;` or tab), a JSON list (`[{num, name, cidr, zone}]`, `{"vlans": […]}`, NetBox's `{"results": […]}`) or a Strata export. Tick the VLANs you want, filter, and choose the zone of each, or of all the ticked ones at once (an existing zone, a zone named in the file, or a new one). A VLAN whose number is already in the IS is updated when ticked. From a Strata export, the assets of the chosen VLANs and the flows between them come too.
+- **Arrange VLANs** (*Layout*): each zone on rows and columns instead of one long row, the VLANs that talk to each other side by side (the most traffic to the plates left of and behind each one), VLANs without flows last. *VLANs per row*: automatic (about the square root of their number) or 3 to 12. Saved for everyone; *Line up* undoes it for a zone.
+- **The Internet cloud can be moved**: dragged in *Arrange plates* (3D) and with *Move* in the 2D diagram. Its place is saved on the IS (`si.cloud`, `si.cloud2d`); the named Internet services and the flows follow; *Put Internet back* returns it to its default place.
+- **Show all or no VLANs** of the IS, or of one zone (*All* / *None* next to each zone of the plate list).
+- **Hide empty VLANs** (*Plates*): the plates without an asset leave the 3D model and the 2D diagram. Remembered by the browser.
+- **A loading bar** at the top of the screen for any request still running after 300 ms, with the progress of batches of writes and imports.
+- **Memory and CPU needs**, measured from an empty map to 30 000 assets (README, section 1), and resource limits, commented out, in `docker-compose.yml`.
+- **The overview shows each IS in the compact form of its model**: each zone of the small model takes the rows and the order of *Arrange VLANs* (or of plates placed by hand); a zone never arranged keeps one row up to 8 VLANs, then wraps into a grid; the assets of a plate wrap into lines; past 5 zones the floors come closer. The small models share their geometries, lighter for a large IS.
+- **The title block folds into one line** (▴ in its corner): the name of the IS or *Strata*, the four key figures, back to the overview, sign out and the incident band stay; the controls move up with it. Remembered by the browser.
+- **Palo Alto: build the IS from a configuration** (*Build the IS*, a box of the file import): zones from the security zones, VLANs from the layer-3 sub-interfaces (tag, subnet, comment), assets from the host address objects (in the VLAN of their IP, the type from their name or description, else the ports opened to them, else a workstation when they only open connections) and the firewall itself, crossed by the flows that change VLAN; then the rules as flows, as before. What the map has is kept; the same file again changes nothing. On the 991 objects of the test configuration, 90% get the right type.
+- Palo Alto: an import that draws nothing no longer opens an empty proposal.
+- **Suggest zones from the flows** (*Edit*, and *Layout*): the zones of an IS from its flows, the Internet on top. Each VLAN goes to the floor of its distance from the Internet along the flows (*Exposed to the Internet*, *Reached from the exposed zone*, *Back end, 3 hops or more*); the VLANs the Internet never reaches go below by the role of their assets (internal servers, users, industrial, network and administration); empty VLANs stay where they are. Existing zones that hold most of the same VLANs keep their name. A window shows the result top first: rename a zone, move a VLAN, then *Apply* (approvers) or *Propose* (contributors: a draft proposal opens).
+- **CSV VLANs**, a module in the store: the VLANs of an IS from a CSV (number, name, range, in any order, with or without a header). After the file, a window lists its VLANs: tick those to bring, filter, and choose the zone of each, or of all the ticked ones at once (a zone of the IS, a zone named in the file, or a new one). The result is a proposal, which any contributor can make; from a script, `picks` gives the same choice.
+- **Modules can ask for a choice before an import** (`file.pick` in the manifest, a `preview(cfg, ctx)` function, `ctx.picks` in `run`, `POST /api/connectors/{id}/preview`): Strata shows what the file holds, people tick what to bring and, with `pick.zones`, the zone of each. Backward compatible: modules without `pick` work as before. See MODULES.md.
+- **Graphics for small laptops** (*Display › Graphics*: Auto, Quality, Economy, and *Animated flows*). Economy: screen resolution, no shadows, no moving dots, labels hidden sooner from afar. Auto, the default, is Quality until moving the view turns out slow on this computer (then Economy, remembered by the browser), and Economy when the browser draws without a graphics card.
+- **API**: `POST /auth/login` (the form, or JSON `{user, password}`); `analysis.js` exports `arrangeGrid` and `vlansFromFile`; `window.strataRenderStats()` in the page gives what the last frame cost.
+
+### Fixed
+- **A large IS could no longer be saved** (“This item is too large to save”): one document was limited to 512 KB, and an IS holds all its flows, about 300 bytes each, so an IS of some 1 800 flows or more, imported through a proposal, could no longer be edited from the interface. The limit is now `MAX_DOC_MB`, 8 MB by default.
+- **The history no longer grows without bound with a large IS**: each change keeps the edited document before and after it, about a megabyte a change for an IS of 2 000 flows, and the history is held in memory. It now also stops at `HISTORY_MAX_MB` (200 MB by default), the oldest changes first.
+
+### Changed
+- **The 3D view is much lighter to draw**, and looks the same: 8 to 15 times fewer draw calls (1 569 → 208 for the Lyon demo) and half the triangles. It is drawn only when something changes, not 60 times a second; shadows are drawn again only when the model changes; the view is a little less sharp while it moves. Each type of equipment is one shared geometry; every flow of an IS is in one geometry with its own colour and opacity, and the moving dots are one instanced mesh; label textures are shared; labels too small to read are not drawn; flows no longer cast shadows; a rebuilt model frees what the GPU held for the previous one.
+- Changing a password, or disabling or deleting an account, ends that account's other sessions. *End all sessions* (admin) ends the sessions of local accounts too, and keeps the admin's own.
+- The Content-Security-Policy allows forms to post to Strata itself (`form-action 'self'`), for the sign-in form.
+- `tests/e2e.mjs` takes `CHROMIUM_PATH`, a Chromium already installed.
+
 ## [0.10.0] - 2026-10-28
 ### Added
 - **Incident mode, with Muster** (*Incident* in the controls of an IS). Mark assets compromised, suspected or contained, from their sheet or from a playbook decision. The incident sheet then shows:
@@ -218,6 +254,7 @@ All notable changes to Strata. Versions follow [Semantic Versioning](https://sem
 ## [0.1.0]
 - First release: 3D map of IS, zones, VLANs, assets, flows, exposure, vulnerabilities and incident contacts.
 
+[0.11.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.11.0
 [0.10.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.10.0
 [0.9.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.9.0
 [0.8.0]: https://github.com/SolidGeeks/strata/releases/tag/v0.8.0

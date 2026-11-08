@@ -33,6 +33,7 @@
   </div>
 </div>
 
+<div id="busy" hidden role="progressbar" aria-label="Working" aria-valuemin="0" aria-valuemax="100"><i></i><span></span></div>
 <header id="cart" class="panel"></header>
 <div id="modebar" class="panel" hidden role="status"></div>
 <div id="focusBar" class="panel" hidden role="status"></div>
@@ -87,6 +88,8 @@
       <button class="btn small" data-act="new-vlan"><span>+ VLAN</span></button>
       <button class="btn small" data-act="edit-site"><span>Zones, contacts</span></button>
     </div>
+    <div class="btns" style="margin-top:6px"><button class="btn small" data-suggest-zones title="Zones from the flows: what the Internet reaches on top, then by depth, then by role"><span>Suggest zones from the flows</span><span class="mono">auto</span></button></div>
+    <div class="btns" style="margin-top:6px"><button class="btn small" data-act="import-vlans" title="Pick VLANs from a CSV, a JSON list or a Strata export and put them in the zones you choose"><span>Import VLANs</span><span class="mono">CSV · JSON</span></button></div>
   </div>
   <div class="sec" data-view="site">
     <h3 class="cap"><label for="search">Search</label></h3>
@@ -145,8 +148,19 @@
     </div>
     <div class="ctlgrp edit-only" data-only3d>
       <button class="btn small" id="arrangeBtn" aria-pressed="false"><span>Arrange plates</span><span class="mono">drag</span></button>
-      <p class="sub" id="arrangeNote">Drag a plate anywhere on its level (left, right, front, back), or use the arrows that appear in the VLAN list. “Line up” puts a level back in a row.</p>
+      <p class="sub" id="arrangeNote">Drag a plate anywhere on its level (left, right, front, back), or use the arrows that appear in the VLAN list. “Line up” puts a level back in a row. The Internet cloud can be dragged too.</p>
     </div>
+    <div class="ctlgrp propose-only">
+      <button class="btn small" id="suggestZonesBtn" data-suggest-zones title="Zones from the flows: what the Internet reaches on top, then by depth, then by role"><span>Suggest zones</span><span class="mono">flows</span></button>
+      <p class="sub">The Internet on top: each VLAN on the floor of its distance from the Internet along the flows, the others by role. You review it before anything changes.</p>
+    </div>
+    <div class="ctlgrp edit-only">
+      <span class="fl"><label for="arrCols">VLANs per row</label></span>
+      <div class="arrRow"><select id="arrCols" class="search" title="The most VLANs on one row of a zone"><option value="0">Auto</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="8">8</option><option value="10">10</option><option value="12">12</option></select>
+      <button class="btn small" id="arrangeGridBtn" title="Put the plates of each zone on rows and columns, the VLANs that talk to each other side by side"><span>Arrange VLANs</span></button></div>
+      <p class="sub">Each zone on rows and columns: VLANs with flows between them side by side, VLANs without flows last. Saved for everyone; “Line up” undoes it for a zone.</p>
+    </div>
+    <div class="ctlgrp edit-only"><button class="btn small" id="cloudReset" hidden title="Put the Internet cloud back in its default place, in 3D and in 2D"><span>Put Internet back</span></button></div>
   </div>
   <div class="sec" data-view="site">
     <h3 class="cap">Internet services</h3>
@@ -155,6 +169,8 @@
   </div>
   <div class="sec" data-view="site">
     <h3 class="cap">Plates (VLANs)</h3>
+    <div class="vtools"><span class="fl">Show</span><button class="ibtn" data-vsel="all" title="Show every VLAN">All</button><button class="ibtn" data-vsel="none" title="Hide every VLAN">None</button></div>
+    <label class="row" for="optEmpty"><span>Hide empty VLANs</span><input type="checkbox" id="optEmpty"></label>
     <div id="vlans"></div>
   </div>
   <div class="sec">
@@ -167,6 +183,12 @@
     <label class="row" for="optRisk"><span>Risky flows only</span><input type="checkbox" id="optRisk"></label>
     <label class="row" for="optLabels" data-view="site" data-only3d><span>Asset labels</span><input type="checkbox" id="optLabels" checked></label>
     <label class="row" for="optPorts" data-view="site"><span>Exposed port tags</span><input type="checkbox" id="optPorts"></label>
+    <div class="ctlgrp" data-only3d>
+      <span class="fl">Graphics</span>
+      <div class="seg three" id="gfxSeg" role="group" aria-label="Graphics"><button data-gfx="auto" aria-pressed="true" title="Quality, or Economy when this computer draws the view slowly">Auto</button><button data-gfx="quality" aria-pressed="false" title="Shadows, sharp edges, moving dots on the flows">Quality</button><button data-gfx="eco" aria-pressed="false" title="For small laptops: lower resolution, no shadows, no moving dots">Economy</button></div>
+      <p class="sub" id="gfxNote"></p>
+    </div>
+    <label class="row" for="optAnim" data-only3d><span>Animated flows</span><input type="checkbox" id="optAnim"></label>
     <label class="row" for="optRotate" data-only3d><span>Auto-rotate</span><input type="checkbox" id="optRotate"></label>
     <label class="row" for="optGap" data-view="site" data-only3d><span>Level height</span><input type="range" id="optGap" min="5" max="15" step="0.5" value="8"></label>
   </div>
@@ -175,7 +197,7 @@
     <div class="legend" id="legend"></div>
   </div>
   <div class="sec about">
-    <p>Strata <span id="appVer">0.10.0</span>, free software under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">GNU AGPL v3</a>. <a id="srcLink" href="https://github.com/SolidGeeks/strata" target="_blank" rel="noopener">Source code</a></p>
+    <p>Strata <span id="appVer">0.11.0</span>, free software under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">GNU AGPL v3</a>. <a id="srcLink" href="https://github.com/SolidGeeks/strata" target="_blank" rel="noopener">Source code</a></p>
   </div>
 </aside>
 
@@ -214,6 +236,7 @@
 <div id="tip" class="panel" hidden></div>
 <div id="hint" class="panel"></div>
 <input type="file" id="io" accept="application/json,.json" tabindex="-1" aria-hidden="true">
+<input type="file" id="vlanFile" accept=".csv,.json,.txt,text/csv,application/json" tabindex="-1" aria-hidden="true" hidden>
 
 <script src="analysis.js"></script>
 <script src="incident.js"></script>
